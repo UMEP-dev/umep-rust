@@ -1,0 +1,8 @@
+{
+"type": "FeatureCollection",
+"name": "mask_layer2",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:EPSG::3007" } },
+"features": [
+{ "type": "Feature", "properties": { "id": 1 }, "geometry": { "type": "MultiPolygon", "coordinates": [ [ [ [ 147740.0, 6398750.0 ], [ 147930.0, 6398750.0 ], [ 147930.0, 6398620.0 ], [ 147740.0, 6398620.0 ], [ 147740.0, 6398750.0 ] ] ] ] } }
+]
+}

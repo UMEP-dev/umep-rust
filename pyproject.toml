@@ -1,0 +1,143 @@
+[project]
+name = "umepr"
+version = "0.0.1a1"
+description = "rust implementation of urban multi-scale environmental predictor"
+readme = "README.md"
+requires-python = ">=3.10, <3.14"
+license = { text = "AGPL-3.0" }
+keywords = [
+    "python3",
+    "geographical-information-system",
+    "spatial-data",
+    "spatial-data-analysis",
+    "urban-climate",
+    "urban-heat-island",
+    "urban-meteorology",
+    "urban-microclimate",
+    "urban-planning",
+    "urban-sustainability",
+    "urban-thermal-comfort",
+    "urban-thermal-environment",
+    "urban-thermal-mapping",
+    "urban-thermal-modelling",
+    "urban-thermal-simulation",
+    "urban-thermal-sustainability",
+]
+authors = [{ name = "UMEP Developers" }]
+maintainers = [{ name = "UMEP Developers" }]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "geopandas>=1.0.1",
+    "matplotlib>=3.9.2",
+    "momepy>=0.8.1",
+    "numpy<2.1.0",
+    "pandas>=2.2.3",
+    "pvlib>=0.11.1",
+    "pyepw>=0.1",
+    "pytz>=2024.2",
+    "rasterio>=1.4.1",
+    "scipy>=1.14.1",
+    "shapely>=2.0.6",
+    "tqdm>=4.66.5",
+    "pythermalcomfort>=2.10.0",
+    "pyproj>=3.7.0",
+    "xarray>=2025.3.1",
+    "rioxarray>=0.19.0",
+    "memory-profiler>=0.61.0",
+    "umep>=0.0.1b1",
+]
+
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[tool.maturin]
+manifest-path = "rust/Cargo.toml"
+python-source = "pysrc"
+module-name = 'umepr.rustalgos'
+features = ["pyo3/extension-module"]
+
+[tool.setuptools]
+packages = ["umepr"]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.2.0",
+    "pandas-stubs>=1.5.2.221213",
+    "jupyterlab>=3.5.2",
+    "jupyter>=1.0.0",
+    "maturin>=1.8.3",
+    "pip>=23.2",
+    "ruff>=0.5.1",
+    "poethepoet>=0.29.0",
+    "pyright>=1.1.398",
+]
+
+[project.urls]
+homepage = "https://github.com/UMEP-dev/umep-rust"
+documentation = "https://github.com/UMEP-dev/umep-rust"
+repository = "https://github.com/UMEP-dev/umep-rust"
+
+[tool.poe.tasks]
+verify_project = { shell = "ruff format && ruff check && pyright . && pytest ./tests" }
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+
+[tool.pyright]
+pythonVersion = "3.11"
+include = ["umepr"]
+exclude = [
+    "**/__pycache__",
+    "**/__pypackages__",
+    "build",
+    "docs",
+    "**/temp/",
+    "tests/",
+    "dist",
+    ".venv",
+]
+typeCheckingMode = "strict"
+useLibraryCodeForTypes = true
+reportUntypedFunctionDecorator = false
+reportUntypedClassDecorator = false
+reportUnknownMemberType = false
+reportMissingTypeStubs = false
+reportUnnecessaryIsInstance = false
+
+[tool.pytest.ini_options]
+console_output_style = "count"
+log_cli = true
+log_cli_level = "INFO"
+testpaths = ["tests"]
+addopts = "-s"
