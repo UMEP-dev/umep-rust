@@ -7,9 +7,9 @@ from umep.functions.SOLWEIGpython import Solweig_run as sr
 from umep.functions.svf_functions import svfForProcessing153
 from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
 from umepr import common
+from umepr import solweig_config as srr
 from umepr.hybrid.svf_hybrid import svfForProcessing153_rust_shdw
 from umepr.rustalgos import shadowing, skyview
-from umepr.solweig_config import solweig_run as srr
 
 
 def test_shadowing():
