@@ -3,13 +3,13 @@ import timeit
 import matplotlib.pyplot as plt
 import numpy as np
 from memory_profiler import memory_usage
-from umep import common
 from umep.functions.SOLWEIGpython import Solweig_run as sr
 from umep.functions.svf_functions import svfForProcessing153
 from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
-from umepr.functions.SOLWEIGpython import Solweig_run_rust as srr
-from umepr.functions.svf_functions_rust import svfForProcessing153_rust_shdw
+from umepr import common
+from umepr.hybrid.svf_hybrid import svfForProcessing153_rust_shdw
 from umepr.rustalgos import shadowing, skyview
+from umepr.solweig_config import solweig_run as srr
 
 
 def test_shadowing():
@@ -143,11 +143,11 @@ def test_svf():
     print_timing_stats("skyview.calculate_svf", times_rust)
 
     # Print relative speed as percentage
-    print("\n--- Relative Speed shadowingfunction_20 vs hybrid w. rust shadows ---")
+    print("\n--- Relative Speed shadowingfunction_20 - hybrid w. rust shadows vs. Python ---")
     relative_speed(times_py, times_hybrid)
 
     # Print relative speed as percentage
-    print("\n--- Relative Speed shadowingfunction_20 - full rust SVF ---")
+    print("\n--- Relative Speed shadowingfunction_20 - full rust SVF vs. Python ---")
     relative_speed(times_py, times_rust)
 
     # --- Memory profiling only (no timing) ---
@@ -310,7 +310,7 @@ def relative_speed(times_py, times_rust):
     rust_avg = sum(times_rust) / len(times_rust)
     py_avg = sum(times_py) / len(times_py)
     speedup_factor = py_avg / rust_avg
-    print(f"\nRelative speed: Rust version is {speedup_factor:.2f} times faster than Python for given data.")
+    print(f"\nRelative speed: {speedup_factor:.2f} times faster for given data.")
 
 
 def plot_visual_residuals(
