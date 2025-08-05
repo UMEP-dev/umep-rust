@@ -1,7 +1,3 @@
-"""
-Solweig model in Python which calls shadowing calculations implemented in Rust.
-"""
-
 from copy import deepcopy
 
 import numpy as np
@@ -26,43 +22,8 @@ from umep.util.SEBESOLWEIGCommonFiles.clearnessindex_2013b import clearnessindex
 from umep.util.SEBESOLWEIGCommonFiles.create_patches import create_patches
 from umep.util.SEBESOLWEIGCommonFiles.diffusefraction import diffusefraction
 from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
-
-from .. import common
-from ..rustalgos import shadowing
-
-
-class SVFData:
-    def __init__(self, in_path_str: str, use_cdsm: bool = False):
-        """
-        Loads SVF and shadow matrix results from disk and returns a SVFResults dataclass instance.
-        """
-        self.svf, _, _ = common.load_raster(in_path_str + "/" + "svf.tif")
-        self.svf_east, _, _ = common.load_raster(in_path_str + "/" + "svfE.tif")
-        self.svf_south, _, _ = common.load_raster(in_path_str + "/" + "svfS.tif")
-        self.svf_west, _, _ = common.load_raster(in_path_str + "/" + "svfW.tif")
-        self.svf_north, _, _ = common.load_raster(in_path_str + "/" + "svfN.tif")
-
-        self.svf_veg = None
-        self.svf_veg_east = None
-        self.svf_veg_south = None
-        self.svf_veg_west = None
-        self.svf_veg_north = None
-        self.svf_veg_blocks_bldg_sh = None
-        self.svf_veg_blocks_bldg_sh_east = None
-        self.svf_veg_blocks_bldg_sh_south = None
-        self.svf_veg_blocks_bldg_sh_west = None
-        self.svf_veg_blocks_bldg_sh_north = None
-        if use_cdsm:
-            self.svf_veg, _, _ = common.load_raster(in_path_str + "/" + "svfveg.tif")
-            self.svf_veg_east, _, _ = common.load_raster(in_path_str + "/" + "svfEveg.tif")
-            self.svf_veg_south, _, _ = common.load_raster(in_path_str + "/" + "svfSveg.tif")
-            self.svf_veg_west, _, _ = common.load_raster(in_path_str + "/" + "svfWveg.tif")
-            self.svf_veg_north, _, _ = common.load_raster(in_path_str + "/" + "svfNveg.tif")
-            self.svf_veg_blocks_bldg_sh, _, _ = common.load_raster(in_path_str + "/" + "svfaveg.tif")
-            self.svf_veg_blocks_bldg_sh_east, _, _ = common.load_raster(in_path_str + "/" + "svfEaveg.tif")
-            self.svf_veg_blocks_bldg_sh_south, _, _ = common.load_raster(in_path_str + "/" + "svfSaveg.tif")
-            self.svf_veg_blocks_bldg_sh_west, _, _ = common.load_raster(in_path_str + "/" + "svfWaveg.tif")
-            self.svf_veg_blocks_bldg_sh_north, _, _ = common.load_raster(in_path_str + "/" + "svfNaveg.tif")
+from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_13 import shadowingfunction_wallheight_13
+from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
 
 
 def Solweig_2025a_calc(
@@ -71,7 +32,21 @@ def Solweig_2025a_calc(
     scale,
     rows,
     cols,
-    SVFData,
+    svf,
+    svfN,
+    svfW,
+    svfE,
+    svfS,
+    svfveg,
+    svfNveg,
+    svfEveg,
+    svfSveg,
+    svfWveg,
+    svfaveg,
+    svfEaveg,
+    svfSaveg,
+    svfWaveg,
+    svfNaveg,
     vegdem,
     vegdem2,
     albedo_b,
@@ -267,48 +242,26 @@ def Solweig_2025a_calc(
 
         # Shadow  images
         if usevegdem == 1:
-            result = shadowing.calculate_shadows_wall_ht_25(
+            vegsh, sh, _, wallsh, wallsun, wallshve, _, facesun, wallsh_ = shadowingfunction_wallheight_23(
+                dsm,
+                vegdem,
+                vegdem2,
                 azimuth,
                 altitude,
                 scale,
                 amaxvalue,
-                dsm.astype(np.float32),
-                vegdem.astype(np.float32),
-                vegdem2.astype(np.float32),
-                bush.astype(np.float32),
-                walls.astype(np.float32),
-                (dirwalls * np.pi / 180.0).astype(np.float32),
-                walls_scheme.astype(np.float32),
-                (dirwalls_scheme * np.pi / 180.0).astype(np.float32),
+                bush,
+                walls,
+                dirwalls * np.pi / 180.0,
+                walls_scheme,
+                dirwalls_scheme * np.pi / 180.0,
             )
-            vegsh = result.veg_sh
-            sh = result.bldg_sh
-            wallsh = result.wall_sh
-            wallsun = result.wall_sun
-            wallshve = result.wall.sh_veg
-            facesun = result.face_sun
-            wallsh_ = result.face_sh
-            shadow = result.bldg_sh - (1 - result.veg_sh) * (1 - psi)
+            shadow = sh - (1 - vegsh) * (1 - psi)
         else:
-            result = shadowing.calculate_shadows_wall_ht_25(
-                azimuth,
-                altitude,
-                scale,
-                dsm.astype(np.float32),
-                None,
-                None,
-                None,
-                walls.astype(np.float32),
-                (dirwalls * np.pi / 180.0).astype(np.float32),
-                None,
-                None,
+            sh, wallsh, wallsun, facesh, facesun = shadowingfunction_wallheight_13(
+                dsm, azimuth, altitude, scale, walls, dirwalls * np.pi / 180.0
             )
-            sh = result.bldg_sh
-            wallsh = result.wall_sh
-            wallsun = result.wall_sun
-            facesh = result.face_sh
-            facesun = result.face_sun
-            shadow = result.bldg_sh
+            shadow = sh
 
         # # # Surface temperature parameterisation during daytime # # # #
         # new using max sun alt.instead of  dfm

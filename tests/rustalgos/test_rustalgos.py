@@ -1,13 +1,13 @@
+import os
 import timeit
 
 import matplotlib.pyplot as plt
 import numpy as np
 from memory_profiler import memory_usage
-from umep.functions.SOLWEIGpython import Solweig_run as sr
 from umep.functions.svf_functions import svfForProcessing153
 from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
 from umepr import common
-from umepr import solweig_config as srr
+from umepr.functions import solweig_runner_core
 from umepr.hybrid.svf_hybrid import svfForProcessing153_rust_shdw
 from umepr.rustalgos import shadowing, skyview
 
@@ -217,15 +217,22 @@ def test_solweig():
     repeats = 1
 
     # --- Timing only (no memory profiling) ---
+    SWC = solweig_runner_core.SolweigRunCore(
+        config_path_str="tests/rustalgos/test_config_solweig.ini",
+        params_json_path="tests/rustalgos/test_params_solweig.json",
+    )
+
     def run_py():
-        sr.solweig_run("tests/rustalgos/test_config_solweig.ini", feedback=None)
+        SWC.run()
 
-    def run_hybrid():
-        srr.solweig_run("tests/rustalgos/test_config_solweig.ini", feedback=None)
-
+    os.environ["HYBRID"] = "False"
     py_timings = timeit.repeat(run_py, number=1, repeat=repeats)
     print_timing_stats("solweig_run", py_timings)
 
+    def run_hybrid():
+        SWC.run()
+
+    os.environ["HYBRID"] = "True"
     hybrid_timings = timeit.repeat(run_hybrid, number=1, repeat=repeats)
     print_timing_stats("solweig_run w rust shadows", hybrid_timings)
 
@@ -233,9 +240,11 @@ def test_solweig():
     relative_speed(py_timings, hybrid_timings)
 
     # --- Memory profiling only (no timing) ---
+    os.environ["HYBRID"] = "False"
     py_memory = memory_usage(run_py, max_usage=True)
     print(f"solweig_run: max memory usage: {py_memory:.2f} MiB")
 
+    os.environ["HYBRID"] = "True"
     rust_memory = memory_usage(run_hybrid, max_usage=True)
     print(f"solweig_run w rust shadows: max memory usage: {rust_memory:.2f} MiB")
 
@@ -247,18 +256,18 @@ def make_test_arrays(
     wall_hts_path="demos/data/athens/walls_{res}m/wall_hts.tif",
     wall_aspect_path="demos/data/athens/walls_{res}m/wall_aspects.tif",
 ):
-    dsm, dsm_transf, _crs = common.load_raster(dsm_path.format(res=resolution), bbox=None)
-    vegdsm, _transf, _crs = common.load_raster(veg_dsm_path.format(res=resolution), bbox=None)
+    dsm, dsm_transf, _crs, _nd_val = common.load_raster(dsm_path.format(res=resolution), bbox=None)
+    vegdsm, _transf, _crs, _nd_val = common.load_raster(veg_dsm_path.format(res=resolution), bbox=None)
     vegdsm2 = np.zeros(dsm.shape, dtype=np.float32)  # Ensure float32
     azi = 45.0
     alt = 30.0
-    scale = 1 / dsm_transf.a
+    scale = 1 / dsm_transf[1]
     vegmax = vegdsm.max()
     amaxvalue = dsm.max() - dsm.min()
     amaxvalue = np.maximum(amaxvalue, vegmax)
     bush = np.zeros(dsm.shape, dtype=np.float32)  # Ensure float32
-    wall_hts, _transf, _crs = common.load_raster(wall_hts_path.format(res=resolution), bbox=None)
-    wall_asp, _transf, _crs = common.load_raster(wall_aspect_path.format(res=resolution), bbox=None)
+    wall_hts, _transf, _crs, _nd_val = common.load_raster(wall_hts_path.format(res=resolution), bbox=None)
+    wall_asp, _transf, _crs, _nd_val = common.load_raster(wall_aspect_path.format(res=resolution), bbox=None)
 
     # Convert all loaded arrays to float32
     dsm = dsm.astype(np.float32)
