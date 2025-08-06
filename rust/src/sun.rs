@@ -6,6 +6,7 @@ const PI: f32 = std::f32::consts::PI;
 
 #[pyfunction]
 #[allow(clippy::too_many_arguments)]
+#[allow(non_snake_case)]
 pub fn sun_on_surface(
     py: Python,
     azimuth_a: f32,
@@ -17,15 +18,15 @@ pub fn sun_on_surface(
     second_ht: f32,
     wall_aspect_arr: PyReadonlyArray2<f32>,
     wall_ht_arr: PyReadonlyArray2<f32>,
-    tg_arr: PyReadonlyArray2<f32>,
-    tgk_wall: f32,
-    T_air: f32,
+    tground_arr: PyReadonlyArray2<f32>,
+    tg_wall: f32,
+    t_air: f32,
     emis_grid_arr: PyReadonlyArray2<f32>,
     wall_emmisiv: f32,
     alb_grid_arr: PyReadonlyArray2<f32>,
-    SBC: f32,
+    sbc: f32,
     wall_albedo: f32,
-    T_water: f32,
+    t_water: f32,
     lc_grid_arr: PyReadonlyArray2<f32>,
     use_landcover: bool,
 ) -> PyResult<(
@@ -40,7 +41,7 @@ pub fn sun_on_surface(
     let sunwall = sunwall_arr.as_array().to_owned();
     let aspect = wall_aspect_arr.as_array().to_owned();
     let walls = wall_ht_arr.as_array().to_owned();
-    let tg = tg_arr.as_array().to_owned();
+    let tg = tground_arr.as_array().to_owned();
     let emis_grid = emis_grid_arr.as_array().to_owned();
     let alb_grid = alb_grid_arr.as_array().to_owned();
     let lc_grid = lc_grid_arr.as_array().to_owned();
@@ -57,10 +58,10 @@ pub fn sun_on_surface(
     let azimuth = azimuth_a * (PI / 180.0);
     let mut f = buildings.to_owned();
     let mut tg_mut = tg.to_owned();
-    if use_landcover == 1 {
+    if use_landcover {
         Zip::from(&mut tg_mut).and(&lc_grid).for_each(|tgval, &lc| {
             if lc == 3.0 {
-                *tgval = T_water - T_air;
+                *tgval = t_water - t_air;
             }
         });
     }
@@ -70,14 +71,11 @@ pub fn sun_on_surface(
         .and(&tg_mut)
         .and(&shadow)
         .for_each(|l, &emis, &tg_val, &sh| {
-            *l = SBC * emis * ((tg_val * sh + T_air + 273.15).powi(4))
-                - SBC * emis * (T_air + 273.15).powi(4);
+            *l = sbc * emis * ((tg_val * sh + t_air + 273.15).powi(4))
+                - sbc * emis * (t_air + 273.15).powi(4);
         });
-    let mut lwall = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut lwall).and(&tgwall).for_each(|l, &tgw| {
-        *l = SBC * wall_emmisiv * ((tgw + T_air + 273.15).powi(4))
-            - SBC * wall_emmisiv * (T_air + 273.15).powi(4);
-    });
+    let lwall: f32 = sbc * wall_emmisiv * ((tg_wall + t_air + 273.15).powi(4))
+        - sbc * wall_emmisiv * (t_air + 273.15).powi(4);
     let albshadow = &alb_grid * &shadow;
     let alb = alb_grid.to_owned();
 
@@ -193,11 +191,10 @@ pub fn sun_on_surface(
             }
 
             // tempbu = buildings[xc1:xc2, yc1:yc2]
-            // Ensure the slices have the same shape and compatible types
-            let src_buildings = src(&buildings, src_x, minx, src_y, miny).to_owned();
-            let src_shadow = src(&shadow, src_x, minx, src_y, miny).to_owned();
-            dst(&mut tempbu, dst_x, minx, dst_y, miny).assign(&src_buildings);
-            dst(&mut tempsh, dst_x, minx, dst_y, miny).assign(&src_shadow);
+            dst(&mut tempbu, dst_x, minx, dst_y, miny)
+                .assign(&src(&buildings, src_x, minx, src_y, miny));
+            dst(&mut tempsh, dst_x, minx, dst_y, miny)
+                .assign(&src(&shadow, src_x, minx, src_y, miny));
             dst(&mut temp_lupsh, dst_x, minx, dst_y, miny)
                 .assign(&src(&lup, src_x, minx, src_y, miny));
             dst(&mut temp_albsh, dst_x, minx, dst_y, miny)
@@ -207,44 +204,33 @@ pub fn sun_on_surface(
 
             // f = np.min([f, tempbu], axis=0)
             Zip::from(dst(&mut f, dst_x, minx, dst_y, miny))
-                .and(dst(&mut tempbu, dst_x, minx, dst_y, miny))
-                .for_each(|fval, tbu| {
-                    *fval = fval.min(*tbu);
+                .and(&src(&tempbu, dst_x, minx, dst_y, miny))
+                .for_each(|fval, &tbu| {
+                    *fval = fval.min(tbu);
                 });
 
             // shadow2 = tempsh * f
-            let tempsh_slice = dst(&mut tempsh, dst_x, minx, dst_y, miny).to_owned();
-            let f_slice = dst(&mut f, dst_x, minx, dst_y, miny).to_owned();
-            let shadow2 = &tempsh_slice * &f_slice;
-            let weightsumsh_slice = dst(&mut weightsumsh, dst_x, minx, dst_y, miny).to_owned();
-            dst(&mut weightsumsh, dst_x, minx, dst_y, miny).assign(&(weightsumsh_slice + &shadow2));
+            let shadow2 =
+                &src(&tempsh, dst_x, minx, dst_y, miny) * &src(&f, dst_x, minx, dst_y, miny);
+            dst(&mut weightsumsh, dst_x, minx, dst_y, miny).zip_mut_with(&shadow2, |a, &b| *a += b);
 
             // Lupsh = temp_lupsh * f
-            let temp_lupsh_slice = dst(&mut temp_lupsh, dst_x, minx, dst_y, miny).to_owned();
-            let f_slice2 = dst(&mut f, dst_x, minx, dst_y, miny).to_owned();
-            let lupsh = &temp_lupsh_slice * &f_slice2;
-            let weightsum_lupsh_slice =
-                dst(&mut weightsum_lupsh, dst_x, minx, dst_y, miny).to_owned();
+            let lupsh =
+                &src(&temp_lupsh, dst_x, minx, dst_y, miny) * &src(&f, dst_x, minx, dst_y, miny);
             dst(&mut weightsum_lupsh, dst_x, minx, dst_y, miny)
-                .assign(&(weightsum_lupsh_slice + &lupsh));
+                .zip_mut_with(&lupsh, |a, &b| *a += b);
 
             // albsh = temp_albsh * f
-            let temp_albsh_slice = dst(&mut temp_albsh, dst_x, minx, dst_y, miny).to_owned();
-            let f_slice3 = dst(&mut f, dst_x, minx, dst_y, miny).to_owned();
-            let albsh = &temp_albsh_slice * &f_slice3;
-            let weightsum_albsh_slice =
-                dst(&mut weightsum_albsh, dst_x, minx, dst_y, miny).to_owned();
+            let albsh =
+                &src(&temp_albsh, dst_x, minx, dst_y, miny) * &src(&f, dst_x, minx, dst_y, miny);
             dst(&mut weightsum_albsh, dst_x, minx, dst_y, miny)
-                .assign(&(weightsum_albsh_slice + &albsh));
+                .zip_mut_with(&albsh, |a, &b| *a += b);
 
             // albnosh = temp_albnosh * f
-            let temp_albnosh_slice = dst(&mut temp_albnosh, dst_x, minx, dst_y, miny).to_owned();
-            let f_slice4 = dst(&mut f, dst_x, minx, dst_y, miny).to_owned();
-            let albnosh = &temp_albnosh_slice * &f_slice4;
-            let weightsum_albnosh_slice =
-                dst(&mut weightsum_albnosh, dst_x, minx, dst_y, miny).to_owned();
+            let albnosh =
+                &src(&temp_albnosh, dst_x, minx, dst_y, miny) * &src(&f, dst_x, minx, dst_y, miny);
             dst(&mut weightsum_albnosh, dst_x, minx, dst_y, miny)
-                .assign(&(weightsum_albnosh_slice + &albnosh));
+                .zip_mut_with(&albnosh, |a, &b| *a += b);
 
             // tempwallsun = sunwall[xc1:xc2, yc1:yc2]
             dst(&mut tempwallsun, dst_x, minx, dst_y, miny).assign(&src(
@@ -254,14 +240,13 @@ pub fn sun_on_surface(
                 src_y,
                 miny,
             ));
-            let tempwallsun_slice = dst(&mut tempwallsun, dst_x, minx, dst_y, miny).to_owned();
-            let f_slice5 = dst(&mut f, dst_x, minx, dst_y, miny).to_owned();
-            let tempb = &tempwallsun_slice * &f_slice5;
-            let f_slice6 = dst(&mut f, dst_x, minx, dst_y, miny).to_owned();
-            let tempbwall = &f_slice6 * -1.0 + 1.0;
+            let tempb =
+                &src(&tempwallsun, dst_x, minx, dst_y, miny) * &src(&f, dst_x, minx, dst_y, miny);
+            let tempbwall = &src(&f, dst_x, minx, dst_y, miny) * -1.0 + 1.0;
+
             // tempbub = ((tempb + tempbub) > 0) * 1
-            let tempbub_prev = dst(&mut tempbub, dst_x, minx, dst_y, miny).to_owned();
-            let mut tempbub_new = tempbub_prev.clone();
+            let tempbub_prev = src(&tempbub, dst_x, minx, dst_y, miny).to_owned();
+            let mut tempbub_new = Array2::<f32>::zeros((minx, miny));
             Zip::from(&mut tempbub_new)
                 .and(&tempb)
                 .and(&tempbub_prev)
@@ -269,9 +254,10 @@ pub fn sun_on_surface(
                     *tbub = if tb + tbub_prev > 0.0 { 1.0 } else { 0.0 };
                 });
             dst(&mut tempbub, dst_x, minx, dst_y, miny).assign(&tempbub_new);
+
             // tempbubwall = ((tempbwall + tempbubwall) > 0) * 1
-            let tempbubwall_prev = dst(&mut tempbubwall, dst_x, minx, dst_y, miny).to_owned();
-            let mut tempbubwall_new = tempbubwall_prev.clone();
+            let tempbubwall_prev = src(&tempbubwall, dst_x, minx, dst_y, miny).to_owned();
+            let mut tempbubwall_new = Array2::<f32>::zeros((minx, miny));
             Zip::from(&mut tempbubwall_new)
                 .and(&tempbwall)
                 .and(&tempbubwall_prev)
@@ -279,31 +265,43 @@ pub fn sun_on_surface(
                     *tbubw = if tbw + tbubw_prev > 0.0 { 1.0 } else { 0.0 };
                 });
             dst(&mut tempbubwall, dst_x, minx, dst_y, miny).assign(&tempbubwall_new);
+
             // weightsum_lwall = weightsum_lwall + tempbub * lwall
-            let lwall_slice = src(&lwall, src_x, minx, src_y, miny).to_owned();
-            let tempbub_slice = tempbub_new;
-            let lwallprod = &tempbub_slice * &lwall_slice;
-            let weightsum_lwall_slice =
-                dst(&mut weightsum_lwall, dst_x, minx, dst_y, miny).to_owned();
+            let lwallprod = &tempbub_new * lwall;
             dst(&mut weightsum_lwall, dst_x, minx, dst_y, miny)
-                .assign(&(weightsum_lwall_slice + &lwallprod));
+                .zip_mut_with(&lwallprod, |a, &b| *a += b);
+
             // weightsum_albwall = weightsum_albwall + tempbub * albedo_b
-            let albwallprod = &tempbub_slice * wall_albedo;
-            let weightsum_albwall_slice =
-                dst(&mut weightsum_albwall, dst_x, minx, dst_y, miny).to_owned();
+            let albwallprod = &tempbub_new * wall_albedo;
             dst(&mut weightsum_albwall, dst_x, minx, dst_y, miny)
-                .assign(&(weightsum_albwall_slice + &albwallprod));
+                .zip_mut_with(&albwallprod, |a, &b| *a += b);
+
             // weightsumwall = weightsumwall + tempbub
-            let weightsumwall_slice = dst(&mut weightsumwall, dst_x, minx, dst_y, miny).to_owned();
             dst(&mut weightsumwall, dst_x, minx, dst_y, miny)
-                .assign(&(weightsumwall_slice + &tempbub_slice));
+                .zip_mut_with(&tempbub_new, |a, &b| *a += b);
+
             // weightsum_albwallnosh = weightsum_albwallnosh + tempbubwall * albedo_b
-            let tempbubwall_slice = tempbubwall_new;
-            let albwallnoshprod = &tempbubwall_slice * wall_albedo;
-            let weightsum_albwallnosh_slice =
-                dst(&mut weightsum_albwallnosh, dst_x, minx, dst_y, miny).to_owned();
+            let albwallnoshprod = &tempbubwall_new * wall_albedo;
             dst(&mut weightsum_albwallnosh, dst_x, minx, dst_y, miny)
-                .assign(&(weightsum_albwallnosh_slice + &albwallnoshprod));
+                .zip_mut_with(&albwallnoshprod, |a, &b| *a += b);
+        }
+
+        if (n as f32 + 1.0) <= first {
+            weightsumwall_first.assign(&(&weightsumwall / ind));
+            weightsumsh_first.assign(&(&weightsumsh / ind));
+            wallsuninfluence_first.zip_mut_with(&weightsumwall_first, |wuf, &wswf| {
+                *wuf = if wswf > 0.0 { 1.0 } else { 0.0 };
+            });
+            weightsum_lwall_first.assign(&(&weightsum_lwall / ind));
+            weightsum_lupsh_first.assign(&(&weightsum_lupsh / ind));
+            weightsum_albwall_first.assign(&(&weightsum_albwall / ind));
+            weightsum_albsh_first.assign(&(&weightsum_albsh / ind));
+            weightsum_albwallnosh_first.assign(&(&weightsum_albwallnosh / ind));
+            weightsum_albnosh_first.assign(&(&weightsum_albnosh / ind));
+            wallinfluence_first.zip_mut_with(&weightsum_albwallnosh_first, |wif, &wawnf| {
+                *wif = if wawnf > 0.0 { 1.0 } else { 0.0 };
+            });
+            ind += 1.0;
         }
         index += 1.0;
     }
@@ -333,7 +331,7 @@ pub fn sun_on_surface(
             }) + 1.0;
         });
     } else if azilow > 0.0 && azihigh >= 2.0 * PI {
-        azihigh = azihigh - 2.0 * PI;
+        azihigh -= 2.0 * PI;
         Zip::from(&mut facesh).and(&aspect).for_each(|fsh, &asp| {
             *fsh = (if asp > azilow || asp <= azihigh {
                 -1.0
@@ -452,7 +450,7 @@ pub fn sun_on_surface(
             *g = ((waw + was) / (second + 1.0)) * wus + (was / second) * (-1.0 * wus + 1.0);
         });
 
-    // gvfalbnosh1 = ((weightsum_albwallnosh_first + weightsum_albnosh_first) / (first + 1)) * wallinfluence_first + (weightsum_albnosh_first) / (first) * (wallinfluence_first * -1 + 1)
+    // gvfalbnosh1
     let mut gvfalbnosh1 = Array2::<f32>::zeros((sizex, sizey));
     Zip::from(&mut gvfalbnosh1)
         .and(&weightsum_albwallnosh_first)
@@ -461,34 +459,50 @@ pub fn sun_on_surface(
         .for_each(|g, &wawnf, &wanf, &wif| {
             *g = ((wawnf + wanf) / (first + 1.0)) * wif + (wanf / first) * (-1.0 * wif + 1.0);
         });
-    // gvfalbnosh2 = ((weightsum_albwallnosh + weightsum_albnosh) / (second)) * wallinfluence_second + (weightsum_albnosh) / (second) * (wallinfluence_second * -1 + 1)
+
+    // gvfalbnosh2
     let mut gvfalbnosh2 = Array2::<f32>::zeros((sizex, sizey));
     Zip::from(&mut gvfalbnosh2)
         .and(&weightsum_albwallnosh)
         .and(&weightsum_albnosh)
         .and(&wallinfluence_second)
         .for_each(|g, &wawn, &wan, &wis| {
-            *g = ((wawn + wan) / (second)) * wis + (wan / second) * (-1.0 * wis + 1.0);
+            *g = ((wawn + wan) / second) * wis + (wan / second) * (-1.0 * wis + 1.0);
         });
 
     // Weighting
-    let mut gvf = (&gvf1 * 0.5 + &gvf2 * 0.4) / 0.9;
+    let gvf = (&gvf1 * 0.5 + &gvf2 * 0.4) / 0.9;
+
     let mut gvf_lup = (&gvf_lup1 * 0.5 + &gvf_lup2 * 0.4) / 0.9;
-    gvf_lup = &gvf_lup
-        + &((&emis_grid * &((&tg * &shadow + T_air + 273.15).mapv(|v| v.powi(4)))
-            - &emis_grid * (T_air + 273.15).powi(4))
-            * (&buildings * -1.0 + 1.0))
-            * SBC;
+    let lup_add = {
+        let mut temp = Array2::<f32>::zeros((sizex, sizey));
+        Zip::from(&mut temp)
+            .and(&emis_grid)
+            .and(&tg_mut)
+            .and(&shadow)
+            .and(&buildings)
+            .for_each(|l, &emis, &tg_val, &sh, &bldg| {
+                let term1 = sbc * emis * (tg_val * sh + t_air + 273.15).powi(4);
+                let term2 = sbc * emis * (t_air + 273.15).powi(4);
+                *l = (term1 - term2) * (-1.0 * bldg + 1.0);
+            });
+        temp
+    };
+    gvf_lup += &lup_add;
+
     let mut gvfalb = (&gvfalb1 * 0.5 + &gvfalb2 * 0.4) / 0.9;
-    gvfalb = &gvfalb + &(&alb_grid * (&buildings * -1.0 + 1.0) * &shadow);
+    let alb_add = &alb_grid * &(&buildings * -1.0 + 1.0) * &shadow;
+    gvfalb += &alb_add;
+
     let mut gvfalbnosh = (&gvfalbnosh1 * 0.5 + &gvfalbnosh2 * 0.4) / 0.9;
-    gvfalbnosh = &gvfalbnosh * &buildings + &alb_grid * (&buildings * -1.0 + 1.0);
+    let albnosh_add = &gvfalbnosh * &buildings + &(&alb_grid * &(&buildings * -1.0 + 1.0));
+    gvfalbnosh.assign(&albnosh_add);
 
     Ok((
-        gvf.into_pyarray(py).to_owned().into(),
-        gvf_lup.into_pyarray(py).to_owned().into(),
-        gvfalb.into_pyarray(py).to_owned().into(),
-        gvfalbnosh.into_pyarray(py).to_owned().into(),
-        gvf2.into_pyarray(py).to_owned().into(),
+        gvf.into_pyarray(py).into(),
+        gvf_lup.into_pyarray(py).into(),
+        gvfalb.into_pyarray(py).into(),
+        gvfalbnosh.into_pyarray(py).into(),
+        gvf2.into_pyarray(py).into(),
     ))
 }

@@ -468,7 +468,7 @@ class SolweigRun:
                 break
 
             # Daily water body temperature
-            Twater = []
+            Twater = np.nan
             if self.config.use_landcover:
                 if (dectime[i] - np.floor(dectime[i])) == 0 or (i == 0):
                     Twater = np.mean(weather_data.Ta[jday[0] == np.floor(dectime[i])])
