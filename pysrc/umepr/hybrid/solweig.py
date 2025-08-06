@@ -8,7 +8,6 @@ import numpy as np
 from umep.functions.SOLWEIGpython.anisotropic_sky import anisotropic_sky as ani_sky
 from umep.functions.SOLWEIGpython.cylindric_wedge import cylindric_wedge
 from umep.functions.SOLWEIGpython.daylen import daylen
-from umep.functions.SOLWEIGpython.gvf_2018a import gvf_2018a
 
 # from .Lside_veg_v2015a import Lside_veg_v2015a
 # from .Kside_veg_v2019a import Kside_veg_v2019a
@@ -28,6 +27,7 @@ from umep.util.SEBESOLWEIGCommonFiles.diffusefraction import diffusefraction
 from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
 
 from ..rustalgos import shadowing
+from . import gvf
 
 
 def Solweig_2025a_calc(
@@ -344,7 +344,7 @@ def Solweig_2025a_calc(
             gvfalbnoshN,
             gvfSum,
             gvfNorm,
-        ) = gvf_2018a(
+        ) = gvf.gvf_2018a(
             wallsun,
             walls,
             buildings,

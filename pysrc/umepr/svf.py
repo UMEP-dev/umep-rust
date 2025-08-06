@@ -27,8 +27,8 @@ def generate_svf(
     out_path_str = str(out_path)
 
     # Open the DSM file
-    dsm_rast, dsm_transf, dsm_crs = common.load_raster(dsm_path, bbox)
-    dsm_scale = 1 / dsm_transf.a
+    dsm_rast, dsm_transf, dsm_crs, _dsm_nd = common.load_raster(dsm_path, bbox)
+    dsm_scale = 1 / dsm_transf[1]
 
     # veg transmissivity as percentage
     if not trans_veg >= 0 and trans_veg <= 100:
@@ -42,7 +42,7 @@ def generate_svf(
         cdsm_rast = np.zeros([rows, cols])
     else:
         use_cdsm = True
-        cdsm_rast, cdsm_transf, cdsm_crs = common.load_raster(cdsm_path, bbox)
+        cdsm_rast, cdsm_transf, cdsm_crs, _cdsm_nd = common.load_raster(cdsm_path, bbox)
         if not cdsm_crs == dsm_crs:
             raise ValueError("Mismatching CRS for DSM and CDSM.")
         if not dsm_transf == cdsm_transf:

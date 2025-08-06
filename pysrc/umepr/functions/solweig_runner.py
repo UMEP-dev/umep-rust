@@ -18,8 +18,8 @@ from umep.util.SEBESOLWEIGCommonFiles.Solweig_v2015_metdata_noload import Solwei
 
 from .. import common
 from ..class_configs import SolweigConfig, SvfData, WeatherData
-from ..hybrid.solweig_hybrid import Solweig_2025a_calc as Solweig_2025a_calc_hybrid
-from .solweig import Solweig_2025a_calc
+from ..hybrid.solweig import Solweig_2025a_calc as Solweig_2025a_calc_hybrid
+from ..original.solweig import Solweig_2025a_calc
 
 
 def dict_to_namespace(d):

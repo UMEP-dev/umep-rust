@@ -3,7 +3,7 @@ name = "umepr"
 version = "0.0.1a1"
 description = "rust implementation of urban multi-scale environmental predictor"
 readme = "README.md"
-requires-python = ">=3.10, <3.14"
+requires-python = ">=3.9, <3.14"
 license = { text = "AGPL-3.0" }
 keywords = [
     "python3",
@@ -32,23 +32,23 @@ classifiers = [
 ]
 dependencies = [
     "geopandas>=1.0.1",
-    "matplotlib>=3.9.2",
-    "momepy>=0.8.1",
-    "numpy<2.1.0",
-    "pandas>=2.2.3",
-    "pvlib>=0.11.1",
-    "pyepw>=0.1",
-    "pytz>=2024.2",
-    "rasterio>=1.4.1",
-    "scipy>=1.14.1",
-    "shapely>=2.0.6",
-    "tqdm>=4.66.5",
-    "pythermalcomfort>=2.10.0",
-    "pyproj>=3.7.0",
-    "xarray>=2025.3.1",
-    "rioxarray>=0.19.0",
+    "matplotlib>=3.9.4",
     "memory-profiler>=0.61.0",
-    "umep>=0.0.1b1",
+    "momepy>=0.6.0",
+    "numpy>=2.0.2",
+    "pandas>=2.3.1",
+    "pvlib>=0.13.0",
+    "pyepw>=0.1",
+    "pyproj>=3.6.1",
+    "pythermalcomfort>=3.3.0",
+    "pytz>=2025.2",
+    "rasterio>=1.4.3",
+    "rioxarray>=0.15.0",
+    "scipy>=1.13.1",
+    "shapely>=2.0.7",
+    "tqdm>=4.67.1",
+    "umep>=0.0.1b4",
+    "xarray>=2024.7.0",
 ]
 
 [build-system]

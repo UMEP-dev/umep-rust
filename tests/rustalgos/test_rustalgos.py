@@ -1,4 +1,6 @@
+import cProfile
 import os
+import pstats
 import timeit
 
 import matplotlib.pyplot as plt
@@ -8,7 +10,7 @@ from umep.functions.svf_functions import svfForProcessing153
 from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
 from umepr import common
 from umepr.functions import solweig_runner_core
-from umepr.hybrid.svf_hybrid import svfForProcessing153_rust_shdw
+from umepr.hybrid.svf import svfForProcessing153_rust_shdw
 from umepr.rustalgos import shadowing, skyview
 
 
@@ -247,6 +249,25 @@ def test_solweig():
     os.environ["HYBRID"] = "True"
     rust_memory = memory_usage(run_hybrid, max_usage=True)
     print(f"solweig_run w rust shadows: max memory usage: {rust_memory:.2f} MiB")
+
+
+def simple_solweig():
+    # Simple test to run Solweig with minimal setup
+    SWC = solweig_runner_core.SolweigRunCore(
+        config_path_str="tests/rustalgos/test_config_solweig.ini",
+        params_json_path="tests/rustalgos/test_params_solweig.json",
+    )
+    SWC.run()
+
+
+def test_profile_solweig():
+    os.environ["HYBRID"] = "True"
+    profiler = cProfile.Profile()
+    profiler.enable()
+    simple_solweig()
+    profiler.disable()
+    stats = pstats.Stats(profiler).sort_stats("cumtime")
+    stats.print_stats(30)  # Show top 30 lines
 
 
 def make_test_arrays(
