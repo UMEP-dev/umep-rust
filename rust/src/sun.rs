@@ -1,6 +1,7 @@
-use ndarray::{s, Array2, Zip};
+use ndarray::{par_azip, s, Array2};
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
+use rayon::prelude::*;
 
 const PI: f32 = std::f32::consts::PI;
 
@@ -48,32 +49,24 @@ pub fn sun_on_surface(
     let (sizex, sizey) = (walls.shape()[0], walls.shape()[1]);
 
     let mut wallbol = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut wallbol)
-        .and(&walls)
-        .for_each(|w, &val| *w = if val > 0.0 { 1.0 } else { 0.0 });
+    par_azip!((w in &mut wallbol, &val in &walls) *w = if val > 0.0 { 1.0 } else { 0.0 });
 
     let mut sunwall_bin = sunwall.to_owned();
-    sunwall_bin.mapv_inplace(|v| if v > 0.0 { 1.0 } else { 0.0 });
+    sunwall_bin
+        .par_iter_mut()
+        .for_each(|v| *v = if *v > 0.0 { 1.0 } else { 0.0 });
 
     let azimuth = azimuth_a * (PI / 180.0);
     let mut f = buildings.to_owned();
     let mut tg_mut = tg.to_owned();
     if use_landcover {
-        Zip::from(&mut tg_mut).and(&lc_grid).for_each(|tgval, &lc| {
-            if lc == 3.0 {
-                *tgval = t_water - t_air;
-            }
-        });
+        par_azip!((tgval in &mut tg_mut, &lc in &lc_grid) if lc == 3.0 { *tgval = t_water - t_air; });
     }
     let mut lup = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut lup)
-        .and(&emis_grid)
-        .and(&tg_mut)
-        .and(&shadow)
-        .for_each(|l, &emis, &tg_val, &sh| {
-            *l = sbc * emis * ((tg_val * sh + t_air + 273.15).powi(4))
-                - sbc * emis * (t_air + 273.15).powi(4);
-        });
+    par_azip!((l in &mut lup, &emis in &emis_grid, &tg_val in &tg_mut, &sh in &shadow)
+        *l = sbc * emis * ((tg_val * sh + t_air + 273.15).powi(4))
+            - sbc * emis * (t_air + 273.15).powi(4)
+    );
     let lwall: f32 = sbc * wall_emmisiv * ((tg_wall + t_air + 273.15).powi(4))
         - sbc * wall_emmisiv * (t_air + 273.15).powi(4);
     let albshadow = &alb_grid * &shadow;
@@ -203,11 +196,9 @@ pub fn sun_on_surface(
                 .assign(&src(&alb, src_x, minx, src_y, miny));
 
             // f = np.min([f, tempbu], axis=0)
-            Zip::from(dst(&mut f, dst_x, minx, dst_y, miny))
-                .and(&src(&tempbu, dst_x, minx, dst_y, miny))
-                .for_each(|fval, &tbu| {
-                    *fval = fval.min(tbu);
-                });
+            par_azip!((fval in dst(&mut f, dst_x, minx, dst_y, miny), &tbu in &src(&tempbu, dst_x, minx, dst_y, miny)) {
+                *fval = fval.min(tbu);
+            });
 
             // shadow2 = tempsh * f
             let shadow2 =
@@ -247,23 +238,17 @@ pub fn sun_on_surface(
             // tempbub = ((tempb + tempbub) > 0) * 1
             let tempbub_prev = src(&tempbub, dst_x, minx, dst_y, miny).to_owned();
             let mut tempbub_new = Array2::<f32>::zeros((minx, miny));
-            Zip::from(&mut tempbub_new)
-                .and(&tempb)
-                .and(&tempbub_prev)
-                .for_each(|tbub, &tb, &tbub_prev| {
-                    *tbub = if tb + tbub_prev > 0.0 { 1.0 } else { 0.0 };
-                });
+            par_azip!((tbub in &mut tempbub_new, &tb in &tempb, &tbub_prev in &tempbub_prev) {
+                *tbub = if tb + tbub_prev > 0.0 { 1.0 } else { 0.0 };
+            });
             dst(&mut tempbub, dst_x, minx, dst_y, miny).assign(&tempbub_new);
 
             // tempbubwall = ((tempbwall + tempbubwall) > 0) * 1
             let tempbubwall_prev = src(&tempbubwall, dst_x, minx, dst_y, miny).to_owned();
             let mut tempbubwall_new = Array2::<f32>::zeros((minx, miny));
-            Zip::from(&mut tempbubwall_new)
-                .and(&tempbwall)
-                .and(&tempbubwall_prev)
-                .for_each(|tbubw, &tbw, &tbubw_prev| {
-                    *tbubw = if tbw + tbubw_prev > 0.0 { 1.0 } else { 0.0 };
-                });
+            par_azip!((tbubw in &mut tempbubwall_new, &tbw in &tempbwall, &tbubw_prev in &tempbubwall_prev) {
+                *tbubw = if tbw + tbubw_prev > 0.0 { 1.0 } else { 0.0 };
+            });
             dst(&mut tempbubwall, dst_x, minx, dst_y, miny).assign(&tempbubwall_new);
 
             // weightsum_lwall = weightsum_lwall + tempbub * lwall
@@ -310,165 +295,96 @@ pub fn sun_on_surface(
     let azilow = azimuth - PI / 2.0;
     let mut azihigh = azimuth + PI / 2.0;
     if azilow >= 0.0 && azihigh < 2.0 * PI {
-        Zip::from(&mut facesh)
-            .and(&aspect)
-            .and(&wallbol)
-            .for_each(|fsh, &asp, &wbol| {
-                *fsh = (if asp < azilow || asp >= azihigh {
-                    1.0
-                } else {
-                    0.0
-                }) - wbol
-                    + 1.0;
-            });
+        par_azip!((fsh in &mut facesh, &asp in &aspect, &wbol in &wallbol)
+            *fsh = (if asp < azilow || asp >= azihigh { 1.0 } else { 0.0 }) - wbol + 1.0
+        );
     } else if azilow < 0.0 && azihigh <= 2.0 * PI {
         let azilow_wrapped = azilow + 2.0 * PI;
-        Zip::from(&mut facesh).and(&aspect).for_each(|fsh, &asp| {
-            *fsh = (if asp > azilow_wrapped || asp <= azihigh {
-                -1.0
-            } else {
-                0.0
-            }) + 1.0;
-        });
+        par_azip!((fsh in &mut facesh, &asp in &aspect)
+            *fsh = (if asp > azilow_wrapped || asp <= azihigh { -1.0 } else { 0.0 }) + 1.0
+        );
     } else if azilow > 0.0 && azihigh >= 2.0 * PI {
         azihigh -= 2.0 * PI;
-        Zip::from(&mut facesh).and(&aspect).for_each(|fsh, &asp| {
-            *fsh = (if asp > azilow || asp <= azihigh {
-                -1.0
-            } else {
-                0.0
-            }) + 1.0;
-        });
+        par_azip!((fsh in &mut facesh, &asp in &aspect)
+            *fsh = (if asp > azilow || asp <= azihigh { -1.0 } else { 0.0 }) + 1.0
+        );
     }
 
     // keep = (weightsumwall == second) - facesh
     let mut keep = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut keep)
-        .and(&weightsumwall)
-        .and(&facesh)
-        .for_each(|k, &wsw, &fsh| {
-            *k = if (wsw - second).abs() < 1e-6 {
-                1.0
-            } else {
-                0.0
-            } - fsh;
-        });
-    keep.mapv_inplace(|v| if v == -1.0 { 0.0 } else { v });
+    par_azip!((k in &mut keep, &wsw in &weightsumwall, &fsh in &facesh)
+        *k = (if (wsw - second).abs() < 1e-6 { 1.0 } else { 0.0 }) - fsh
+    );
+    keep.par_iter_mut().for_each(|v| {
+        if *v == -1.0 {
+            *v = 0.0
+        }
+    });
 
     // wallsuninfluence_second = weightsumwall > 0
     let mut wallsuninfluence_second = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut wallsuninfluence_second)
-        .and(&weightsumwall)
-        .for_each(|wus, &wsw| *wus = if wsw > 0.0 { 1.0 } else { 0.0 });
+    par_azip!((wus in &mut wallsuninfluence_second, &wsw in &weightsumwall) *wus = if wsw > 0.0 { 1.0 } else { 0.0 });
     // wallinfluence_second = weightsum_albwallnosh > 0
     let mut wallinfluence_second = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut wallinfluence_second)
-        .and(&weightsum_albwallnosh)
-        .for_each(|wis, &wawn| *wis = if wawn > 0.0 { 1.0 } else { 0.0 });
+    par_azip!((wis in &mut wallinfluence_second, &wawn in &weightsum_albwallnosh) *wis = if wawn > 0.0 { 1.0 } else { 0.0 });
 
     // gvf1 = ((weightsumwall_first + weightsumsh_first) / (first + 1)) * wallsuninfluence_first + (weightsumsh_first) / (first) * (wallsuninfluence_first * -1 + 1)
     let mut gvf1 = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut gvf1)
-        .and(&weightsumwall_first)
-        .and(&weightsumsh_first)
-        .and(&wallsuninfluence_first)
-        .for_each(|g, &wswf, &wshf, &wuf| {
-            *g = ((wswf + wshf) / (first + 1.0)) * wuf + (wshf / first) * (-1.0 * wuf + 1.0);
-        });
+    par_azip!((g in &mut gvf1, &wswf in &weightsumwall_first, &wshf in &weightsumsh_first, &wuf in &wallsuninfluence_first)
+        *g = ((wswf + wshf) / (first + 1.0)) * wuf + (wshf / first) * (-1.0 * wuf + 1.0)
+    );
 
     // weightsumwall[keep == 1] = 0
-    Zip::from(&mut weightsumwall)
-        .and(&keep)
-        .for_each(|wsw, &k| {
-            if k == 1.0 {
-                *wsw = 0.0
-            }
-        });
+    par_azip!((wsw in &mut weightsumwall, &k in &keep) if k == 1.0 { *wsw = 0.0 });
 
     // gvf2 = ((weightsumwall + weightsumsh) / (second + 1)) * wallsuninfluence_second + (weightsumsh) / (second) * (wallsuninfluence_second * -1 + 1)
     let mut gvf2 = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut gvf2)
-        .and(&weightsumwall)
-        .and(&weightsumsh)
-        .and(&wallsuninfluence_second)
-        .for_each(|g, &wsw, &wsh, &wus| {
-            *g = ((wsw + wsh) / (second + 1.0)) * wus + (wsh / second) * (-1.0 * wus + 1.0);
-        });
-    gvf2.mapv_inplace(|v| if v > 1.0 { 1.0 } else { v });
+    par_azip!((g in &mut gvf2, &wsw in &weightsumwall, &wsh in &weightsumsh, &wus in &wallsuninfluence_second)
+        *g = ((wsw + wsh) / (second + 1.0)) * wus + (wsh / second) * (-1.0 * wus + 1.0)
+    );
+    gvf2.par_iter_mut().for_each(|v| {
+        if *v > 1.0 {
+            *v = 1.0
+        }
+    });
 
     // gvfLup1 = ((weightsum_lwall_first + weightsum_lupsh_first) / (first + 1)) * wallsuninfluence_first + (weightsum_lupsh_first) / (first) * (wallsuninfluence_first * -1 + 1)
     let mut gvf_lup1 = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut gvf_lup1)
-        .and(&weightsum_lwall_first)
-        .and(&weightsum_lupsh_first)
-        .and(&wallsuninfluence_first)
-        .for_each(|g, &wlwf, &wlsf, &wuf| {
-            *g = ((wlwf + wlsf) / (first + 1.0)) * wuf + (wlsf / first) * (-1.0 * wuf + 1.0);
-        });
+    par_azip!((g in &mut gvf_lup1, &wlwf in &weightsum_lwall_first, &wlsf in &weightsum_lupsh_first, &wuf in &wallsuninfluence_first)
+        *g = ((wlwf + wlsf) / (first + 1.0)) * wuf + (wlsf / first) * (-1.0 * wuf + 1.0)
+    );
     // weightsum_lwall[keep == 1] = 0
-    Zip::from(&mut weightsum_lwall)
-        .and(&keep)
-        .for_each(|wlw, &k| {
-            if k == 1.0 {
-                *wlw = 0.0
-            }
-        });
+    par_azip!((wlw in &mut weightsum_lwall, &k in &keep) if k == 1.0 { *wlw = 0.0 });
     // gvfLup2 = ((weightsum_lwall + weightsum_lupsh) / (second + 1)) * wallsuninfluence_second + (weightsum_lupsh) / (second) * (wallsuninfluence_second * -1 + 1)
     let mut gvf_lup2 = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut gvf_lup2)
-        .and(&weightsum_lwall)
-        .and(&weightsum_lupsh)
-        .and(&wallsuninfluence_second)
-        .for_each(|g, &wlw, &wls, &wus| {
-            *g = ((wlw + wls) / (second + 1.0)) * wus + (wls / second) * (-1.0 * wus + 1.0);
-        });
+    par_azip!((g in &mut gvf_lup2, &wlw in &weightsum_lwall, &wls in &weightsum_lupsh, &wus in &wallsuninfluence_second)
+        *g = ((wlw + wls) / (second + 1.0)) * wus + (wls / second) * (-1.0 * wus + 1.0)
+    );
 
     // gvfalb1 = ((weightsum_albwall_first + weightsum_albsh_first) / (first + 1)) * wallsuninfluence_first + (weightsum_albsh_first) / (first) * (wallsuninfluence_first * -1 + 1)
     let mut gvfalb1 = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut gvfalb1)
-        .and(&weightsum_albwall_first)
-        .and(&weightsum_albsh_first)
-        .and(&wallsuninfluence_first)
-        .for_each(|g, &wawf, &wasf, &wuf| {
-            *g = ((wawf + wasf) / (first + 1.0)) * wuf + (wasf / first) * (-1.0 * wuf + 1.0);
-        });
+    par_azip!((g in &mut gvfalb1, &wawf in &weightsum_albwall_first, &wasf in &weightsum_albsh_first, &wuf in &wallsuninfluence_first)
+        *g = ((wawf + wasf) / (first + 1.0)) * wuf + (wasf / first) * (-1.0 * wuf + 1.0)
+    );
     // weightsum_albwall[keep == 1] = 0
-    Zip::from(&mut weightsum_albwall)
-        .and(&keep)
-        .for_each(|waw, &k| {
-            if k == 1.0 {
-                *waw = 0.0
-            }
-        });
+    par_azip!((waw in &mut weightsum_albwall, &k in &keep) if k == 1.0 { *waw = 0.0 });
     // gvfalb2 = ((weightsum_albwall + weightsum_albsh) / (second + 1)) * wallsuninfluence_second + (weightsum_albsh) / (second) * (wallsuninfluence_second * -1 + 1)
     let mut gvfalb2 = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut gvfalb2)
-        .and(&weightsum_albwall)
-        .and(&weightsum_albsh)
-        .and(&wallsuninfluence_second)
-        .for_each(|g, &waw, &was, &wus| {
-            *g = ((waw + was) / (second + 1.0)) * wus + (was / second) * (-1.0 * wus + 1.0);
-        });
+    par_azip!((g in &mut gvfalb2, &waw in &weightsum_albwall, &was in &weightsum_albsh, &wus in &wallsuninfluence_second)
+        *g = ((waw + was) / (second + 1.0)) * wus + (was / second) * (-1.0 * wus + 1.0)
+    );
 
     // gvfalbnosh1
     let mut gvfalbnosh1 = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut gvfalbnosh1)
-        .and(&weightsum_albwallnosh_first)
-        .and(&weightsum_albnosh_first)
-        .and(&wallinfluence_first)
-        .for_each(|g, &wawnf, &wanf, &wif| {
-            *g = ((wawnf + wanf) / (first + 1.0)) * wif + (wanf / first) * (-1.0 * wif + 1.0);
-        });
+    par_azip!((g in &mut gvfalbnosh1, &wawnf in &weightsum_albwallnosh_first, &wanf in &weightsum_albnosh_first, &wif in &wallinfluence_first)
+        *g = ((wawnf + wanf) / (first + 1.0)) * wif + (wanf / first) * (-1.0 * wif + 1.0)
+    );
 
     // gvfalbnosh2
     let mut gvfalbnosh2 = Array2::<f32>::zeros((sizex, sizey));
-    Zip::from(&mut gvfalbnosh2)
-        .and(&weightsum_albwallnosh)
-        .and(&weightsum_albnosh)
-        .and(&wallinfluence_second)
-        .for_each(|g, &wawn, &wan, &wis| {
-            *g = ((wawn + wan) / second) * wis + (wan / second) * (-1.0 * wis + 1.0);
-        });
+    par_azip!((g in &mut gvfalbnosh2, &wawn in &weightsum_albwallnosh, &wan in &weightsum_albnosh, &wis in &wallinfluence_second)
+        *g = ((wawn + wan) / second) * wis + (wan / second) * (-1.0 * wis + 1.0)
+    );
 
     // Weighting
     let gvf = (&gvf1 * 0.5 + &gvf2 * 0.4) / 0.9;
@@ -476,16 +392,11 @@ pub fn sun_on_surface(
     let mut gvf_lup = (&gvf_lup1 * 0.5 + &gvf_lup2 * 0.4) / 0.9;
     let lup_add = {
         let mut temp = Array2::<f32>::zeros((sizex, sizey));
-        Zip::from(&mut temp)
-            .and(&emis_grid)
-            .and(&tg_mut)
-            .and(&shadow)
-            .and(&buildings)
-            .for_each(|l, &emis, &tg_val, &sh, &bldg| {
-                let term1 = sbc * emis * (tg_val * sh + t_air + 273.15).powi(4);
-                let term2 = sbc * emis * (t_air + 273.15).powi(4);
-                *l = (term1 - term2) * (-1.0 * bldg + 1.0);
-            });
+        par_azip!((l in &mut temp, &emis in &emis_grid, &tg_val in &tg_mut, &sh in &shadow, &bldg in &buildings) {
+            let term1 = sbc * emis * (tg_val * sh + t_air + 273.15).powi(4);
+            let term2 = sbc * emis * (t_air + 273.15).powi(4);
+            *l = (term1 - term2) * (-1.0 * bldg + 1.0);
+        });
         temp
     };
     gvf_lup += &lup_add;

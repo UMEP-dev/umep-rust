@@ -33,26 +33,43 @@ def dict_to_namespace(d):
 
 
 def Tgmaps_v1(lc_grid, params):
-    # Tgmaps_v1 Populates grids with cooeficients for Tg wave
-    #   Detailed explanation goes here
+    """
+    Populates grids with coefficients for Tg wave based on land cover.
+    This is a vectorized version that avoids looping over pixels.
+    """
+    # Sanitize land cover grid
     lc_grid[lc_grid >= 100] = 2
-    id = np.unique(lc_grid)
-    id = lc_grid[lc_grid <= 7].astype(int)
+
+    # Get unique land cover IDs and filter them
+    unique_ids = np.unique(lc_grid)
+    valid_ids = unique_ids[unique_ids <= 7].astype(int)
+
+    # Initialize output grids by copying the original land cover grid
     TgK = np.copy(lc_grid)
     Tstart = np.copy(lc_grid)
     alb_grid = np.copy(lc_grid)
     emis_grid = np.copy(lc_grid)
     TmaxLST = np.copy(lc_grid)
 
-    for i in id:
-        name = getattr(params.Names.Value, str(i), None)
-        # row = (lc_class[:, 0] == id[i])
-        Tstart[Tstart == i] = getattr(params.Tstart.Value, name, None)
-        alb_grid[alb_grid == i] = getattr(params.Albedo.Effective.Value, name, None)
-        emis_grid[emis_grid == i] = getattr(params.Emissivity.Value, name, None)
-        TmaxLST[TmaxLST == i] = getattr(params.TmaxLST.Value, name, None)
-        TgK[TgK == i] = getattr(params.Ts_deg.Value, name, None)
+    # Create mapping dictionaries from land cover ID to parameter values
+    id_to_name = {i: getattr(params.Names.Value, str(i)) for i in valid_ids}
+    name_to_tstart = {name: getattr(params.Tstart.Value, name) for name in id_to_name.values()}
+    name_to_albedo = {name: getattr(params.Albedo.Effective.Value, name) for name in id_to_name.values()}
+    name_to_emissivity = {name: getattr(params.Emissivity.Value, name) for name in id_to_name.values()}
+    name_to_tmaxlst = {name: getattr(params.TmaxLST.Value, name) for name in id_to_name.values()}
+    name_to_tsdeg = {name: getattr(params.Ts_deg.Value, name) for name in id_to_name.values()}
 
+    # Perform replacements for each valid land cover ID
+    for i in valid_ids:
+        mask = lc_grid == i
+        name = id_to_name[i]
+        Tstart[mask] = name_to_tstart[name]
+        alb_grid[mask] = name_to_albedo[name]
+        emis_grid[mask] = name_to_emissivity[name]
+        TmaxLST[mask] = name_to_tmaxlst[name]
+        TgK[mask] = name_to_tsdeg[name]
+
+    # Get wall-specific parameters
     TgK_wall = getattr(params.Ts_deg.Value, "Walls", None)
     Tstart_wall = getattr(params.Tstart.Value, "Walls", None)
     TmaxLST_wall = getattr(params.TmaxLST.Value, "Walls", None)

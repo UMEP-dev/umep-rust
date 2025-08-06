@@ -1,7 +1,6 @@
-use ndarray::{Array2, ArrayView2, Zip};
+use ndarray::{par_azip, s, Array2, ArrayView2, Zip};
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
-use pyo3::IntoPyObject;
 
 // Constants
 const PI_OVER_4: f32 = std::f32::consts::FRAC_PI_4;
@@ -47,17 +46,6 @@ pub struct ShadowingResult {
     #[pyo3(get)]
     /// Combined building and vegetation shadow height on walls (optional scheme).
     pub sh_on_wall: Option<Py<PyArray2<f32>>>,
-}
-
-// Helper function to safely get values from ArrayView2, handling out-of-bounds
-#[inline]
-fn get_view_value(view: &ArrayView2<f32>, r: isize, c: isize, rows: usize, cols: usize) -> f32 {
-    if r >= 0 && r < rows as isize && c >= 0 && c < cols as isize {
-        // Safety: Bounds check performed above
-        unsafe { *view.uget([r as usize, c as usize]) }
-    } else {
-        0.0 // Return 0.0 for out-of-bounds access, mimicking shift behavior
-    }
 }
 
 /// Internal Rust function for shadow calculations.
@@ -143,99 +131,114 @@ pub(crate) fn calculate_shadows_rust(
         }
         dz = (ds * index) * tan_altitude_by_scale;
 
-        Zip::indexed(&mut propagated_bldg_sh_height)
-            .and(&mut bldg_sh)
-            .par_for_each(|(row_idx, col_idx), prop_bldg_h, bldg_sh_flag| {
-                let dsm_h_target = dsm_view[[row_idx, col_idx]];
-                let source_row_idx = (row_idx as f32 + dx).round() as isize;
-                let source_col_idx = (col_idx as f32 + dy).round() as isize;
-                let source_dsm = get_view_value(
-                    &dsm_view,
-                    source_row_idx,
-                    source_col_idx,
-                    num_rows,
-                    num_cols,
-                );
-                let shifted_dsm = source_dsm - dz;
-                *prop_bldg_h = prop_bldg_h.max(shifted_dsm);
-                *bldg_sh_flag = if *prop_bldg_h > dsm_h_target {
-                    1.0
-                } else {
-                    0.0
-                };
+        // --- Slicing logic to operate only on overlapping regions ---
+        let absdx = dx.abs();
+        let absdy = dy.abs();
+        let xc1 = ((dx + absdx) / 2.0) as isize;
+        let xc2 = (num_rows as f32 + (dx - absdx) / 2.0) as isize;
+        let yc1 = ((dy + absdy) / 2.0) as isize;
+        let yc2 = (num_cols as f32 + (dy - absdy) / 2.0) as isize;
+        let xp1 = -((dx - absdx) / 2.0) as isize;
+        let xp2 = (num_rows as f32 - (dx + absdx) / 2.0) as isize;
+        let yp1 = -((dy - absdy) / 2.0) as isize;
+        let yp2 = (num_cols as f32 - (dy + absdy) / 2.0) as isize;
+
+        // Clamp indices to valid ranges
+        let xc1c = xc1.max(0).min(num_rows as isize) as usize;
+        let xc2c = xc2.max(0).min(num_rows as isize) as usize;
+        let yc1c = yc1.max(0).min(num_cols as isize) as usize;
+        let yc2c = yc2.max(0).min(num_cols as isize) as usize;
+        let xp1c = xp1.max(0).min(num_rows as isize) as usize;
+        let xp2c = xp2.max(0).min(num_rows as isize) as usize;
+        let yp1c = yp1.max(0).min(num_cols as isize) as usize;
+        let yp2c = yp2.max(0).min(num_cols as isize) as usize;
+
+        if xc2c > xc1c && yc2c > yc1c && xp2c > xp1c && yp2c > yp1c {
+            let xlen = xc2c - xc1c;
+            let ylen = yc2c - yc1c;
+            let xplen = xp2c - xp1c;
+            let yplen = yp2c - yp1c;
+            let minx = xlen.min(xplen);
+            let miny = ylen.min(yplen);
+
+            // Building shadow calculation on the slice
+            let dsm_src_slice = dsm_view.slice(s![xc1c..xc1c + minx, yc1c..yc1c + miny]);
+            let mut prop_bldg_h_dst_slice =
+                propagated_bldg_sh_height.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
+            let dsm_dst_slice = dsm_view.slice(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
+            let mut bldg_sh_dst_slice = bldg_sh.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
+
+            par_azip!((prop_h in &mut prop_bldg_h_dst_slice, &dsm_src in &dsm_src_slice) {
+                let shifted_dsm = dsm_src - dz;
+                *prop_h = prop_h.max(shifted_dsm);
             });
 
-        if veg_inputs_present {
-            let veg_canopy_dsm_view = veg_canopy_dsm_view_opt.as_ref().unwrap();
-            let veg_trunk_dsm_view = veg_trunk_dsm_view_opt.as_ref().unwrap();
-            Zip::indexed(&mut propagated_veg_sh_height)
-                .and(&mut veg_sh)
-                .par_for_each(|(row_idx, col_idx), prop_veg_h, veg_sh_flag| {
-                    let dsm_h_target = dsm_view[[row_idx, col_idx]];
-                    let source_row_idx = (row_idx as f32 + dx).round() as isize;
-                    let source_col_idx = (col_idx as f32 + dy).round() as isize;
-                    let source_veg_canopy = get_view_value(
-                        &veg_canopy_dsm_view,
-                        source_row_idx,
-                        source_col_idx,
-                        num_rows,
-                        num_cols,
-                    );
-                    let source_veg_trunk = get_view_value(
-                        &veg_trunk_dsm_view,
-                        source_row_idx,
-                        source_col_idx,
-                        num_rows,
-                        num_cols,
-                    );
+            par_azip!((bldg_sh_flag in &mut bldg_sh_dst_slice, &prop_h in &prop_bldg_h_dst_slice, &dsm_target in &dsm_dst_slice) {
+                *bldg_sh_flag = if prop_h > dsm_target { 1.0 } else { 0.0 };
+            });
+
+            // Vegetation shadow calculation on the slice
+            if veg_inputs_present {
+                let veg_canopy_dsm_view = veg_canopy_dsm_view_opt.as_ref().unwrap();
+                let veg_trunk_dsm_view = veg_trunk_dsm_view_opt.as_ref().unwrap();
+
+                let veg_canopy_src_slice =
+                    veg_canopy_dsm_view.slice(s![xc1c..xc1c + minx, yc1c..yc1c + miny]);
+                let mut prop_veg_h_dst_slice =
+                    propagated_veg_sh_height.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
+
+                par_azip!((prop_veg_h in &mut prop_veg_h_dst_slice, &source_veg_canopy in &veg_canopy_src_slice) {
+                    let shifted_veg_canopy = source_veg_canopy - dz;
+                    *prop_veg_h = prop_veg_h.max(shifted_veg_canopy);
+                });
+
+                let veg_trunk_src_slice =
+                    veg_trunk_dsm_view.slice(s![xc1c..xc1c + minx, yc1c..yc1c + miny]);
+                let mut veg_sh_dst_slice =
+                    veg_sh.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
+
+                par_azip!((
+                    veg_sh_flag in &mut veg_sh_dst_slice,
+                    &dsm_h_target in &dsm_dst_slice,
+                    &source_veg_canopy in &veg_canopy_src_slice,
+                    &source_veg_trunk in &veg_trunk_src_slice
+                ) {
                     let shifted_veg_canopy = source_veg_canopy - dz;
                     let shifted_veg_trunk = source_veg_trunk - dz;
                     let prev_shifted_veg_canopy = source_veg_canopy - prev_dz;
                     let prev_shifted_veg_trunk = source_veg_trunk - prev_dz;
-                    *prop_veg_h = prop_veg_h.max(shifted_veg_canopy);
-                    let cond1 = if shifted_veg_canopy > dsm_h_target {
-                        1.0
-                    } else {
-                        0.0
-                    };
-                    let cond2 = if shifted_veg_trunk > dsm_h_target {
-                        1.0
-                    } else {
-                        0.0
-                    };
-                    let cond3 = if prev_shifted_veg_canopy > dsm_h_target {
-                        1.0
-                    } else {
-                        0.0
-                    };
-                    let cond4 = if prev_shifted_veg_trunk > dsm_h_target {
-                        1.0
-                    } else {
-                        0.0
-                    };
+
+                    let cond1 = if shifted_veg_canopy > dsm_h_target { 1.0 } else { 0.0 };
+                    let cond2 = if shifted_veg_trunk > dsm_h_target { 1.0 } else { 0.0 };
+                    let cond3 = if prev_shifted_veg_canopy > dsm_h_target { 1.0 } else { 0.0 };
+                    let cond4 = if prev_shifted_veg_trunk > dsm_h_target { 1.0 } else { 0.0 };
                     let conditions_sum = cond1 + cond2 + cond3 + cond4;
-                    let pergola_shadow = if conditions_sum > 0.0 && conditions_sum < 4.0 {
-                        1.0
-                    } else {
-                        0.0
-                    };
+                    let pergola_shadow = if conditions_sum > 0.0 && conditions_sum < 4.0 { 1.0 } else { 0.0 };
                     *veg_sh_flag = f32::max(*veg_sh_flag, pergola_shadow);
                 });
-            Zip::from(&mut veg_sh)
-                .and(&bldg_sh)
-                .par_for_each(|veg_sh_flag, &bldg_sh_flag| {
+
+                let bldg_sh_dst_slice_ro = bldg_sh.slice(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
+                let mut veg_sh_dst_slice_rw =
+                    veg_sh.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
+
+                par_azip!((veg_sh_flag in &mut veg_sh_dst_slice_rw, &bldg_sh_flag in &bldg_sh_dst_slice_ro) {
                     if *veg_sh_flag > 0.0 && bldg_sh_flag > 0.0 {
                         *veg_sh_flag = 0.0;
                     }
                 });
-            Zip::from(&mut veg_blocks_bldg_sh)
-                .and(&veg_sh)
-                .par_for_each(|vbs_acc, &veg_sh_flag| {
+
+                let veg_sh_dst_slice_ro = veg_sh.slice(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
+                let mut veg_blocks_bldg_sh_dst_slice =
+                    veg_blocks_bldg_sh.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
+
+                par_azip!((vbs_acc in &mut veg_blocks_bldg_sh_dst_slice, &veg_sh_flag in &veg_sh_dst_slice_ro) {
                     if veg_sh_flag > 0.0 {
                         *vbs_acc += veg_sh_flag;
                     }
                 });
+            }
         }
+
         prev_dz = dz;
         index += 1.0;
     }
