@@ -9,25 +9,25 @@ const PI: f32 = std::f32::consts::PI;
 pub fn sun_on_surface(
     py: Python,
     azimuth_a: f32,
-    scale: f32,
-    buildings: PyReadonlyArray2<f32>,
-    shadow: PyReadonlyArray2<f32>,
-    sunwall: PyReadonlyArray2<f32>,
-    first: f32,
-    second: f32,
-    aspect: PyReadonlyArray2<f32>,
-    walls: PyReadonlyArray2<f32>,
-    tg: PyReadonlyArray2<f32>,
-    tgwall: PyReadonlyArray2<f32>,
-    ta: f32,
-    emis_grid: PyReadonlyArray2<f32>,
-    ewall: f32,
-    alb_grid: PyReadonlyArray2<f32>,
+    pixel_scale: f32,
+    bldgs_arr: PyReadonlyArray2<f32>,
+    shadow_arr: PyReadonlyArray2<f32>,
+    sunwall_arr: PyReadonlyArray2<f32>,
+    first_ht: f32,
+    second_ht: f32,
+    wall_aspect_arr: PyReadonlyArray2<f32>,
+    wall_ht_arr: PyReadonlyArray2<f32>,
+    tg_arr: PyReadonlyArray2<f32>,
+    tgk_wall: f32,
+    T_air: f32,
+    emis_grid_arr: PyReadonlyArray2<f32>,
+    wall_emmisiv: f32,
+    alb_grid_arr: PyReadonlyArray2<f32>,
     SBC: f32,
-    albedo_b: f32,
-    twater: f32,
-    lc_grid: PyReadonlyArray2<f32>,
-    landcover: i32,
+    wall_albedo: f32,
+    T_water: f32,
+    lc_grid_arr: PyReadonlyArray2<f32>,
+    use_landcover: bool,
 ) -> PyResult<(
     Py<PyArray2<f32>>,
     Py<PyArray2<f32>>,
@@ -35,16 +35,15 @@ pub fn sun_on_surface(
     Py<PyArray2<f32>>,
     Py<PyArray2<f32>>,
 )> {
-    let buildings = buildings.as_array().to_owned();
-    let shadow = shadow.as_array().to_owned();
-    let sunwall = sunwall.as_array().to_owned();
-    let aspect = aspect.as_array().to_owned();
-    let walls = walls.as_array().to_owned();
-    let tg = tg.as_array().to_owned();
-    let tgwall = tgwall.as_array().to_owned();
-    let emis_grid = emis_grid.as_array().to_owned();
-    let alb_grid = alb_grid.as_array().to_owned();
-    let lc_grid = lc_grid.as_array().to_owned();
+    let buildings = bldgs_arr.as_array().to_owned();
+    let shadow = shadow_arr.as_array().to_owned();
+    let sunwall = sunwall_arr.as_array().to_owned();
+    let aspect = wall_aspect_arr.as_array().to_owned();
+    let walls = wall_ht_arr.as_array().to_owned();
+    let tg = tg_arr.as_array().to_owned();
+    let emis_grid = emis_grid_arr.as_array().to_owned();
+    let alb_grid = alb_grid_arr.as_array().to_owned();
+    let lc_grid = lc_grid_arr.as_array().to_owned();
     let (sizex, sizey) = (walls.shape()[0], walls.shape()[1]);
 
     let mut wallbol = Array2::<f32>::zeros((sizex, sizey));
@@ -58,10 +57,10 @@ pub fn sun_on_surface(
     let azimuth = azimuth_a * (PI / 180.0);
     let mut f = buildings.to_owned();
     let mut tg_mut = tg.to_owned();
-    if landcover == 1 {
+    if use_landcover == 1 {
         Zip::from(&mut tg_mut).and(&lc_grid).for_each(|tgval, &lc| {
             if lc == 3.0 {
-                *tgval = twater - ta;
+                *tgval = T_water - T_air;
             }
         });
     }
@@ -71,12 +70,13 @@ pub fn sun_on_surface(
         .and(&tg_mut)
         .and(&shadow)
         .for_each(|l, &emis, &tg_val, &sh| {
-            *l = SBC * emis * ((tg_val * sh + ta + 273.15).powi(4))
-                - SBC * emis * (ta + 273.15).powi(4);
+            *l = SBC * emis * ((tg_val * sh + T_air + 273.15).powi(4))
+                - SBC * emis * (T_air + 273.15).powi(4);
         });
     let mut lwall = Array2::<f32>::zeros((sizex, sizey));
     Zip::from(&mut lwall).and(&tgwall).for_each(|l, &tgw| {
-        *l = SBC * ewall * ((tgw + ta + 273.15).powi(4)) - SBC * ewall * (ta + 273.15).powi(4);
+        *l = SBC * wall_emmisiv * ((tgw + T_air + 273.15).powi(4))
+            - SBC * wall_emmisiv * (T_air + 273.15).powi(4);
     });
     let albshadow = &alb_grid * &shadow;
     let alb = alb_grid.to_owned();
@@ -109,8 +109,8 @@ pub fn sun_on_surface(
     let signcosazimuth = cosazimuth.signum();
 
     let mut index = 0.0;
-    let first = (first * scale).round().max(1.0);
-    let second = (second * scale).round();
+    let first = (first_ht * pixel_scale).round().max(1.0);
+    let second = (second_ht * pixel_scale).round();
     let mut weightsumwall_first = Array2::<f32>::zeros((sizex, sizey));
     let mut weightsumsh_first = Array2::<f32>::zeros((sizex, sizey));
     let mut wallsuninfluence_first = Array2::<f32>::zeros((sizex, sizey));
@@ -288,7 +288,7 @@ pub fn sun_on_surface(
             dst(&mut weightsum_lwall, dst_x, minx, dst_y, miny)
                 .assign(&(weightsum_lwall_slice + &lwallprod));
             // weightsum_albwall = weightsum_albwall + tempbub * albedo_b
-            let albwallprod = &tempbub_slice * albedo_b;
+            let albwallprod = &tempbub_slice * wall_albedo;
             let weightsum_albwall_slice =
                 dst(&mut weightsum_albwall, dst_x, minx, dst_y, miny).to_owned();
             dst(&mut weightsum_albwall, dst_x, minx, dst_y, miny)
@@ -299,7 +299,7 @@ pub fn sun_on_surface(
                 .assign(&(weightsumwall_slice + &tempbub_slice));
             // weightsum_albwallnosh = weightsum_albwallnosh + tempbubwall * albedo_b
             let tempbubwall_slice = tempbubwall_new;
-            let albwallnoshprod = &tempbubwall_slice * albedo_b;
+            let albwallnoshprod = &tempbubwall_slice * wall_albedo;
             let weightsum_albwallnosh_slice =
                 dst(&mut weightsum_albwallnosh, dst_x, minx, dst_y, miny).to_owned();
             dst(&mut weightsum_albwallnosh, dst_x, minx, dst_y, miny)
@@ -475,8 +475,8 @@ pub fn sun_on_surface(
     let mut gvf = (&gvf1 * 0.5 + &gvf2 * 0.4) / 0.9;
     let mut gvf_lup = (&gvf_lup1 * 0.5 + &gvf_lup2 * 0.4) / 0.9;
     gvf_lup = &gvf_lup
-        + &((&emis_grid * &((&tg * &shadow + ta + 273.15).mapv(|v| v.powi(4)))
-            - &emis_grid * (ta + 273.15).powi(4))
+        + &((&emis_grid * &((&tg * &shadow + T_air + 273.15).mapv(|v| v.powi(4)))
+            - &emis_grid * (T_air + 273.15).powi(4))
             * (&buildings * -1.0 + 1.0))
             * SBC;
     let mut gvfalb = (&gvfalb1 * 0.5 + &gvfalb2 * 0.4) / 0.9;
