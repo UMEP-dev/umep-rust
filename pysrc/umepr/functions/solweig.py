@@ -1,10 +1,15 @@
+"""
+Solweig model in Python which calls shadowing calculations implemented in Rust.
+
+Implemented in SolweigRunRust class, which inherits from SolweigRunCore.
+"""
+
 from copy import deepcopy
 
 import numpy as np
 from umep.functions.SOLWEIGpython.anisotropic_sky import anisotropic_sky as ani_sky
 from umep.functions.SOLWEIGpython.cylindric_wedge import cylindric_wedge
 from umep.functions.SOLWEIGpython.daylen import daylen
-from umep.functions.SOLWEIGpython.gvf_2018a import gvf_2018a
 
 # from .Lside_veg_v2015a import Lside_veg_v2015a
 # from .Kside_veg_v2019a import Kside_veg_v2019a
@@ -22,8 +27,9 @@ from umep.util.SEBESOLWEIGCommonFiles.clearnessindex_2013b import clearnessindex
 from umep.util.SEBESOLWEIGCommonFiles.create_patches import create_patches
 from umep.util.SEBESOLWEIGCommonFiles.diffusefraction import diffusefraction
 from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
-from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_13 import shadowingfunction_wallheight_13
-from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
+
+from ..rustalgos import shadowing
+from . import gvf
 
 
 def Solweig_2025a_calc(
@@ -242,26 +248,48 @@ def Solweig_2025a_calc(
 
         # Shadow  images
         if usevegdem == 1:
-            vegsh, sh, _, wallsh, wallsun, wallshve, _, facesun, wallsh_ = shadowingfunction_wallheight_23(
-                dsm,
-                vegdem,
-                vegdem2,
+            result = shadowing.calculate_shadows_wall_ht_25(
                 azimuth,
                 altitude,
                 scale,
                 amaxvalue,
-                bush,
-                walls,
-                dirwalls * np.pi / 180.0,
-                walls_scheme,
-                dirwalls_scheme * np.pi / 180.0,
+                dsm.astype(np.float32),
+                vegdem.astype(np.float32),
+                vegdem2.astype(np.float32),
+                bush.astype(np.float32),
+                walls.astype(np.float32),
+                (dirwalls * np.pi / 180.0).astype(np.float32),
+                walls_scheme.astype(np.float32),
+                (dirwalls_scheme * np.pi / 180.0).astype(np.float32),
             )
-            shadow = sh - (1 - vegsh) * (1 - psi)
+            vegsh = result.veg_sh
+            sh = result.bldg_sh
+            wallsh = result.wall_sh
+            wallsun = result.wall_sun
+            wallshve = result.wall_sh_veg
+            facesun = result.face_sun
+            wallsh_ = result.face_sh
+            shadow = result.bldg_sh - (1 - result.veg_sh) * (1 - psi)
         else:
-            sh, wallsh, wallsun, facesh, facesun = shadowingfunction_wallheight_13(
-                dsm, azimuth, altitude, scale, walls, dirwalls * np.pi / 180.0
+            result = shadowing.calculate_shadows_wall_ht_25(
+                azimuth,
+                altitude,
+                scale,
+                dsm.astype(np.float32),
+                None,
+                None,
+                None,
+                walls.astype(np.float32),
+                (dirwalls * np.pi / 180.0).astype(np.float32),
+                None,
+                None,
             )
-            shadow = sh
+            sh = result.bldg_sh
+            wallsh = result.wall_sh
+            wallsun = result.wall_sun
+            facesh = result.face_sh
+            facesun = result.face_sun
+            shadow = result.bldg_sh
 
         # # # Surface temperature parameterisation during daytime # # # #
         # new using max sun alt.instead of  dfm
@@ -318,7 +346,7 @@ def Solweig_2025a_calc(
             gvfalbnoshN,
             gvfSum,
             gvfNorm,
-        ) = gvf_2018a(
+        ) = gvf.gvf_2018a(
             wallsun,
             walls,
             buildings,

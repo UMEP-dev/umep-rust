@@ -6,12 +6,13 @@ import timeit
 import matplotlib.pyplot as plt
 import numpy as np
 from memory_profiler import memory_usage
+from umep import common
+from umep.functions.SOLWEIGpython.solweig_runner_core import SolweigRunCore
 from umep.functions.svf_functions import svfForProcessing153
 from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
-from umepr import common
-from umepr.functions import solweig_runner_core
 from umepr.hybrid.svf import svfForProcessing153_rust_shdw
 from umepr.rustalgos import shadowing, skyview
+from umepr.solweig_runner_rust import SolweigRunRust
 
 
 def test_shadowing():
@@ -219,7 +220,7 @@ def test_solweig():
     repeats = 1
 
     # --- Timing only (no memory profiling) ---
-    SWC = solweig_runner_core.SolweigRunCore(
+    SWC = SolweigRunCore(
         config_path_str="tests/rustalgos/test_config_solweig.ini",
         params_json_path="tests/rustalgos/test_params_solweig.json",
     )
@@ -227,14 +228,17 @@ def test_solweig():
     def run_py():
         SWC.run()
 
-    os.environ["HYBRID"] = "False"
     py_timings = timeit.repeat(run_py, number=1, repeat=repeats)
     print_timing_stats("solweig_run", py_timings)
 
-    def run_hybrid():
-        SWC.run()
+    SWR = SolweigRunRust(
+        config_path_str="tests/rustalgos/test_config_solweig.ini",
+        params_json_path="tests/rustalgos/test_params_solweig.json",
+    )
 
-    os.environ["HYBRID"] = "True"
+    def run_hybrid():
+        SWR.run()
+
     hybrid_timings = timeit.repeat(run_hybrid, number=1, repeat=repeats)
     print_timing_stats("solweig_run w rust shadows", hybrid_timings)
 
@@ -251,20 +255,19 @@ def test_solweig():
     print(f"solweig_run w rust shadows: max memory usage: {rust_memory:.2f} MiB")
 
 
-def simple_solweig():
+def simple_solweig(SWR):
     # Simple test to run Solweig with minimal setup
-    SWC = solweig_runner_core.SolweigRunCore(
-        config_path_str="tests/rustalgos/test_config_solweig.ini",
-        params_json_path="tests/rustalgos/test_params_solweig.json",
-    )
-    SWC.run()
+    SWR.run()
 
 
 def test_profile_solweig():
-    os.environ["HYBRID"] = "True"
+    SWR = SolweigRunRust(
+        config_path_str="tests/rustalgos/test_config_solweig.ini",
+        params_json_path="tests/rustalgos/test_params_solweig.json",
+    )
     profiler = cProfile.Profile()
     profiler.enable()
-    simple_solweig()
+    simple_solweig(SWR)
     profiler.disable()
     stats = pstats.Stats(profiler).sort_stats("cumtime")
     stats.print_stats(30)  # Show top 30 lines
