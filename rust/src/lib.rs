@@ -1,5 +1,6 @@
 use pyo3::prelude::*;
 
+mod gvf;
 mod shadowing;
 mod skyview;
 mod sun;
@@ -13,7 +14,7 @@ fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     // Register submodules
     register_shadowing_module(py_module)?;
     register_skyview_module(py_module)?;
-    register_sun_module(py_module)?;
+    register_gvf_module(py_module)?;
     py_module.add("__doc__", "UMEP algorithms implemented in Rust.")?;
 
     Ok(())
@@ -38,10 +39,10 @@ fn register_skyview_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }
 
-fn register_sun_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
-    let submodule = PyModule::new(py_module.py(), "sun")?;
-    submodule.add("__doc__", "Sun position and radiation calculations.")?;
-    submodule.add_function(wrap_pyfunction!(sun::sun_on_surface, &submodule)?)?;
+fn register_gvf_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let submodule = PyModule::new(py_module.py(), "gvf")?;
+    submodule.add("__doc__", "Ground View Factor calculation.")?;
+    submodule.add_function(wrap_pyfunction!(gvf::gvf_calc, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }

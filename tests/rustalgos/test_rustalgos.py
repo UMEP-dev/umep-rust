@@ -265,6 +265,7 @@ def test_profile_solweig():
         config_path_str="tests/rustalgos/test_config_solweig.ini",
         params_json_path="tests/rustalgos/test_params_solweig.json",
     )
+
     profiler = cProfile.Profile()
     profiler.enable()
     simple_solweig(SWR)

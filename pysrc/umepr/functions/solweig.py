@@ -28,8 +28,7 @@ from umep.util.SEBESOLWEIGCommonFiles.create_patches import create_patches
 from umep.util.SEBESOLWEIGCommonFiles.diffusefraction import diffusefraction
 from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
 
-from ..rustalgos import shadowing
-from . import gvf
+from ..rustalgos import gvf, shadowing
 
 
 def Solweig_2025a_calc(
@@ -328,55 +327,43 @@ def Solweig_2025a_calc(
             Tg[Tg < 0] = 0  # temporary for removing low Tg during morning 20130205
 
         # # # # Ground View Factors # # # #
-        (
-            gvfLup,
-            gvfalb,
-            gvfalbnosh,
-            gvfLupE,
-            gvfalbE,
-            gvfalbnoshE,
-            gvfLupS,
-            gvfalbS,
-            gvfalbnoshS,
-            gvfLupW,
-            gvfalbW,
-            gvfalbnoshW,
-            gvfLupN,
-            gvfalbN,
-            gvfalbnoshN,
-            gvfSum,
-            gvfNorm,
-        ) = gvf.gvf_2018a(
-            wallsun,
-            walls,
-            buildings,
+        gvf_result = gvf.gvf_calc(
+            wallsun.astype(np.float32),
+            walls.astype(np.float32),
+            buildings.astype(np.float32),
             scale,
-            shadow,
+            shadow.astype(np.float32),
             first,
             second,
-            dirwalls,
-            Tg,
+            dirwalls.astype(np.float32),
+            Tg.astype(np.float32),
             Tgwall,
             Ta,
-            emis_grid,
+            emis_grid.astype(np.float32),
             ewall,
-            alb_grid,
+            alb_grid.astype(np.float32),
             SBC,
             albedo_b,
-            rows,
-            cols,
             Twater,
-            lc_grid,
+            lc_grid.astype(np.float32),
             landcover,
         )
 
         # # # # Lup, daytime # # # #
         # Surface temperature wave delay - new as from 2014a
-        Lup, timeaddnotused, Tgmap1 = TsWaveDelay_2015a(gvfLup, firstdaytime, timeadd, timestepdec, Tgmap1)
-        LupE, timeaddnotused, Tgmap1E = TsWaveDelay_2015a(gvfLupE, firstdaytime, timeadd, timestepdec, Tgmap1E)
-        LupS, timeaddnotused, Tgmap1S = TsWaveDelay_2015a(gvfLupS, firstdaytime, timeadd, timestepdec, Tgmap1S)
-        LupW, timeaddnotused, Tgmap1W = TsWaveDelay_2015a(gvfLupW, firstdaytime, timeadd, timestepdec, Tgmap1W)
-        LupN, timeaddnotused, Tgmap1N = TsWaveDelay_2015a(gvfLupN, firstdaytime, timeadd, timestepdec, Tgmap1N)
+        Lup, timeaddnotused, Tgmap1 = TsWaveDelay_2015a(gvf_result.gvf_lup, firstdaytime, timeadd, timestepdec, Tgmap1)
+        LupE, timeaddnotused, Tgmap1E = TsWaveDelay_2015a(
+            gvf_result.gvf_lup_e, firstdaytime, timeadd, timestepdec, Tgmap1E
+        )
+        LupS, timeaddnotused, Tgmap1S = TsWaveDelay_2015a(
+            gvf_result.gvf_lup_s, firstdaytime, timeadd, timestepdec, Tgmap1S
+        )
+        LupW, timeaddnotused, Tgmap1W = TsWaveDelay_2015a(
+            gvf_result.gvf_lup_w, firstdaytime, timeadd, timestepdec, Tgmap1W
+        )
+        LupN, timeaddnotused, Tgmap1N = TsWaveDelay_2015a(
+            gvf_result.gvf_lup_n, firstdaytime, timeadd, timestepdec, Tgmap1N
+        )
 
         # # For Tg output in POIs
         TgTemp = Tg * shadow + Ta
@@ -403,16 +390,16 @@ def Solweig_2025a_calc(
             svfbuveg,
             albedo_b,
             F_sh,
-            gvfalb,
-            gvfalbE,
-            gvfalbS,
-            gvfalbW,
-            gvfalbN,
-            gvfalbnosh,
-            gvfalbnoshE,
-            gvfalbnoshS,
-            gvfalbnoshW,
-            gvfalbnoshN,
+            gvf_result.gvfalb,
+            gvf_result.gvfalb_e,
+            gvf_result.gvfalb_s,
+            gvf_result.gvfalb_w,
+            gvf_result.gvfalb_n,
+            gvf_result.gvfalbnosh,
+            gvf_result.gvfalbnosh_e,
+            gvf_result.gvfalbnosh_s,
+            gvf_result.gvfalbnosh_w,
+            gvf_result.gvfalbnosh_n,
         )
 
         Keast, Ksouth, Kwest, Knorth, KsideI, KsideD, Kside = Kside_veg_v2022a(

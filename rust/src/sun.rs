@@ -1,55 +1,42 @@
-use ndarray::{par_azip, s, Array2};
-use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
-use pyo3::prelude::*;
+use ndarray::{par_azip, s, Array2, ArrayView2};
 use rayon::prelude::*;
 
 const PI: f32 = std::f32::consts::PI;
 
-#[pyfunction]
 #[allow(clippy::too_many_arguments)]
 #[allow(non_snake_case)]
 pub fn sun_on_surface(
-    py: Python,
     azimuth_a: f32,
     pixel_scale: f32,
-    bldgs_arr: PyReadonlyArray2<f32>,
-    shadow_arr: PyReadonlyArray2<f32>,
-    sunwall_arr: PyReadonlyArray2<f32>,
+    buildings: ArrayView2<f32>,
+    shadow: ArrayView2<f32>,
+    sunwall: ArrayView2<f32>,
     first_ht: f32,
     second_ht: f32,
-    wall_aspect_arr: PyReadonlyArray2<f32>,
-    wall_ht_arr: PyReadonlyArray2<f32>,
-    tground_arr: PyReadonlyArray2<f32>,
+    wall_aspect: ArrayView2<f32>,
+    wall_ht: ArrayView2<f32>,
+    tground: ArrayView2<f32>,
     tg_wall: f32,
     t_air: f32,
-    emis_grid_arr: PyReadonlyArray2<f32>,
+    emis_grid: ArrayView2<f32>,
     wall_emmisiv: f32,
-    alb_grid_arr: PyReadonlyArray2<f32>,
+    alb_grid: ArrayView2<f32>,
     sbc: f32,
     wall_albedo: f32,
     t_water: f32,
-    lc_grid_arr: PyReadonlyArray2<f32>,
+    lc_grid: ArrayView2<f32>,
     use_landcover: bool,
-) -> PyResult<(
-    Py<PyArray2<f32>>,
-    Py<PyArray2<f32>>,
-    Py<PyArray2<f32>>,
-    Py<PyArray2<f32>>,
-    Py<PyArray2<f32>>,
-)> {
-    let buildings = bldgs_arr.as_array().to_owned();
-    let shadow = shadow_arr.as_array().to_owned();
-    let sunwall = sunwall_arr.as_array().to_owned();
-    let aspect = wall_aspect_arr.as_array().to_owned();
-    let walls = wall_ht_arr.as_array().to_owned();
-    let tg = tground_arr.as_array().to_owned();
-    let emis_grid = emis_grid_arr.as_array().to_owned();
-    let alb_grid = alb_grid_arr.as_array().to_owned();
-    let lc_grid = lc_grid_arr.as_array().to_owned();
-    let (sizex, sizey) = (walls.shape()[0], walls.shape()[1]);
+) -> (
+    Array2<f32>,
+    Array2<f32>,
+    Array2<f32>,
+    Array2<f32>,
+    Array2<f32>,
+) {
+    let (sizex, sizey) = (wall_ht.shape()[0], wall_ht.shape()[1]);
 
     let mut wallbol = Array2::<f32>::zeros((sizex, sizey));
-    par_azip!((w in &mut wallbol, &val in &walls) *w = if val > 0.0 { 1.0 } else { 0.0 });
+    par_azip!((w in &mut wallbol, &val in &wall_ht) *w = if val > 0.0 { 1.0 } else { 0.0 });
 
     let mut sunwall_bin = sunwall.to_owned();
     sunwall_bin
@@ -58,7 +45,7 @@ pub fn sun_on_surface(
 
     let azimuth = azimuth_a * (PI / 180.0);
     let mut f = buildings.to_owned();
-    let mut tg_mut = tg.to_owned();
+    let mut tg_mut = tground.to_owned();
     if use_landcover {
         par_azip!((tgval in &mut tg_mut, &lc in &lc_grid) if lc == 3.0 { *tgval = t_water - t_air; });
     }
@@ -69,7 +56,7 @@ pub fn sun_on_surface(
     );
     let lwall: f32 = sbc * wall_emmisiv * ((tg_wall + t_air + 273.15).powi(4))
         - sbc * wall_emmisiv * (t_air + 273.15).powi(4);
-    let albshadow = &alb_grid * &shadow;
+    let albshadow = &alb_grid.to_owned() * &shadow.to_owned();
     let alb = alb_grid.to_owned();
 
     let mut tempsh = Array2::<f32>::zeros((sizex, sizey));
@@ -185,15 +172,15 @@ pub fn sun_on_surface(
 
             // tempbu = buildings[xc1:xc2, yc1:yc2]
             dst(&mut tempbu, dst_x, minx, dst_y, miny)
-                .assign(&src(&buildings, src_x, minx, src_y, miny));
+                .assign(&buildings.slice(s![src_x..src_x + minx, src_y..src_y + miny]));
             dst(&mut tempsh, dst_x, minx, dst_y, miny)
-                .assign(&src(&shadow, src_x, minx, src_y, miny));
+                .assign(&shadow.slice(s![src_x..src_x + minx, src_y..src_y + miny]));
             dst(&mut temp_lupsh, dst_x, minx, dst_y, miny)
-                .assign(&src(&lup, src_x, minx, src_y, miny));
+                .assign(&lup.slice(s![src_x..src_x + minx, src_y..src_y + miny]));
             dst(&mut temp_albsh, dst_x, minx, dst_y, miny)
-                .assign(&src(&albshadow, src_x, minx, src_y, miny));
+                .assign(&albshadow.slice(s![src_x..src_x + minx, src_y..src_y + miny]));
             dst(&mut temp_albnosh, dst_x, minx, dst_y, miny)
-                .assign(&src(&alb, src_x, minx, src_y, miny));
+                .assign(&alb.slice(s![src_x..src_x + minx, src_y..src_y + miny]));
 
             // f = np.min([f, tempbu], axis=0)
             par_azip!((fval in dst(&mut f, dst_x, minx, dst_y, miny), &tbu in &src(&tempbu, dst_x, minx, dst_y, miny)) {
@@ -295,17 +282,17 @@ pub fn sun_on_surface(
     let azilow = azimuth - PI / 2.0;
     let mut azihigh = azimuth + PI / 2.0;
     if azilow >= 0.0 && azihigh < 2.0 * PI {
-        par_azip!((fsh in &mut facesh, &asp in &aspect, &wbol in &wallbol)
+        par_azip!((fsh in &mut facesh, &asp in &wall_aspect, &wbol in &wallbol)
             *fsh = (if asp < azilow || asp >= azihigh { 1.0 } else { 0.0 }) - wbol + 1.0
         );
     } else if azilow < 0.0 && azihigh <= 2.0 * PI {
         let azilow_wrapped = azilow + 2.0 * PI;
-        par_azip!((fsh in &mut facesh, &asp in &aspect)
+        par_azip!((fsh in &mut facesh, &asp in &wall_aspect)
             *fsh = (if asp > azilow_wrapped || asp <= azihigh { -1.0 } else { 0.0 }) + 1.0
         );
     } else if azilow > 0.0 && azihigh >= 2.0 * PI {
         azihigh -= 2.0 * PI;
-        par_azip!((fsh in &mut facesh, &asp in &aspect)
+        par_azip!((fsh in &mut facesh, &asp in &wall_aspect)
             *fsh = (if asp > azilow || asp <= azihigh { -1.0 } else { 0.0 }) + 1.0
         );
     }
@@ -402,18 +389,13 @@ pub fn sun_on_surface(
     gvf_lup += &lup_add;
 
     let mut gvfalb = (&gvfalb1 * 0.5 + &gvfalb2 * 0.4) / 0.9;
-    let alb_add = &alb_grid * &(&buildings * -1.0 + 1.0) * &shadow;
+    let alb_add = &alb_grid.to_owned() * &(&buildings.to_owned() * -1.0 + 1.0) * &shadow.to_owned();
     gvfalb += &alb_add;
 
     let mut gvfalbnosh = (&gvfalbnosh1 * 0.5 + &gvfalbnosh2 * 0.4) / 0.9;
-    let albnosh_add = &gvfalbnosh * &buildings + &(&alb_grid * &(&buildings * -1.0 + 1.0));
+    let albnosh_add = &gvfalbnosh * &buildings.to_owned()
+        + &(&alb_grid.to_owned() * &(&buildings.to_owned() * -1.0 + 1.0));
     gvfalbnosh.assign(&albnosh_add);
 
-    Ok((
-        gvf.into_pyarray(py).into(),
-        gvf_lup.into_pyarray(py).into(),
-        gvfalb.into_pyarray(py).into(),
-        gvfalbnosh.into_pyarray(py).into(),
-        gvf2.into_pyarray(py).into(),
-    ))
+    (gvf, gvf_lup, gvfalb, gvfalbnosh, gvf2)
 }
