@@ -1,7 +1,7 @@
 """
 Shadow wrapper for Python.
 
-daily_shading import calls internally calls the Rust implementation for shadow calculations.
+daily_shading import internally calls the Rust implementation for shadow calculations.
 """
 
 import datetime

@@ -1,7 +1,9 @@
 """
-Solweig model in Python which calls shadowing calculations implemented in Rust.
+Solweig model in Python which calls shadowing and GVF calculations implemented in Rust.
 
-Implemented in SolweigRunRust class, which inherits from SolweigRunCore.
+Implemented from SolweigRunRust class, which inherits from SolweigRunCore.
+
+This version is a copy except for the changes made to call the Rust functions directly.
 """
 
 from copy import deepcopy

@@ -1,3 +1,7 @@
+"""
+Subclasses SolweigRunCore - swaps in solweig function which calls Rust implementations of shadowing and GVF calculations
+"""
+
 import numpy as np
 from umep.class_configs import EnvironData, ShadowMatrices, SvfData, TgMaps, WallsData
 from umep.functions.SOLWEIGpython.solweig_runner_core import SolweigRunCore
