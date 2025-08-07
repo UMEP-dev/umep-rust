@@ -7,9 +7,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.24.1", features = ["extension-module"] }
-maturin = "1.5"
+pyo3 = { version = "0.24.2", features = ["extension-module"] }
 numpy = "0.24.0"
 ndarray = { version = "0.16.1", features = ["rayon"] }
 rayon = "1.10.0"
-ndarray-stats = "0.6.0"
