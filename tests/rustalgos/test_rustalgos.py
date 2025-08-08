@@ -1,5 +1,4 @@
 import cProfile
-import os
 import pstats
 import timeit
 
@@ -7,6 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from memory_profiler import memory_usage
 from umep import common
+from umep.functions.SOLWEIGpython import Solweig_run
 from umep.functions.SOLWEIGpython.solweig_runner_core import SolweigRunCore
 from umep.functions.svf_functions import svfForProcessing153
 from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
@@ -219,6 +219,13 @@ def test_svf():
 def test_solweig():
     repeats = 1
 
+    # Origin
+    def run_ori():
+        Solweig_run.solweig_run("tests/rustalgos/test_config_solweig_old_fmt.ini", None)
+
+    ori_timings = timeit.repeat(run_ori, number=1, repeat=repeats)
+    print_timing_stats("solweig_run (old format)", ori_timings)
+
     # --- Timing only (no memory profiling) ---
     SWC = SolweigRunCore(
         config_path_str="tests/rustalgos/test_config_solweig.ini",
@@ -244,16 +251,24 @@ def test_solweig():
     print_timing_stats("solweig_run w rust shadows", hybrid_timings)
 
     # Print relative speed as percentage
+    print("\n--- Relative Speed Original vs. Python ---")
+    relative_speed(ori_timings, py_timings)
+    print("\n--- Relative Speed Original vs. Rust ---")
+    relative_speed(ori_timings, hybrid_timings)
+    print("\n--- Relative Speed Core vs. Rust ---")
     relative_speed(py_timings, hybrid_timings)
 
     # --- Memory profiling only (no timing) ---
-    os.environ["HYBRID"] = "False"
-    py_memory = memory_usage(run_py, max_usage=True)
-    print(f"solweig_run: max memory usage: {py_memory:.2f} MiB")
+    print("\n--- Memory Profiling ---")
+    # Memory profiling for original Solweig run
+    ori_memory = memory_usage(run_ori, max_usage=True)
+    print(f"\nsolweig_run (old format): max memory usage: {ori_memory:.2f} MiB")
 
-    os.environ["HYBRID"] = "True"
+    py_memory = memory_usage(run_py, max_usage=True)
+    print(f"\nsolweig_run: max memory usage: {py_memory:.2f} MiB")
+
     rust_memory = memory_usage(run_hybrid, max_usage=True)
-    print(f"solweig_run w rust shadows: max memory usage: {rust_memory:.2f} MiB")
+    print(f"\nsolweig_run w rust shadows: max memory usage: {rust_memory:.2f} MiB")
 
 
 def simple_solweig(SWR):
@@ -271,7 +286,7 @@ def test_profile_solweig():
     profiler.enable()
     simple_solweig(SWR)
     profiler.disable()
-    stats = pstats.Stats(profiler).sort_stats("cumtime")
+    stats = pstats.Stats(profiler).sort_stats("tottime")
     stats.print_stats(30)  # Show top 30 lines
 
 
