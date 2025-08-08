@@ -1,9 +1,13 @@
 use pyo3::prelude::*;
 
+mod emissivity_models;
 mod gvf;
+mod patch_radiation;
 mod shadowing;
+mod sky;
 mod skyview;
 mod sun;
+mod sunlit_shaded_patches;
 
 #[pymodule]
 fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -15,6 +19,7 @@ fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_shadowing_module(py_module)?;
     register_skyview_module(py_module)?;
     register_gvf_module(py_module)?;
+    register_sky_module(py_module)?;
     py_module.add("__doc__", "UMEP algorithms implemented in Rust.")?;
 
     Ok(())
@@ -43,6 +48,14 @@ fn register_gvf_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     let submodule = PyModule::new(py_module.py(), "gvf")?;
     submodule.add("__doc__", "Ground View Factor calculation.")?;
     submodule.add_function(wrap_pyfunction!(gvf::gvf_calc, &submodule)?)?;
+    py_module.add_submodule(&submodule)?;
+    Ok(())
+}
+
+fn register_sky_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let submodule = PyModule::new(py_module.py(), "sky")?;
+    submodule.add("__doc__", "Anisotropic sky radiation calculations.")?;
+    submodule.add_function(wrap_pyfunction!(sky::anisotropic_sky, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }

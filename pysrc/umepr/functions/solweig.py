@@ -9,7 +9,6 @@ This version is a copy except for the changes made to call the Rust functions di
 from copy import deepcopy
 
 import numpy as np
-from umep.functions.SOLWEIGpython.anisotropic_sky import anisotropic_sky as ani_sky
 from umep.functions.SOLWEIGpython.cylindric_wedge import cylindric_wedge
 from umep.functions.SOLWEIGpython.daylen import daylen
 
@@ -30,7 +29,7 @@ from umep.util.SEBESOLWEIGCommonFiles.create_patches import create_patches
 from umep.util.SEBESOLWEIGCommonFiles.diffusefraction import diffusefraction
 from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
 
-from ..rustalgos import gvf, shadowing
+from ..rustalgos import gvf, shadowing, sky
 
 
 def Solweig_2025a_calc(
@@ -563,69 +562,68 @@ def Solweig_2025a_calc(
         if altitude < 0:
             # CI = deepcopy(CI)
             lv = deepcopy(L_patches)
-            KupE = 0
-            KupS = 0
-            KupW = 0
-            KupN = 0
+            KupE = np.zeros_like(lv)
+            KupS = np.zeros_like(lv)
+            KupW = np.zeros_like(lv)
+            KupN = np.zeros_like(lv)
 
         # Adjust sky emissivity under semi-cloudy/hazy/cloudy/overcast conditions, i.e. CI lower than 0.95
         if CI < 0.95:
             esky_c = CI * esky + (1 - CI) * 1.0
             esky = esky_c
 
-        (
-            Ldown,
-            Lside,
-            Lside_sky,
-            Lside_veg,
-            Lside_sh,
-            Lside_sun,
-            Lside_ref,
-            Least_,
-            Lwest_,
-            Lnorth_,
-            Lsouth_,
-            Keast,
-            Ksouth,
-            Kwest,
-            Knorth,
-            KsideI,
-            KsideD,
-            Kside,
-            steradians,
-            skyalt,
-        ) = ani_sky(
-            shmat,
-            vegshmat,
-            vbshvegshmat,
+        ani_sky_result = sky.anisotropic_sky(
+            shmat.astype(np.float32),
+            vegshmat.astype(np.float32),
+            vbshvegshmat.astype(np.float32),
             altitude,
             azimuth,
-            asvf,
-            cyl,
+            asvf.astype(np.float32),
+            bool(cyl),
             esky,
-            L_patches,
-            wallScheme,
-            voxelTable,
-            voxelMaps,
-            steradians,
+            L_patches.astype(np.float32),
+            bool(wallScheme),
+            voxelTable.astype(np.float32) if voxelTable is not None else None,
+            voxelMaps.astype(np.float32) if voxelMaps is not None else None,
+            steradians.astype(np.float32),
             Ta,
             Tgwall,
             ewall,
-            Lup,
+            Lup.astype(np.float32),
             radI,
             radD,
             radG,
-            lv,
+            lv.astype(np.float32),
             albedo_b,
-            0,
-            diffsh,
-            shadow,
-            KupE,
-            KupS,
-            KupW,
-            KupN,
+            False,
+            diffsh.astype(np.float32),
+            shadow.astype(np.float32),
+            KupE.astype(np.float32),
+            KupS.astype(np.float32),
+            KupW.astype(np.float32),
+            KupN.astype(np.float32),
             i,
         )
+        Ldown = ani_sky_result.ldown
+        Lside = ani_sky_result.lside
+        Lside_sky = ani_sky_result.lside_sky
+        Lside_veg = ani_sky_result.lside_veg
+        Lside_sh = ani_sky_result.lside_sh
+        Lside_sun = ani_sky_result.lside_sun
+        Lside_ref = ani_sky_result.lside_ref
+        Least_ = ani_sky_result.least
+        Lwest_ = ani_sky_result.lwest
+        Lnorth_ = ani_sky_result.lnorth
+        Lsouth_ = ani_sky_result.lsouth
+        Keast = ani_sky_result.keast
+        Ksouth = ani_sky_result.ksouth
+        Kwest = ani_sky_result.kwest
+        Knorth = ani_sky_result.knorth
+        KsideI = ani_sky_result.kside_i
+        KsideD = ani_sky_result.kside_d
+        Kside = ani_sky_result.kside
+        steradians = ani_sky_result.steradians
+        skyalt = ani_sky_result.skyalt
     else:
         Lside = np.zeros((rows, cols))
         L_patches = None
