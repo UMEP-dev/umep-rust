@@ -4,6 +4,7 @@ use numpy::{
     IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3,
 };
 use pyo3::prelude::*;
+use rayon::prelude::*;
 
 const PI: f32 = std::f32::consts::PI;
 const SBC: f32 = 5.67051e-8; // Stefan-Boltzmann constant
@@ -109,28 +110,16 @@ pub fn anisotropic_sky(
     let cols = shmat.shape()[1];
     let n_patches = l_patches.shape()[0];
 
+    // ...existing code...
+
     // Output arrays
-    let mut kside_d = Array2::<f32>::zeros((rows, cols));
-    let mut kside_i = Array2::<f32>::zeros((rows, cols));
-    let mut kside = Array2::<f32>::zeros((rows, cols));
-    let mut kref_sun = Array2::<f32>::zeros((rows, cols));
-    let mut kref_sh = Array2::<f32>::zeros((rows, cols));
-    let mut kref_veg = Array2::<f32>::zeros((rows, cols));
     let mut keast = Array2::<f32>::zeros((rows, cols));
     let mut kwest = Array2::<f32>::zeros((rows, cols));
     let mut knorth = Array2::<f32>::zeros((rows, cols));
     let mut ksouth = Array2::<f32>::zeros((rows, cols));
 
-    let mut ldown_sky = Array2::<f32>::zeros((rows, cols));
-    let mut ldown_veg = Array2::<f32>::zeros((rows, cols));
-    let mut ldown_sun = Array2::<f32>::zeros((rows, cols));
-    let mut ldown_sh = Array2::<f32>::zeros((rows, cols));
     let mut ldown_ref = Array2::<f32>::zeros((rows, cols));
 
-    let mut lside_sky = Array2::<f32>::zeros((rows, cols));
-    let mut lside_veg = Array2::<f32>::zeros((rows, cols));
-    let mut lside_sun = Array2::<f32>::zeros((rows, cols));
-    let mut lside_sh = Array2::<f32>::zeros((rows, cols));
     let mut lside_ref = Array2::<f32>::zeros((rows, cols));
 
     let mut least = Array2::<f32>::zeros((rows, cols));
@@ -176,7 +165,7 @@ pub fn anisotropic_sky(
         if indices.is_empty() {
             continue;
         }
-        // Use first index for esky_band (since all with same altitude have same value)
+        // Use first index for esky_band (since all with the same altitude have the same value)
         let temp_emissivity = esky_band[indices[0]];
         let ta_k = ta + 273.15;
         let lval = (temp_emissivity * SBC * ta_k.powi(4)) / PI;
@@ -201,82 +190,129 @@ pub fn anisotropic_sky(
         }
     }
 
-    for i in 0..n_patches {
-        let temp_sky_bool = shmat.slice(s![.., .., i]).mapv(|v| v == 1.0)
-            & vegshmat.slice(s![.., .., i]).mapv(|v| v == 1.0);
-        let temp_vegsh_bool = vegshmat.slice(s![.., .., i]).mapv(|v| v == 0.0)
-            | vbshvegshmat.slice(s![.., .., i]).mapv(|v| v == 0.0);
-        let temp_vbsh_bool = (shmat.slice(s![.., .., i]).mapv(|v| 1.0 - v)
-            * vbshvegshmat.slice(s![.., .., i]))
-        .mapv(|v| v == 1.0);
-        let temp_sh_bool = temp_vbsh_bool.clone();
-        let mut temp_sh_w_bool = Array2::<bool>::default((rows, cols));
-        let mut temp_sh_roof_bool = Array2::<bool>::default((rows, cols));
-        if wall_scheme {
-            temp_sh_w_bool = temp_sh_bool.clone()
-                & voxel_maps
-                    .as_ref()
-                    .unwrap()
-                    .slice(s![.., .., i])
-                    .mapv(|v| v > 0.0);
-            temp_sh_roof_bool = temp_sh_bool.clone()
-                & voxel_maps
-                    .as_ref()
-                    .unwrap()
-                    .slice(s![.., .., i])
-                    .mapv(|v| v == 0.0);
-        }
-        // Convert all boolean masks to f32 for patch_radiation.rs compatibility
-        let temp_sky = temp_sky_bool.mapv(|v| if v { 1.0 } else { 0.0 });
-        let temp_vegsh = temp_vegsh_bool.mapv(|v| if v { 1.0 } else { 0.0 });
-        let temp_sh = temp_sh_bool.mapv(|v| if v { 1.0 } else { 0.0 });
-        let temp_sh_w = temp_sh_w_bool.mapv(|v| if v { 1.0 } else { 0.0 });
-        let temp_sh_roof = temp_sh_roof_bool.mapv(|v| if v { 1.0 } else { 0.0 });
+    let (
+        lside_sky,
+        ldown_sky,
+        lside_veg,
+        ldown_veg,
+        lside_sun,
+        lside_sh,
+        ldown_sun,
+        ldown_sh,
+        kside_d,
+        kref_sun,
+        kref_sh,
+        kref_veg,
+        least_patch_sum,
+        lsouth_patch_sum,
+        lwest_patch_sum,
+        lnorth_patch_sum,
+    ) = (0..n_patches)
+        .into_par_iter()
+        .map(|i| {
+            let mut lside_sky_p = Array2::<f32>::zeros((rows, cols));
+            let mut ldown_sky_p = Array2::<f32>::zeros((rows, cols));
+            let mut lside_veg_p = Array2::<f32>::zeros((rows, cols));
+            let mut ldown_veg_p = Array2::<f32>::zeros((rows, cols));
+            let mut lside_sun_p = Array2::<f32>::zeros((rows, cols));
+            let mut lside_sh_p = Array2::<f32>::zeros((rows, cols));
+            let mut ldown_sun_p = Array2::<f32>::zeros((rows, cols));
+            let mut ldown_sh_p = Array2::<f32>::zeros((rows, cols));
+            let mut kside_d_p = Array2::<f32>::zeros((rows, cols));
+            let mut kref_sun_p = Array2::<f32>::zeros((rows, cols));
+            let mut kref_sh_p = Array2::<f32>::zeros((rows, cols));
+            let mut kref_veg_p = Array2::<f32>::zeros((rows, cols));
+            let mut least_p = Array2::<f32>::zeros((rows, cols));
+            let mut lsouth_p = Array2::<f32>::zeros((rows, cols));
+            let mut lwest_p = Array2::<f32>::zeros((rows, cols));
+            let mut lnorth_p = Array2::<f32>::zeros((rows, cols));
 
-        // Estimate sunlit and shaded patches
-        let mut sunlit_patches = Array2::<bool>::default((rows, cols));
-        let mut shaded_patches = Array2::<bool>::default((rows, cols));
-        // For each pixel, call the sunlit_shaded_patches logic (Python version is per-patch, but here we do per-pixel)
-        for r in 0..rows {
-            for c in 0..cols {
-                let sunlit = false;
-                let shaded = false;
-                sunlit_shaded_patches::shaded_or_sunlit(
-                    solar_altitude,
-                    solar_azimuth,
-                    &Array1::from_elem(1, patch_altitude[i]).view(),
-                    &Array1::from_elem(1, patch_azimuth[i]).view(),
-                    asvf[[r, c]],
-                    &mut Array1::from_elem(1, sunlit).view_mut(),
-                    &mut Array1::from_elem(1, shaded).view_mut(),
-                );
-                sunlit_patches[[r, c]] = sunlit;
-                shaded_patches[[r, c]] = shaded;
+            let temp_sky_bool = shmat.slice(s![.., .., i]).mapv(|v| v == 1.0)
+                & vegshmat.slice(s![.., .., i]).mapv(|v| v == 1.0);
+            let temp_vegsh_bool = vegshmat.slice(s![.., .., i]).mapv(|v| v == 0.0)
+                | vbshvegshmat.slice(s![.., .., i]).mapv(|v| v == 0.0);
+            let temp_vbsh_bool = (shmat.slice(s![.., .., i]).mapv(|v| 1.0 - v)
+                * vbshvegshmat.slice(s![.., .., i]))
+            .mapv(|v| v == 1.0);
+            let temp_sh_bool = temp_vbsh_bool.clone();
+            let mut temp_sh_w_bool = Array2::<bool>::default((rows, cols));
+            let mut temp_sh_roof_bool = Array2::<bool>::default((rows, cols));
+            if wall_scheme {
+                temp_sh_w_bool = temp_sh_bool.clone()
+                    & voxel_maps
+                        .as_ref()
+                        .unwrap()
+                        .slice(s![.., .., i])
+                        .mapv(|v| v > 0.0);
+                temp_sh_roof_bool = temp_sh_bool.clone()
+                    & voxel_maps
+                        .as_ref()
+                        .unwrap()
+                        .slice(s![.., .., i])
+                        .mapv(|v| v == 0.0);
             }
-        }
+            // Convert all boolean masks to f32 for patch_radiation.rs compatibility
+            let temp_sky = temp_sky_bool.mapv(|v| if v { 1.0 } else { 0.0 });
+            let temp_vegsh = temp_vegsh_bool.mapv(|v| if v { 1.0 } else { 0.0 });
+            let temp_sh = temp_sh_bool.mapv(|v| if v { 1.0 } else { 0.0 });
+            let temp_sh_w = temp_sh_w_bool.mapv(|v| if v { 1.0 } else { 0.0 });
+            let temp_sh_roof = temp_sh_roof_bool.mapv(|v| if v { 1.0 } else { 0.0 });
 
-        if cyl {
-            let angle_of_incidence = (patch_altitude[i] * deg2rad).cos();
-            let angle_of_incidence_h = (patch_altitude[i] * deg2rad).sin();
+            // Estimate sunlit and shaded patches for this patch (per-pixel)
+            let mut sunlit_patches = Array2::<bool>::default((rows, cols));
+            let mut shaded_patches = Array2::<bool>::default((rows, cols));
+            for r in 0..rows {
+                for c in 0..cols {
+                    let mut sunlit = ndarray::Array1::from_elem(1, false);
+                    let mut shaded = ndarray::Array1::from_elem(1, false);
+                    sunlit_shaded_patches::shaded_or_sunlit(
+                        solar_altitude,
+                        solar_azimuth,
+                        &ndarray::Array1::from_elem(1, patch_altitude[i]).view(),
+                        &ndarray::Array1::from_elem(1, patch_azimuth[i]).view(),
+                        asvf[[r, c]],
+                        &mut sunlit.view_mut(),
+                        &mut shaded.view_mut(),
+                    );
+                    sunlit_patches[[r, c]] = sunlit[0];
+                    shaded_patches[[r, c]] = shaded[0];
+                }
+            }
 
-            // Longwave from sky
-            let (lside_sky_temp, ldown_sky_temp, least_temp, lsouth_temp, lwest_temp, lnorth_temp) =
-                patch_radiation::longwave_from_sky(
+            if cyl {
+                let angle_of_incidence = (patch_altitude[i] * deg2rad).cos();
+                let angle_of_incidence_h = (patch_altitude[i] * deg2rad).sin();
+
+                // Longwave from sky
+                let (
+                    lside_sky_temp,
+                    ldown_sky_temp,
+                    least_temp,
+                    lsouth_temp,
+                    lwest_temp,
+                    lnorth_temp,
+                ) = patch_radiation::longwave_from_sky(
                     &temp_sky,
                     lside_patch[i],
                     ldown_patch[i],
                     patch_azimuth[i],
                 );
-            lside_sky = &lside_sky + &lside_sky_temp;
-            ldown_sky = &ldown_sky + &ldown_sky_temp;
-            least = &least + &least_temp;
-            lsouth = &lsouth + &lsouth_temp;
-            lwest = &lwest + &lwest_temp;
-            lnorth = &lnorth + &lnorth_temp;
+                lside_sky_p = lside_sky_temp;
+                ldown_sky_p = ldown_sky_temp;
+                least_p.zip_mut_with(&least_temp, |a, &b| *a += b);
+                lsouth_p.zip_mut_with(&lsouth_temp, |a, &b| *a += b);
+                lwest_p.zip_mut_with(&lwest_temp, |a, &b| *a += b);
+                lnorth_p.zip_mut_with(&lnorth_temp, |a, &b| *a += b);
 
-            // Longwave from vegetation
-            let (lside_veg_temp, ldown_veg_temp, least_temp, lsouth_temp, lwest_temp, lnorth_temp) =
-                patch_radiation::longwave_from_veg(
+                // Longwave from vegetation
+                let (
+                    lside_veg_temp,
+                    ldown_veg_temp,
+                    least_temp,
+                    lsouth_temp,
+                    lwest_temp,
+                    lnorth_temp,
+                ) = patch_radiation::longwave_from_veg(
                     &temp_vegsh,
                     steradians[i],
                     angle_of_incidence,
@@ -286,130 +322,194 @@ pub fn anisotropic_sky(
                     ewall,
                     ta,
                 );
-            lside_veg = &lside_veg + &lside_veg_temp;
-            ldown_veg = &ldown_veg + &ldown_veg_temp;
-            least = &least + &least_temp;
-            lsouth = &lsouth + &lsouth_temp;
-            lwest = &lwest + &lwest_temp;
-            lnorth = &lnorth + &lnorth_temp;
+                lside_veg_p = lside_veg_temp;
+                ldown_veg_p = ldown_veg_temp;
+                least_p.zip_mut_with(&least_temp, |a, &b| *a += b);
+                lsouth_p.zip_mut_with(&lsouth_temp, |a, &b| *a += b);
+                lwest_p.zip_mut_with(&lwest_temp, |a, &b| *a += b);
+                lnorth_p.zip_mut_with(&lnorth_temp, |a, &b| *a += b);
 
-            // Longwave from buildings
-            if !wall_scheme {
-                let azimuth_difference = (solar_azimuth - patch_azimuth[i]).abs();
-                let (
-                    lside_sun_temp,
-                    lside_sh_temp,
-                    ldown_sun_temp,
-                    ldown_sh_temp,
-                    least_temp,
-                    lsouth_temp,
-                    lwest_temp,
-                    lnorth_temp,
-                ) = patch_radiation::longwave_from_buildings(
-                    &temp_sh,
-                    steradians[i],
-                    angle_of_incidence,
-                    angle_of_incidence_h,
-                    patch_azimuth[i],
-                    &sunlit_patches,
-                    &shaded_patches,
-                    azimuth_difference,
-                    solar_altitude,
-                    ewall,
-                    ta,
-                    tgwall,
-                );
-                lside_sun = &lside_sun + &lside_sun_temp;
-                lside_sh = &lside_sh + &lside_sh_temp;
-                ldown_sun = &ldown_sun + &ldown_sun_temp;
-                ldown_sh = &ldown_sh + &ldown_sh_temp;
-                least = &least + &least_temp;
-                lsouth = &lsouth + &lsouth_temp;
-                lwest = &lwest + &lwest_temp;
-                lnorth = &lnorth + &lnorth_temp;
-            } else {
-                let azimuth_difference = (solar_azimuth - patch_azimuth[i]).abs();
-                let (
-                    lside_sun_temp,
-                    lside_sh_temp,
-                    ldown_sun_temp,
-                    ldown_sh_temp,
-                    least_temp,
-                    lsouth_temp,
-                    lwest_temp,
-                    lnorth_temp,
-                ) = patch_radiation::longwave_from_buildings_wall_scheme(
-                    &temp_sh_w,
-                    &voxel_table.as_ref().unwrap().to_owned(),
-                    steradians[i],
-                    angle_of_incidence,
-                    angle_of_incidence_h,
-                    patch_azimuth[i],
-                );
-                let (
-                    lside_sun_r_temp,
-                    lside_sh_r_temp,
-                    ldown_sun_r_temp,
-                    ldown_sh_r_temp,
-                    least_r_temp,
-                    lsouth_r_temp,
-                    lwest_r_temp,
-                    lnorth_r_temp,
-                ) = patch_radiation::longwave_from_buildings(
-                    &temp_sh_roof,
-                    steradians[i],
-                    angle_of_incidence,
-                    angle_of_incidence_h,
-                    patch_azimuth[i],
-                    &sunlit_patches,
-                    &shaded_patches,
-                    azimuth_difference,
-                    solar_altitude,
-                    ewall,
-                    ta,
-                    tgwall,
-                );
-                lside_sun = &lside_sun + &lside_sun_temp + &lside_sun_r_temp;
-                lside_sh = &lside_sh + &lside_sh_temp + &lside_sh_r_temp;
-                ldown_sun = &ldown_sun + &ldown_sun_temp + &ldown_sun_r_temp;
-                ldown_sh = &ldown_sh + &ldown_sh_temp + &ldown_sh_r_temp;
-                least = &least + &least_temp + &least_r_temp;
-                lsouth = &lsouth + &lsouth_temp + &lsouth_r_temp;
-                lwest = &lwest + &lwest_temp + &lwest_r_temp;
-                lnorth = &lnorth + &lnorth_temp + &lnorth_r_temp;
-            }
+                // Longwave from buildings
+                if !wall_scheme {
+                    let azimuth_difference = (solar_azimuth - patch_azimuth[i]).abs();
+                    let (
+                        lside_sun_temp,
+                        lside_sh_temp,
+                        ldown_sun_temp,
+                        ldown_sh_temp,
+                        least_temp,
+                        lsouth_temp,
+                        lwest_temp,
+                        lnorth_temp,
+                    ) = patch_radiation::longwave_from_buildings(
+                        &temp_sh,
+                        steradians[i],
+                        angle_of_incidence,
+                        angle_of_incidence_h,
+                        patch_azimuth[i],
+                        &sunlit_patches,
+                        &shaded_patches,
+                        azimuth_difference,
+                        solar_altitude,
+                        ewall,
+                        ta,
+                        tgwall,
+                    );
+                    lside_sun_p = lside_sun_temp;
+                    lside_sh_p = lside_sh_temp;
+                    ldown_sun_p = ldown_sun_temp;
+                    ldown_sh_p = ldown_sh_temp;
+                    least_p.zip_mut_with(&least_temp, |a, &b| *a += b);
+                    lsouth_p.zip_mut_with(&lsouth_temp, |a, &b| *a += b);
+                    lwest_p.zip_mut_with(&lwest_temp, |a, &b| *a += b);
+                    lnorth_p.zip_mut_with(&lnorth_temp, |a, &b| *a += b);
+                } else {
+                    let (
+                        lside_sun_temp,
+                        lside_sh_temp,
+                        ldown_sun_temp,
+                        ldown_sh_temp,
+                        least_temp,
+                        lsouth_temp,
+                        lwest_temp,
+                        lnorth_temp,
+                    ) = patch_radiation::longwave_from_buildings_wall_scheme(
+                        &temp_sh_w,
+                        &voxel_table.as_ref().unwrap().to_owned(),
+                        steradians[i],
+                        angle_of_incidence,
+                        angle_of_incidence_h,
+                        patch_azimuth[i],
+                    );
+                    let azimuth_difference = (solar_azimuth - patch_azimuth[i]).abs();
+                    let (
+                        lside_sun_r_temp,
+                        lside_sh_r_temp,
+                        ldown_sun_r_temp,
+                        ldown_sh_r_temp,
+                        least_r_temp,
+                        lsouth_r_temp,
+                        lwest_r_temp,
+                        lnorth_r_temp,
+                    ) = patch_radiation::longwave_from_buildings(
+                        &temp_sh_roof,
+                        steradians[i],
+                        angle_of_incidence,
+                        angle_of_incidence_h,
+                        patch_azimuth[i],
+                        &sunlit_patches,
+                        &shaded_patches,
+                        azimuth_difference,
+                        solar_altitude,
+                        ewall,
+                        ta,
+                        tgwall,
+                    );
+                    lside_sun_p = &lside_sun_temp + &lside_sun_r_temp;
+                    lside_sh_p = &lside_sh_temp + &lside_sh_r_temp;
+                    ldown_sun_p = &ldown_sun_temp + &ldown_sun_r_temp;
+                    ldown_sh_p = &ldown_sh_temp + &ldown_sh_r_temp;
+                    least_p.zip_mut_with(&(&least_temp + &least_r_temp), |a, &b| *a += b);
+                    lsouth_p.zip_mut_with(&(&lsouth_temp + &lsouth_r_temp), |a, &b| *a += b);
+                    lwest_p.zip_mut_with(&(&lwest_temp + &lwest_r_temp), |a, &b| *a += b);
+                    lnorth_p.zip_mut_with(&(&lnorth_temp + &lnorth_r_temp), |a, &b| *a += b);
+                }
 
-            // Shortwave from sky
-            if solar_altitude > 0.0 {
-                kside_d.zip_mut_with(&temp_sky, |kd, &ts| {
-                    *kd += ts * lum_chi[i] * angle_of_incidence * steradians[i]
-                });
-                // Reflected shortwave
-                let sunlit_surface =
-                    (albedo * (rad_i * (solar_altitude * deg2rad).cos()) + (rad_d * 0.5)) / PI;
-                let shaded_surface = (albedo * rad_d * 0.5) / PI;
-                kref_veg.zip_mut_with(&temp_vegsh, |kv, &tv| {
-                    *kv += tv * shaded_surface * steradians[i] * angle_of_incidence
-                });
-                for r in 0..rows {
-                    for c in 0..cols {
-                        if sunlit_patches[[r, c]] {
-                            kref_sun[[r, c]] += temp_sh[[r, c]]
-                                * sunlit_surface
-                                * steradians[i]
-                                * angle_of_incidence;
-                        }
-                        if shaded_patches[[r, c]] {
-                            kref_sh[[r, c]] += temp_sh[[r, c]]
-                                * shaded_surface
-                                * steradians[i]
-                                * angle_of_incidence;
+                // Shortwave from sky
+                if solar_altitude > 0.0 {
+                    kside_d_p.zip_mut_with(&temp_sky, |kd, &ts| {
+                        *kd += ts * lum_chi[i] * angle_of_incidence * steradians[i]
+                    });
+                    // Reflected shortwave
+                    let sunlit_surface =
+                        (albedo * (rad_i * (solar_altitude * deg2rad).cos()) + (rad_d * 0.5)) / PI;
+                    let shaded_surface = (albedo * rad_d * 0.5) / PI;
+                    kref_veg_p.zip_mut_with(&temp_vegsh, |kv, &tv| {
+                        *kv += tv * shaded_surface * steradians[i] * angle_of_incidence
+                    });
+                    for r in 0..rows {
+                        for c in 0..cols {
+                            if sunlit_patches[[r, c]] {
+                                kref_sun_p[[r, c]] += temp_sh[[r, c]]
+                                    * sunlit_surface
+                                    * steradians[i]
+                                    * angle_of_incidence;
+                            }
+                            if shaded_patches[[r, c]] {
+                                kref_sh_p[[r, c]] += temp_sh[[r, c]]
+                                    * shaded_surface
+                                    * steradians[i]
+                                    * angle_of_incidence;
+                            }
                         }
                     }
                 }
             }
-        }
-    }
+            (
+                lside_sky_p,
+                ldown_sky_p,
+                lside_veg_p,
+                ldown_veg_p,
+                lside_sun_p,
+                lside_sh_p,
+                ldown_sun_p,
+                ldown_sh_p,
+                kside_d_p,
+                kref_sun_p,
+                kref_sh_p,
+                kref_veg_p,
+                least_p,
+                lsouth_p,
+                lwest_p,
+                lnorth_p,
+            )
+        })
+        .reduce(
+            || {
+                (
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                    Array2::<f32>::zeros((rows, cols)),
+                )
+            },
+            |mut a, b| {
+                a.0.zip_mut_with(&b.0, |x, &y| *x += y);
+                a.1.zip_mut_with(&b.1, |x, &y| *x += y);
+                a.2.zip_mut_with(&b.2, |x, &y| *x += y);
+                a.3.zip_mut_with(&b.3, |x, &y| *x += y);
+                a.4.zip_mut_with(&b.4, |x, &y| *x += y);
+                a.5.zip_mut_with(&b.5, |x, &y| *x += y);
+                a.6.zip_mut_with(&b.6, |x, &y| *x += y);
+                a.7.zip_mut_with(&b.7, |x, &y| *x += y);
+                a.8.zip_mut_with(&b.8, |x, &y| *x += y);
+                a.9.zip_mut_with(&b.9, |x, &y| *x += y);
+                a.10.zip_mut_with(&b.10, |x, &y| *x += y);
+                a.11.zip_mut_with(&b.11, |x, &y| *x += y);
+                a.12.zip_mut_with(&b.12, |x, &y| *x += y);
+                a.13.zip_mut_with(&b.13, |x, &y| *x += y);
+                a.14.zip_mut_with(&b.14, |x, &y| *x += y);
+                a.15.zip_mut_with(&b.15, |x, &y| *x += y);
+                a
+            },
+        );
+
+    least.zip_mut_with(&least_patch_sum, |a, &b| *a += b);
+    lsouth.zip_mut_with(&lsouth_patch_sum, |a, &b| *a += b);
+    lwest.zip_mut_with(&lwest_patch_sum, |a, &b| *a += b);
+    lnorth.zip_mut_with(&lnorth_patch_sum, |a, &b| *a += b);
 
     // Calculate reflected longwave in each patch
     for i in 0..n_patches {
@@ -443,9 +543,11 @@ pub fn anisotropic_sky(
     let ldown = &ldown_sky + &ldown_veg + &ldown_sh + &ldown_sun + &ldown_ref;
 
     // Direct radiation
+    let mut kside_i = Array2::<f32>::zeros((rows, cols));
     if cyl {
         kside_i = &shadow * rad_i * (solar_altitude * deg2rad).cos();
     }
+    let mut kside = Array2::<f32>::zeros((rows, cols));
     if solar_altitude > 0.0 {
         kside = &kside_i + &kside_d + &kref_sun + &kref_sh + &kref_veg;
         keast = &kup_e * 0.5;
