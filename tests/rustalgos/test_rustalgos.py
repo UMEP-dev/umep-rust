@@ -271,20 +271,38 @@ def test_solweig():
     print(f"\nsolweig_run w rust shadows: max memory usage: {rust_memory:.2f} MiB")
 
 
-def simple_solweig(SWR):
-    # Simple test to run Solweig with minimal setup
-    SWR.run()
-
-
 def test_profile_solweig():
     SWR = SolweigRunRust(
         config_path_str="tests/rustalgos/test_config_solweig.ini",
         params_json_path="tests/rustalgos/test_params_solweig.json",
     )
+    # ANI patch parallel        24   25.169    1.049   25.169    1.049 {built-in method sky.anisotropic_sky}
+    # ANI pixel parallel        24    2.019    0.084    2.019    0.084 {built-in method sky.anisotropic_sky}
+    # GVF                       18    1.407    0.078    1.407    0.078 {built-in method gvf.gvf_calc}
+    # GVF pixel parallel        18    0.184    0.010    0.184    0.010 {built-in method gvf.gvf_calc}
+    # shadowing                 18    0.918    0.051    0.918    0.051 {built-in method shadowing.calculate_shadows_wall_ht_25}
 
+    """
+    18      4.362    0.242    6.228    0.346 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Kside_veg_v2022a.py:6(Kside_veg_v2022a)
+    24      2.257    0.094    2.257    0.094 {built-in method sky.anisotropic_sky}
+    2754    1.584    0.001    1.584    0.001 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunlit_shaded_patches.py:6(shaded_or_sunlit)
+    18      0.930    0.052    0.930    0.052 {built-in method shadowing.calculate_shadows_wall_ht_25}
+    """
+    SWC = SolweigRunCore(
+        config_path_str="tests/rustalgos/test_config_solweig.ini",
+        params_json_path="tests/rustalgos/test_params_solweig.json",
+    )
+    """
+    24   10.249    0.427   16.128    0.672 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/anisotropic_sky.py:11(anisotropic_sky)
+    324    5.863    0.018    6.402    0.020 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunonsurface_2018a.py:3(sunonsurface_2018a)
+    18    4.218    0.234    6.002    0.333 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Kside_veg_v2022a.py:6(Kside_veg_v2022a)
+    6426    3.501    0.001    3.501    0.001 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunlit_shaded_patches.py:6(shaded_or_sunlit)
+    18    1.534    0.085    1.639    0.091 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/util/SEBESOLWEIGCommonFiles/shadowingfunction_wallheight_23.py:42(shadowingfunction_wallheight_23)
+    """
     profiler = cProfile.Profile()
     profiler.enable()
-    simple_solweig(SWR)
+    # SWR.run()
+    SWC.run()
     profiler.disable()
     stats = pstats.Stats(profiler).sort_stats("tottime")
     stats.print_stats(30)  # Show top 30 lines

@@ -3,8 +3,6 @@ use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 use rayon::prelude::*;
 
-use crate::sun::sun_on_surface;
-
 const PI: f32 = std::f32::consts::PI;
 
 #[pyclass]
@@ -81,217 +79,198 @@ pub fn gvf_calc(
     let lc_grid = lc_grid.as_array();
 
     let (rows, cols) = (buildings.shape()[0], buildings.shape()[1]);
-
     let azimuth_a: Array1<f32> = Array1::range(5.0, 359.0, 20.0);
+    let num_azimuths = azimuth_a.len() as f32;
+    let num_azimuths_half = num_azimuths / 2.0;
 
-    let mut sunwall = Array2::from_elem((rows, cols), 0.0);
-    Zip::from(&mut sunwall)
-        .and(&wallsun)
-        .and(&walls)
-        .and(&buildings)
-        .par_for_each(|sw, &ws, &w, &b| {
-            if w > 0.0 {
-                *sw = if (ws / w * b) == 1.0 { 1.0 } else { 0.0 };
-            }
-        });
-
-    let dirwalls_rad = dirwalls.mapv(|x| x * PI / 180.0);
-
-    struct SunResult {
-        azimuth: f32,
-        gvf_lup: Array2<f32>,
-        gvfalb: Array2<f32>,
-        gvfalbnosh: Array2<f32>,
-        gvf_sum: Array2<f32>,
+    // Struct to hold results for a single pixel
+    struct PixelResult {
+        r: usize,
+        c: usize,
+        gvf_lup: f32,
+        gvfalb: f32,
+        gvfalbnosh: f32,
+        gvf_sum: f32,
+        gvf_lup_e: f32,
+        gvfalb_e: f32,
+        gvfalbnosh_e: f32,
+        gvf_lup_s: f32,
+        gvfalb_s: f32,
+        gvfalbnosh_s: f32,
+        gvf_lup_w: f32,
+        gvfalb_w: f32,
+        gvfalbnosh_w: f32,
+        gvf_lup_n: f32,
+        gvfalb_n: f32,
+        gvfalbnosh_n: f32,
     }
 
-    let sun_results: Vec<SunResult> = azimuth_a
-        .par_iter()
-        .map(|&azimuth| {
-            let (_, gvf_lupi, gvfalbi, gvfalbnoshi, gvf2) = sun_on_surface(
-                azimuth,
-                scale,
-                buildings,
-                shadow,
-                sunwall.view(),
-                first,
-                second,
-                dirwalls_rad.view(),
-                walls,
-                tg,
-                tgwall,
-                ta,
-                emis_grid,
-                ewall,
-                alb_grid,
-                sbc,
-                albedo_b,
-                twater,
-                lc_grid,
-                landcover,
-            );
-            SunResult {
-                azimuth,
-                gvf_lup: gvf_lupi,
-                gvfalb: gvfalbi,
-                gvfalbnosh: gvfalbnoshi,
-                gvf_sum: gvf2,
+    // Create a flat list of pixel indices to parallelize over
+    let pixel_indices: Vec<(usize, usize)> = (0..rows)
+        .flat_map(|r| (0..cols).map(move |c| (r, c)))
+        .collect();
+
+    // Main parallel computation over pixels
+    let pixel_results: Vec<PixelResult> = pixel_indices
+        .into_par_iter()
+        .map(|(r, c)| {
+            let building = buildings[(r, c)];
+            let wall = walls[(r, c)];
+            let wall_aspect = dirwalls[(r, c)] * PI / 180.0;
+            let wall_ht = wall;
+            let shadow_val = shadow[(r, c)];
+            let sunwall_val = if wall > 0.0 {
+                let ws = wallsun[(r, c)];
+                if (ws / wall * building) == 1.0 {
+                    1.0
+                } else {
+                    0.0
+                }
+            } else {
+                0.0
+            };
+            let tground = tg[(r, c)];
+            let emis = emis_grid[(r, c)];
+            let alb = alb_grid[(r, c)];
+            let lc = lc_grid[(r, c)];
+
+            let mut sum_lup = 0.0;
+            let mut sum_alb = 0.0;
+            let mut sum_albnosh = 0.0;
+            let mut sum_gvf2 = 0.0;
+
+            let mut sum_lup_e = 0.0;
+            let mut sum_alb_e = 0.0;
+            let mut sum_albnosh_e = 0.0;
+            let mut sum_lup_s = 0.0;
+            let mut sum_alb_s = 0.0;
+            let mut sum_albnosh_s = 0.0;
+            let mut sum_lup_w = 0.0;
+            let mut sum_alb_w = 0.0;
+            let mut sum_albnosh_w = 0.0;
+            let mut sum_lup_n = 0.0;
+            let mut sum_alb_n = 0.0;
+            let mut sum_albnosh_n = 0.0;
+
+            for &azimuth in azimuth_a.iter() {
+                let (_, gvfLup, gvfalb_val, gvfalbnosh_val, gvf2) =
+                    crate::sun::sun_on_surface_pixel(
+                        azimuth,
+                        scale,
+                        building,
+                        shadow_val,
+                        sunwall_val,
+                        first,
+                        second,
+                        wall_aspect,
+                        wall_ht,
+                        tground,
+                        tgwall,
+                        ta,
+                        emis,
+                        ewall,
+                        alb,
+                        sbc,
+                        albedo_b,
+                        twater,
+                        lc,
+                        landcover,
+                    );
+                sum_lup += gvfLup;
+                sum_alb += gvfalb_val;
+                sum_albnosh += gvfalbnosh_val;
+                sum_gvf2 += gvf2;
+
+                // Directional sums
+                if (0.0..180.0).contains(&azimuth) {
+                    sum_lup_e += gvfLup;
+                    sum_alb_e += gvfalb_val;
+                    sum_albnosh_e += gvfalbnosh_val;
+                }
+                if (90.0..270.0).contains(&azimuth) {
+                    sum_lup_s += gvfLup;
+                    sum_alb_s += gvfalb_val;
+                    sum_albnosh_s += gvfalbnosh_val;
+                }
+                if (180.0..360.0).contains(&azimuth) {
+                    sum_lup_w += gvfLup;
+                    sum_alb_w += gvfalb_val;
+                    sum_albnosh_w += gvfalbnosh_val;
+                }
+                if azimuth >= 270.0 || azimuth < 90.0 {
+                    sum_lup_n += gvfLup;
+                    sum_alb_n += gvfalb_val;
+                    sum_albnosh_n += gvfalbnosh_val;
+                }
+            }
+
+            let ta_kelvin_pow4 = (ta + 273.15).powi(4);
+            let emis_add = emis * (sbc * ta_kelvin_pow4);
+
+            PixelResult {
+                r,
+                c,
+                gvf_lup: sum_lup / num_azimuths + emis_add,
+                gvfalb: sum_alb / num_azimuths,
+                gvfalbnosh: sum_albnosh / num_azimuths,
+                gvf_sum: sum_gvf2 / num_azimuths,
+                gvf_lup_e: sum_lup_e / num_azimuths_half + emis_add,
+                gvfalb_e: sum_alb_e / num_azimuths_half,
+                gvfalbnosh_e: sum_albnosh_e / num_azimuths_half,
+                gvf_lup_s: sum_lup_s / num_azimuths_half + emis_add,
+                gvfalb_s: sum_alb_s / num_azimuths_half,
+                gvfalbnosh_s: sum_albnosh_s / num_azimuths_half,
+                gvf_lup_w: sum_lup_w / num_azimuths_half + emis_add,
+                gvfalb_w: sum_alb_w / num_azimuths_half,
+                gvfalbnosh_w: sum_albnosh_w / num_azimuths_half,
+                gvf_lup_n: sum_lup_n / num_azimuths_half + emis_add,
+                gvfalb_n: sum_alb_n / num_azimuths_half,
+                gvfalbnosh_n: sum_albnosh_n / num_azimuths_half,
             }
         })
         .collect();
 
-    // Helper to sum fields for a filter
-    fn sum_field<F>(results: &[SunResult], field: F, rows: usize, cols: usize) -> Array2<f32>
-    where
-        F: Fn(&SunResult) -> &Array2<f32> + Sync + Send,
-    {
-        if results.is_empty() {
-            return Array2::zeros((rows, cols));
-        }
-        results
-            .par_iter()
-            .fold(
-                || Array2::zeros((rows, cols)),
-                |mut acc, r| {
-                    acc.zip_mut_with(field(r), |a, &b| *a += b);
-                    acc
-                },
-            )
-            .reduce(
-                || Array2::zeros((rows, cols)),
-                |mut a, b| {
-                    a.zip_mut_with(&b, |x, &y| *x += y);
-                    a
-                },
-            )
+    // Prepare output arrays
+    let mut gvf_lup = Array2::<f32>::zeros((rows, cols));
+    let mut gvfalb = Array2::<f32>::zeros((rows, cols));
+    let mut gvfalbnosh = Array2::<f32>::zeros((rows, cols));
+    let mut gvf_sum = Array2::<f32>::zeros((rows, cols));
+    let mut gvf_lup_e = Array2::<f32>::zeros((rows, cols));
+    let mut gvfalb_e = Array2::<f32>::zeros((rows, cols));
+    let mut gvfalbnosh_e = Array2::<f32>::zeros((rows, cols));
+    let mut gvf_lup_s = Array2::<f32>::zeros((rows, cols));
+    let mut gvfalb_s = Array2::<f32>::zeros((rows, cols));
+    let mut gvfalbnosh_s = Array2::<f32>::zeros((rows, cols));
+    let mut gvf_lup_w = Array2::<f32>::zeros((rows, cols));
+    let mut gvfalb_w = Array2::<f32>::zeros((rows, cols));
+    let mut gvfalbnosh_w = Array2::<f32>::zeros((rows, cols));
+    let mut gvf_lup_n = Array2::<f32>::zeros((rows, cols));
+    let mut gvfalb_n = Array2::<f32>::zeros((rows, cols));
+    let mut gvfalbnosh_n = Array2::<f32>::zeros((rows, cols));
+
+    // Populate output arrays from results
+    for result in pixel_results {
+        gvf_lup[(result.r, result.c)] = result.gvf_lup;
+        gvfalb[(result.r, result.c)] = result.gvfalb;
+        gvfalbnosh[(result.r, result.c)] = result.gvfalbnosh;
+        gvf_sum[(result.r, result.c)] = result.gvf_sum;
+        gvf_lup_e[(result.r, result.c)] = result.gvf_lup_e;
+        gvfalb_e[(result.r, result.c)] = result.gvfalb_e;
+        gvfalbnosh_e[(result.r, result.c)] = result.gvfalbnosh_e;
+        gvf_lup_s[(result.r, result.c)] = result.gvf_lup_s;
+        gvfalb_s[(result.r, result.c)] = result.gvfalb_s;
+        gvfalbnosh_s[(result.r, result.c)] = result.gvfalbnosh_s;
+        gvf_lup_w[(result.r, result.c)] = result.gvf_lup_w;
+        gvfalb_w[(result.r, result.c)] = result.gvfalb_w;
+        gvfalbnosh_w[(result.r, result.c)] = result.gvfalbnosh_w;
+        gvf_lup_n[(result.r, result.c)] = result.gvf_lup_n;
+        gvfalb_n[(result.r, result.c)] = result.gvfalb_n;
+        gvfalbnosh_n[(result.r, result.c)] = result.gvfalbnosh_n;
     }
 
-    // All
-    let gvf_lup = sum_field(&sun_results, |r| &r.gvf_lup, rows, cols);
-    let gvfalb = sum_field(&sun_results, |r| &r.gvfalb, rows, cols);
-    let gvfalbnosh = sum_field(&sun_results, |r| &r.gvfalbnosh, rows, cols);
-    let gvf_sum = sum_field(&sun_results, |r| &r.gvf_sum, rows, cols);
-
-    struct DirectionalSums {
-        lup_e: Array2<f32>,
-        alb_e: Array2<f32>,
-        albnosh_e: Array2<f32>,
-        lup_s: Array2<f32>,
-        alb_s: Array2<f32>,
-        albnosh_s: Array2<f32>,
-        lup_w: Array2<f32>,
-        alb_w: Array2<f32>,
-        albnosh_w: Array2<f32>,
-        lup_n: Array2<f32>,
-        alb_n: Array2<f32>,
-        albnosh_n: Array2<f32>,
-    }
-
-    let init_sums = || DirectionalSums {
-        lup_e: Array2::zeros((rows, cols)),
-        alb_e: Array2::zeros((rows, cols)),
-        albnosh_e: Array2::zeros((rows, cols)),
-        lup_s: Array2::zeros((rows, cols)),
-        alb_s: Array2::zeros((rows, cols)),
-        albnosh_s: Array2::zeros((rows, cols)),
-        lup_w: Array2::zeros((rows, cols)),
-        alb_w: Array2::zeros((rows, cols)),
-        albnosh_w: Array2::zeros((rows, cols)),
-        lup_n: Array2::zeros((rows, cols)),
-        alb_n: Array2::zeros((rows, cols)),
-        albnosh_n: Array2::zeros((rows, cols)),
-    };
-
-    let sums = sun_results
-        .par_iter()
-        .fold(init_sums, |mut acc, r| {
-            let azimuth = r.azimuth;
-            // East
-            if azimuth >= 0.0 && azimuth < 180.0 {
-                acc.lup_e.zip_mut_with(&r.gvf_lup, |a, &b| *a += b);
-                acc.alb_e.zip_mut_with(&r.gvfalb, |a, &b| *a += b);
-                acc.albnosh_e.zip_mut_with(&r.gvfalbnosh, |a, &b| *a += b);
-            }
-            // South
-            if azimuth >= 90.0 && azimuth < 270.0 {
-                acc.lup_s.zip_mut_with(&r.gvf_lup, |a, &b| *a += b);
-                acc.alb_s.zip_mut_with(&r.gvfalb, |a, &b| *a += b);
-                acc.albnosh_s.zip_mut_with(&r.gvfalbnosh, |a, &b| *a += b);
-            }
-            // West
-            if azimuth >= 180.0 && azimuth < 360.0 {
-                acc.lup_w.zip_mut_with(&r.gvf_lup, |a, &b| *a += b);
-                acc.alb_w.zip_mut_with(&r.gvfalb, |a, &b| *a += b);
-                acc.albnosh_w.zip_mut_with(&r.gvfalbnosh, |a, &b| *a += b);
-            }
-            // North
-            if azimuth >= 270.0 || azimuth < 90.0 {
-                acc.lup_n.zip_mut_with(&r.gvf_lup, |a, &b| *a += b);
-                acc.alb_n.zip_mut_with(&r.gvfalb, |a, &b| *a += b);
-                acc.albnosh_n.zip_mut_with(&r.gvfalbnosh, |a, &b| *a += b);
-            }
-            acc
-        })
-        .reduce(init_sums, |mut a, b| {
-            a.lup_e.zip_mut_with(&b.lup_e, |x, &y| *x += y);
-            a.alb_e.zip_mut_with(&b.alb_e, |x, &y| *x += y);
-            a.albnosh_e.zip_mut_with(&b.albnosh_e, |x, &y| *x += y);
-            a.lup_s.zip_mut_with(&b.lup_s, |x, &y| *x += y);
-            a.alb_s.zip_mut_with(&b.alb_s, |x, &y| *x += y);
-            a.albnosh_s.zip_mut_with(&b.albnosh_s, |x, &y| *x += y);
-            a.lup_w.zip_mut_with(&b.lup_w, |x, &y| *x += y);
-            a.alb_w.zip_mut_with(&b.alb_w, |x, &y| *x += y);
-            a.albnosh_w.zip_mut_with(&b.albnosh_w, |x, &y| *x += y);
-            a.lup_n.zip_mut_with(&b.lup_n, |x, &y| *x += y);
-            a.alb_n.zip_mut_with(&b.alb_n, |x, &y| *x += y);
-            a.albnosh_n.zip_mut_with(&b.albnosh_n, |x, &y| *x += y);
-            a
-        });
-
-    let gvf_lup_e = sums.lup_e;
-    let gvfalb_e = sums.alb_e;
-    let gvfalbnosh_e = sums.albnosh_e;
-
-    let gvf_lup_s = sums.lup_s;
-    let gvfalb_s = sums.alb_s;
-    let gvfalbnosh_s = sums.albnosh_s;
-
-    let gvf_lup_w = sums.lup_w;
-    let gvfalb_w = sums.alb_w;
-    let gvfalbnosh_w = sums.albnosh_w;
-
-    let gvf_lup_n = sums.lup_n;
-    let gvfalb_n = sums.alb_n;
-    let gvfalbnosh_n = sums.albnosh_n;
-
-    let num_azimuths = azimuth_a.len() as f32;
-    let num_azimuths_half = num_azimuths / 2.0;
-
-    let ta_kelvin_pow4 = (ta + 273.15).powi(4);
-    let emis_add = &emis_grid * (sbc * ta_kelvin_pow4);
-
-    let gvf_lup = gvf_lup / num_azimuths + &emis_add;
-    let gvfalb = gvfalb / num_azimuths;
-    let gvfalbnosh = gvfalbnosh / num_azimuths;
-
-    let gvf_lup_e = gvf_lup_e / num_azimuths_half + &emis_add;
-    let gvf_lup_s = gvf_lup_s / num_azimuths_half + &emis_add;
-    let gvf_lup_w = gvf_lup_w / num_azimuths_half + &emis_add;
-    let gvf_lup_n = gvf_lup_n / num_azimuths_half + &emis_add;
-
-    let gvfalb_e = gvfalb_e / num_azimuths_half;
-    let gvfalb_s = gvfalb_s / num_azimuths_half;
-    let gvfalb_w = gvfalb_w / num_azimuths_half;
-    let gvfalb_n = gvfalb_n / num_azimuths_half;
-
-    let gvfalbnosh_e = gvfalbnosh_e / num_azimuths_half;
-    let gvfalbnosh_s = gvfalbnosh_s / num_azimuths_half;
-    let gvfalbnosh_w = gvfalbnosh_w / num_azimuths_half;
-    let gvfalbnosh_n = gvfalbnosh_n / num_azimuths_half;
-
-    let mut gvf_norm = gvf_sum.clone() / num_azimuths;
+    let mut gvf_norm = gvf_sum.clone();
     Zip::from(&mut gvf_norm)
-        .and(buildings)
+        .and(&buildings)
         .par_for_each(|norm, &bldg| {
             if bldg == 0.0 {
                 *norm = 1.0;

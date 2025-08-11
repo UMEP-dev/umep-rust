@@ -4,6 +4,156 @@ const PI: f32 = std::f32::consts::PI;
 
 #[allow(clippy::too_many_arguments)]
 #[allow(non_snake_case)]
+pub fn sun_on_surface_pixel(
+    azimuth_a: f32,
+    pixel_scale: f32,
+    building: f32,
+    shadow: f32,
+    sunwall: f32,
+    first_ht: f32,
+    second_ht: f32,
+    wall_aspect: f32,
+    wall_ht: f32,
+    tground: f32,
+    tg_wall: f32,
+    t_air: f32,
+    emis: f32,
+    wall_emmisiv: f32,
+    alb: f32,
+    sbc: f32,
+    wall_albedo: f32,
+    t_water: f32,
+    lc: f32,
+    use_landcover: bool,
+) -> (f32, f32, f32, f32, f32) {
+    // Per-pixel reimplementation of sun_on_surface logic
+    let azimuth = azimuth_a * (PI / 180.);
+
+    // Landcover adjustment
+    let mut tground_mut = tground;
+    if use_landcover && lc == 3.0 {
+        tground_mut = t_water - t_air;
+    }
+
+    // Longwave upwelling from ground
+    let lup = sbc * emis * (tground_mut * shadow + t_air + 273.15).powi(4)
+        - sbc * emis * (t_air + 273.15).powi(4);
+
+    // Longwave upwelling from wall
+    let lwall = sbc * wall_emmisiv * (tg_wall + t_air + 273.15).powi(4)
+        - sbc * wall_emmisiv * (t_air + 273.15).powi(4);
+
+    // Wall/ground geometry
+    let first = (first_ht * pixel_scale).round().max(1.0);
+    let second = (second_ht * pixel_scale).round();
+
+    // Wall aspect logic for facesh
+    let pibyfour = PI / 4.0;
+    let threetimespibyfour = 3.0 * pibyfour;
+    let fivetimespibyfour = 5.0 * pibyfour;
+    let seventimespibyfour = 7.0 * pibyfour;
+    let sinazimuth = azimuth.sin();
+    let cosazimuth = azimuth.cos();
+    let tanazimuth = azimuth.tan();
+    let signsinazimuth = sinazimuth.signum();
+    let signcosazimuth = cosazimuth.signum();
+
+    // Wall boolean
+    let wallbol = if wall_ht > 0.0 { 1.0 } else { 0.0 };
+
+    // facesh logic
+    let azilow = azimuth - PI / 2.0;
+    let azihigh = azimuth + PI / 2.0;
+    let facesh = if azilow >= 0.0 && azihigh < 2.0 * PI {
+        if wall_aspect < azilow || wall_aspect >= azihigh {
+            1.0
+        } else {
+            0.0
+        }
+    } else if azilow < 0.0 && azihigh <= 2.0 * PI {
+        let azilow_adj = azilow + 2.0 * PI;
+        if wall_aspect > azilow_adj || wall_aspect <= azihigh {
+            0.0
+        } else {
+            1.0
+        }
+    } else {
+        let azihigh_adj = azihigh - 2.0 * PI;
+        if wall_aspect > azilow || wall_aspect <= azihigh_adj {
+            0.0
+        } else {
+            1.0
+        }
+    } - wallbol
+        + 1.0;
+
+    // Wall/sun influence
+    let wallsuninfluence_first = if wall_ht > 0.0 { 1.0 } else { 0.0 };
+    let wallinfluence_first = if wall_albedo > 0.0 { 1.0 } else { 0.0 };
+    let wallsuninfluence_second = if wall_ht > 0.0 { 1.0 } else { 0.0 };
+    let wallinfluence_second = if wall_albedo > 0.0 { 1.0 } else { 0.0 };
+
+    // Keep logic (simplified for per-pixel)
+    let keep = if wall_ht == second && facesh == 0.0 {
+        1.0
+    } else {
+        0.0
+    };
+
+    // Weighted sums (simplified for per-pixel)
+    let weightsumwall_first = wall_ht / first;
+    let weightsumsh_first = shadow / first;
+    let weightsumLwall_first = lwall / first;
+    let weightsumLupsh_first = lup / first;
+    let weightsumalbwall_first = wall_albedo / first;
+    let weightsumalbsh_first = alb / first;
+    let weightsumalbwallnosh_first = wall_albedo / first;
+    let weightsumalbnosh_first = alb / first;
+
+    let weightsumwall = wall_ht / (second + 1.0);
+    let weightsumsh = shadow / (second + 1.0);
+    let weightsumLwall = lwall / (second + 1.0);
+    let weightsumLupsh = lup / (second + 1.0);
+    let weightsumalbwall = wall_albedo / (second + 1.0);
+    let weightsumalbsh = alb / (second + 1.0);
+    let weightsumalbwallnosh = wall_albedo / (second + 1.0);
+    let weightsumalbnosh = alb / (second + 1.0);
+
+    // gvf1, gvf2, etc. (simplified, as we don't have neighbors)
+    let gvf1 = (weightsumwall_first + weightsumsh_first) * wallsuninfluence_first
+        + weightsumsh_first * (1.0 - wallsuninfluence_first);
+    let mut gvf2 = (weightsumwall + weightsumsh) * wallsuninfluence_second
+        + weightsumsh * (1.0 - wallsuninfluence_second);
+    if gvf2 > 1.0 {
+        gvf2 = 1.0;
+    }
+    let gvfLup1 = (weightsumLwall_first + weightsumLupsh_first) * wallsuninfluence_first
+        + weightsumLupsh_first * (1.0 - wallsuninfluence_first);
+    let gvfLup2 = (weightsumLwall + weightsumLupsh) * wallsuninfluence_second
+        + weightsumLupsh * (1.0 - wallsuninfluence_second);
+    let gvfalb1 = (weightsumalbwall_first + weightsumalbsh_first) * wallsuninfluence_first
+        + weightsumalbsh_first * (1.0 - wallsuninfluence_first);
+    let gvfalb2 = (weightsumalbwall + weightsumalbsh) * wallsuninfluence_second
+        + weightsumalbsh * (1.0 - wallsuninfluence_second);
+    let gvfalbnosh1 = (weightsumalbwallnosh_first + weightsumalbnosh_first) * wallinfluence_first
+        + weightsumalbnosh_first * (1.0 - wallinfluence_first);
+    let gvfalbnosh2 = (weightsumalbwallnosh + weightsumalbnosh) * wallinfluence_second
+        + weightsumalbnosh * (1.0 - wallinfluence_second);
+
+    let gvf = (gvf1 * 0.5 + gvf2 * 0.4) / 0.9;
+    let buildings_inv = 1.0 - building;
+    let lup_final = sbc * emis * (tground_mut * shadow + t_air + 273.15).powi(4)
+        - sbc * emis * (t_air + 273.15).powi(4);
+    let gvfLup = (gvfLup1 * 0.5 + gvfLup2 * 0.4) / 0.9 + lup_final * buildings_inv;
+    let gvfalb = (gvfalb1 * 0.5 + gvfalb2 * 0.4) / 0.9 + alb * buildings_inv * shadow;
+    let gvfalbnosh =
+        ((gvfalbnosh1 * 0.5 + gvfalbnosh2 * 0.4) / 0.9) * building + alb * buildings_inv;
+
+    (gvf, gvfLup, gvfalb, gvfalbnosh, gvf2)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[allow(non_snake_case)]
 pub fn sun_on_surface(
     azimuth_a: f32,
     pixel_scale: f32,

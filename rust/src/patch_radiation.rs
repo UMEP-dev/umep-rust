@@ -2,17 +2,9 @@
 // Rust implementation of patch radiation calculations, ported from the original Python source.
 // This file is intended to match the structure and intent of the Python version in pysrc/umepr/patch_radiation.py.
 
-use ndarray::{Array1, Array2};
+use ndarray::Array2;
+use std::collections::HashMap;
 use std::f32::consts::PI;
-
-pub fn shortwave_from_sky(
-    sky: &Array2<f32>,
-    angle_of_incidence: &Array2<f32>,
-    lum_chi: &Array2<f32>,
-    steradian: &Array2<f32>,
-) -> Array2<f32> {
-    sky * lum_chi * angle_of_incidence * steradian
-}
 
 pub fn longwave_from_sky(
     sky: &Array2<f32>,
@@ -29,28 +21,64 @@ pub fn longwave_from_sky(
 ) {
     let deg2rad = PI / 180.0;
     let shape = sky.raw_dim();
-    let mut ldown_sky = Array2::<f32>::zeros(shape.clone());
-    let mut lside_sky = Array2::<f32>::zeros(shape.clone());
-    let mut least = Array2::<f32>::zeros(shape.clone());
-    let mut lsouth = Array2::<f32>::zeros(shape.clone());
-    let mut lwest = Array2::<f32>::zeros(shape.clone());
-    let mut lnorth = Array2::<f32>::zeros(shape.clone());
-    for ((i, j), &skyval) in sky.indexed_iter() {
-        ldown_sky[(i, j)] = skyval * lsky_down;
-        lside_sky[(i, j)] = skyval * lsky_side;
-        if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
-            least[(i, j)] = skyval * lsky_side * ((90.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
-            lsouth[(i, j)] = skyval * lsky_side * ((180.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
-            lwest[(i, j)] = skyval * lsky_side * ((270.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
-            lnorth[(i, j)] = skyval * lsky_side * ((0.0 - patch_azimuth) * deg2rad).cos();
-        }
-    }
+
+    // Vectorized base arrays
+    let ldown_sky = sky * lsky_down;
+    let lside_sky = sky * lsky_side;
+
+    // Only allocate direction arrays if their condition is met, else use zero arrays
+    let least = if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
+        &lside_sky * ((90.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lsouth = if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
+        &lside_sky * ((180.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lwest = if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
+        &lside_sky * ((270.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lnorth = if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
+        &lside_sky * ((0.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    (lside_sky, ldown_sky, least, lsouth, lwest, lnorth)
+}
+
+pub fn longwave_from_sky_pixel(
+    lsky_side: f32,
+    lsky_down: f32,
+    patch_azimuth: f32,
+) -> (f32, f32, f32, f32, f32, f32) {
+    let deg2rad = PI / 180.0;
+    let ldown_sky = lsky_down;
+    let lside_sky = lsky_side;
+
+    let least = if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
+        lside_sky * ((90.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lsouth = if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
+        lside_sky * ((180.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lwest = if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
+        lside_sky * ((270.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lnorth = if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
+        lside_sky * ((0.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
     (lside_sky, ldown_sky, least, lsouth, lwest, lnorth)
 }
 
@@ -74,45 +102,89 @@ pub fn longwave_from_veg(
     let sbc = 5.67051e-8;
     let deg2rad = PI / 180.0;
     let shape = vegetation.raw_dim();
-    let mut lside_veg = Array2::<f32>::zeros(shape.clone());
-    let mut ldown_veg = Array2::<f32>::zeros(shape.clone());
-    let mut least = Array2::<f32>::zeros(shape.clone());
-    let mut lsouth = Array2::<f32>::zeros(shape.clone());
-    let mut lwest = Array2::<f32>::zeros(shape.clone());
-    let mut lnorth = Array2::<f32>::zeros(shape.clone());
     let vegetation_surface = (ewall * sbc * (ta + 273.15).powi(4)) / PI;
-    for ((i, j), &veg) in vegetation.indexed_iter() {
-        lside_veg[(i, j)] = vegetation_surface * steradian * angle_of_incidence * veg;
-        ldown_veg[(i, j)] = vegetation_surface * steradian * angle_of_incidence_h * veg;
-        if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
-            least[(i, j)] = vegetation_surface
-                * steradian
-                * (patch_altitude * deg2rad).cos()
-                * veg
-                * ((90.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
-            lsouth[(i, j)] = vegetation_surface
-                * steradian
-                * (patch_altitude * deg2rad).cos()
-                * veg
-                * ((180.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
-            lwest[(i, j)] = vegetation_surface
-                * steradian
-                * (patch_altitude * deg2rad).cos()
-                * veg
-                * ((270.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
-            lnorth[(i, j)] = vegetation_surface
-                * steradian
-                * (patch_altitude * deg2rad).cos()
-                * veg
-                * ((0.0 - patch_azimuth) * deg2rad).cos();
-        }
-    }
+    let cos_alt = (patch_altitude * deg2rad).cos();
+    // Vectorized base arrays
+    let lside_veg = vegetation * vegetation_surface * steradian * angle_of_incidence;
+    let ldown_veg = vegetation * vegetation_surface * steradian * angle_of_incidence_h;
+
+    // Only allocate direction arrays if their condition is met, else use zero arrays
+    let least = if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
+        vegetation
+            * vegetation_surface
+            * steradian
+            * cos_alt
+            * ((90.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lsouth = if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
+        vegetation
+            * vegetation_surface
+            * steradian
+            * cos_alt
+            * ((180.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lwest = if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
+        vegetation
+            * vegetation_surface
+            * steradian
+            * cos_alt
+            * ((270.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lnorth = if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
+        vegetation
+            * vegetation_surface
+            * steradian
+            * cos_alt
+            * ((0.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    (lside_veg, ldown_veg, least, lsouth, lwest, lnorth)
+}
+
+pub fn longwave_from_veg_pixel(
+    steradian: f32,
+    angle_of_incidence: f32,
+    angle_of_incidence_h: f32,
+    patch_altitude: f32,
+    patch_azimuth: f32,
+    ewall: f32,
+    ta: f32,
+) -> (f32, f32, f32, f32, f32, f32) {
+    let sbc = 5.67051e-8;
+    let deg2rad = PI / 180.0;
+    let vegetation_surface = (ewall * sbc * (ta + 273.15).powi(4)) / PI;
+    let cos_alt = (patch_altitude * deg2rad).cos();
+
+    let lside_veg = vegetation_surface * steradian * angle_of_incidence;
+    let ldown_veg = vegetation_surface * steradian * angle_of_incidence_h;
+
+    let least = if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
+        vegetation_surface * steradian * cos_alt * ((90.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lsouth = if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
+        vegetation_surface * steradian * cos_alt * ((180.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lwest = if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
+        vegetation_surface * steradian * cos_alt * ((270.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lnorth = if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
+        vegetation_surface * steradian * cos_alt * ((0.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
     (lside_veg, ldown_veg, least, lsouth, lwest, lnorth)
 }
 
@@ -142,89 +214,130 @@ pub fn longwave_from_buildings(
     let sbc = 5.67051e-8;
     let deg2rad = PI / 180.0;
     let shape = building.raw_dim();
-    let mut lside_sun = Array2::<f32>::zeros(shape.clone());
-    let mut lside_sh = Array2::<f32>::zeros(shape.clone());
-    let mut ldown_sun = Array2::<f32>::zeros(shape.clone());
-    let mut ldown_sh = Array2::<f32>::zeros(shape.clone());
-    let mut least = Array2::<f32>::zeros(shape.clone());
-    let mut lsouth = Array2::<f32>::zeros(shape.clone());
-    let mut lwest = Array2::<f32>::zeros(shape.clone());
-    let mut lnorth = Array2::<f32>::zeros(shape.clone());
     let sunlit_surface = (ewall * sbc * (ta + tgwall + 273.15).powi(4)) / PI;
     let shaded_surface = (ewall * sbc * (ta + 273.15).powi(4)) / PI;
-    if (azimuth_difference > 90.0) && (azimuth_difference < 270.0) && (solar_altitude > 0.0) {
-        for ((i, j), &bldg) in building.indexed_iter() {
-            let sunlit = sunlit_patches[(i, j)] as u8 as f32;
-            let shaded = shaded_patches[(i, j)] as u8 as f32;
-            lside_sun[(i, j)] = sunlit_surface * sunlit * steradian * angle_of_incidence * bldg;
-            lside_sh[(i, j)] = shaded_surface * shaded * steradian * angle_of_incidence * bldg;
-            ldown_sun[(i, j)] = sunlit_surface * sunlit * steradian * angle_of_incidence_h * bldg;
-            ldown_sh[(i, j)] = shaded_surface * shaded * steradian * angle_of_incidence_h * bldg;
-            if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
-                least[(i, j)] = (sunlit_surface * sunlit + shaded_surface * shaded)
-                    * steradian
-                    * angle_of_incidence
-                    * bldg
-                    * ((90.0 - patch_azimuth) * deg2rad).cos();
-            }
-            if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
-                lsouth[(i, j)] = (sunlit_surface * sunlit + shaded_surface * shaded)
-                    * steradian
-                    * angle_of_incidence
-                    * bldg
-                    * ((180.0 - patch_azimuth) * deg2rad).cos();
-            }
-            if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
-                lwest[(i, j)] = (sunlit_surface * sunlit + shaded_surface * shaded)
-                    * steradian
-                    * angle_of_incidence
-                    * bldg
-                    * ((270.0 - patch_azimuth) * deg2rad).cos();
-            }
-            if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
-                lnorth[(i, j)] = (sunlit_surface * sunlit + shaded_surface * shaded)
-                    * steradian
-                    * angle_of_incidence
-                    * bldg
-                    * ((0.0 - patch_azimuth) * deg2rad).cos();
-            }
-        }
+    // Vectorized base arrays for sunlit and shaded
+    let (lside_sun, lside_sh, ldown_sun, ldown_sh, mask, _surface_l, _surface_d) =
+        if (azimuth_difference > 90.0) && (azimuth_difference < 270.0) && (solar_altitude > 0.0) {
+            let sunlit = sunlit_patches.mapv(f32::from);
+            let shaded = shaded_patches.mapv(f32::from);
+            let lside_sun = &sunlit * sunlit_surface * steradian * angle_of_incidence * building;
+            let lside_sh = &shaded * shaded_surface * steradian * angle_of_incidence * building;
+            let ldown_sun = &sunlit * sunlit_surface * steradian * angle_of_incidence_h * building;
+            let ldown_sh = &shaded * shaded_surface * steradian * angle_of_incidence_h * building;
+            // For direction arrays, use combined sunlit+shaded surface and mask
+            let mask = &sunlit * sunlit_surface + &shaded * shaded_surface;
+            (
+                lside_sun,
+                lside_sh,
+                ldown_sun,
+                ldown_sh,
+                mask,
+                sunlit_surface,
+                shaded_surface,
+            )
+        } else {
+            let lside_sun = Array2::<f32>::zeros(shape.clone());
+            let lside_sh = building * shaded_surface * steradian * angle_of_incidence;
+            let ldown_sun = Array2::<f32>::zeros(shape.clone());
+            let ldown_sh = building * shaded_surface * steradian * angle_of_incidence_h;
+            // Only shaded surface contributes
+            let mask = building * shaded_surface;
+            (
+                lside_sun,
+                lside_sh,
+                ldown_sun,
+                ldown_sh,
+                mask,
+                sunlit_surface,
+                shaded_surface,
+            )
+        };
+
+    // Only allocate direction arrays if their condition is met, else use zero arrays
+    let least = if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
+        &mask * steradian * angle_of_incidence * ((90.0 - patch_azimuth) * deg2rad).cos()
     } else {
-        for ((i, j), &bldg) in building.indexed_iter() {
-            lside_sh[(i, j)] = shaded_surface * steradian * angle_of_incidence * bldg;
-            lside_sun[(i, j)] = 0.0;
-            ldown_sh[(i, j)] = shaded_surface * steradian * angle_of_incidence_h * bldg;
-            ldown_sun[(i, j)] = 0.0;
-            if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
-                least[(i, j)] = shaded_surface
-                    * steradian
-                    * angle_of_incidence
-                    * bldg
-                    * ((90.0 - patch_azimuth) * deg2rad).cos();
-            }
-            if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
-                lsouth[(i, j)] = shaded_surface
-                    * steradian
-                    * angle_of_incidence
-                    * bldg
-                    * ((180.0 - patch_azimuth) * deg2rad).cos();
-            }
-            if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
-                lwest[(i, j)] = shaded_surface
-                    * steradian
-                    * angle_of_incidence
-                    * bldg
-                    * ((270.0 - patch_azimuth) * deg2rad).cos();
-            }
-            if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
-                lnorth[(i, j)] = shaded_surface
-                    * steradian
-                    * angle_of_incidence
-                    * bldg
-                    * ((0.0 - patch_azimuth) * deg2rad).cos();
-            }
-        }
-    }
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lsouth = if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
+        &mask * steradian * angle_of_incidence * ((180.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lwest = if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
+        &mask * steradian * angle_of_incidence * ((270.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lnorth = if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
+        &mask * steradian * angle_of_incidence * ((0.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    (
+        lside_sun, lside_sh, ldown_sun, ldown_sh, least, lsouth, lwest, lnorth,
+    )
+}
+
+pub fn longwave_from_buildings_pixel(
+    steradian: f32,
+    angle_of_incidence: f32,
+    angle_of_incidence_h: f32,
+    patch_azimuth: f32,
+    sunlit_patch: bool,
+    shaded_patch: bool,
+    azimuth_difference: f32,
+    solar_altitude: f32,
+    ewall: f32,
+    ta: f32,
+    tgwall: f32,
+) -> (f32, f32, f32, f32, f32, f32, f32, f32) {
+    let sbc = 5.67051e-8;
+    let deg2rad = PI / 180.0;
+    let sunlit_surface = (ewall * sbc * (ta + tgwall + 273.15).powi(4)) / PI;
+    let shaded_surface = (ewall * sbc * (ta + 273.15).powi(4)) / PI;
+
+    let (lside_sun, lside_sh, ldown_sun, ldown_sh, mask_val) =
+        if (azimuth_difference > 90.0) && (azimuth_difference < 270.0) && (solar_altitude > 0.0) {
+            let sunlit = if sunlit_patch { 1.0 } else { 0.0 };
+            let shaded = if shaded_patch { 1.0 } else { 0.0 };
+            let lside_sun = sunlit * sunlit_surface * steradian * angle_of_incidence;
+            let lside_sh = shaded * shaded_surface * steradian * angle_of_incidence;
+            let ldown_sun = sunlit * sunlit_surface * steradian * angle_of_incidence_h;
+            let ldown_sh = shaded * shaded_surface * steradian * angle_of_incidence_h;
+            let mask_val = sunlit * sunlit_surface + shaded * shaded_surface;
+            (lside_sun, lside_sh, ldown_sun, ldown_sh, mask_val)
+        } else {
+            let lside_sun = 0.0;
+            let lside_sh = shaded_surface * steradian * angle_of_incidence;
+            let ldown_sun = 0.0;
+            let ldown_sh = shaded_surface * steradian * angle_of_incidence_h;
+            let mask_val = shaded_surface;
+            (lside_sun, lside_sh, ldown_sun, ldown_sh, mask_val)
+        };
+
+    let least = if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
+        mask_val * steradian * angle_of_incidence * ((90.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lsouth = if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
+        mask_val * steradian * angle_of_incidence * ((180.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lwest = if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
+        mask_val * steradian * angle_of_incidence * ((270.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lnorth = if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
+        mask_val * steradian * angle_of_incidence * ((0.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+
     (
         lside_sun, lside_sh, ldown_sun, ldown_sh, least, lsouth, lwest, lnorth,
     )
@@ -249,58 +362,105 @@ pub fn longwave_from_buildings_wall_scheme(
 ) {
     let deg2rad = PI / 180.0;
     let shape = voxel_maps.raw_dim();
-    let mut lside = Array2::<f32>::zeros(shape.clone());
-    let mut lside_sh = Array2::<f32>::zeros(shape.clone());
-    let mut ldown = Array2::<f32>::zeros(shape.clone());
-    let mut ldown_sh = Array2::<f32>::zeros(shape.clone());
-    let mut least = Array2::<f32>::zeros(shape.clone());
-    let mut lsouth = Array2::<f32>::zeros(shape.clone());
-    let mut lwest = Array2::<f32>::zeros(shape.clone());
-    let mut lnorth = Array2::<f32>::zeros(shape.clone());
 
-    // Build a map from voxel ID to LongwaveRadiation (assume col 0 = ID, col 1 = LongwaveRadiation)
-    use std::collections::HashMap;
-    let mut id_to_longwave = HashMap::new();
-    for row in voxel_table.rows() {
-        let id = row[0] as i32;
-        let val = row[1];
-        id_to_longwave.insert(id, val);
-    }
+    let id_to_longwave: HashMap<i32, f32> = voxel_table
+        .rows()
+        .into_iter()
+        .map(|row| (row[0] as i32, row[1]))
+        .collect();
 
-    // For each voxel, get the longwave value (0 if not found or id==0)
-    let mut patch_radiation = Array2::<f32>::zeros(shape.clone());
-    for ((i, j), &vid) in voxel_maps.indexed_iter() {
+    // Vectorized lookup: map voxel_maps to patch_radiation using id_to_longwave
+    let patch_radiation = voxel_maps.mapv(|vid| {
         let vid_i32 = vid.round() as i32;
         if vid_i32 == 0 {
-            patch_radiation[(i, j)] = 0.0;
+            0.0
         } else {
-            patch_radiation[(i, j)] = *id_to_longwave.get(&vid_i32).unwrap_or(&0.0);
+            *id_to_longwave.get(&vid_i32).unwrap_or(&0.0)
         }
-    }
+    });
 
-    // Lside = patch_radiation * steradian * angle_of_incidence
-    for ((i, j), &pr) in patch_radiation.indexed_iter() {
-        lside[(i, j)] = pr * steradian * angle_of_incidence;
-        ldown[(i, j)] = pr * steradian * angle_of_incidence_h;
-        // Cardinal directions
-        if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
-            least[(i, j)] =
-                pr * steradian * angle_of_incidence * ((90.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
-            lsouth[(i, j)] =
-                pr * steradian * angle_of_incidence * ((180.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
-            lwest[(i, j)] =
-                pr * steradian * angle_of_incidence * ((270.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
-            lnorth[(i, j)] =
-                pr * steradian * angle_of_incidence * ((0.0 - patch_azimuth) * deg2rad).cos();
-        }
-    }
-    // lside_sh, ldown_sh remain zero arrays (no direct analog in Python for wallScheme)
+    let lside = &patch_radiation * steradian * angle_of_incidence;
+    let ldown = &patch_radiation * steradian * angle_of_incidence_h;
+    let lside_sh = Array2::<f32>::zeros(shape.clone());
+    let ldown_sh = Array2::<f32>::zeros(shape.clone());
+
+    // Cardinal directions (vectorized, but only one azimuth per call)
+    let least = if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
+        &patch_radiation * steradian * angle_of_incidence * ((90.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lsouth = if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
+        &patch_radiation
+            * steradian
+            * angle_of_incidence
+            * ((180.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lwest = if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
+        &patch_radiation
+            * steradian
+            * angle_of_incidence
+            * ((270.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lnorth = if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
+        &patch_radiation * steradian * angle_of_incidence * ((0.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    (
+        lside, lside_sh, ldown, ldown_sh, least, lsouth, lwest, lnorth,
+    )
+}
+
+pub fn longwave_from_buildings_wall_scheme_pixel(
+    voxel_table: ndarray::ArrayView2<f32>,
+    voxel_map_val: usize,
+    steradian: f32,
+    angle_of_incidence: f32,
+    angle_of_incidence_h: f32,
+    patch_azimuth: f32,
+) -> (f32, f32, f32, f32, f32, f32, f32, f32) {
+    let deg2rad = PI / 180.0;
+
+    let patch_radiation = if voxel_map_val > 0 {
+        // This is a simplification. In a real scenario, you'd have a more robust
+        // way to map voxel_map_val to the correct row in voxel_table.
+        // Assuming voxel_map_val is a 1-based index corresponding to the row.
+        voxel_table.row(voxel_map_val - 1)[1]
+    } else {
+        0.0
+    };
+
+    let lside = patch_radiation * steradian * angle_of_incidence;
+    let ldown = patch_radiation * steradian * angle_of_incidence_h;
+    let lside_sh = 0.0;
+    let ldown_sh = 0.0;
+
+    let least = if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
+        patch_radiation * steradian * angle_of_incidence * ((90.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lsouth = if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
+        patch_radiation * steradian * angle_of_incidence * ((180.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lwest = if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
+        patch_radiation * steradian * angle_of_incidence * ((270.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lnorth = if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
+        patch_radiation * steradian * angle_of_incidence * ((0.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+
     (
         lside, lside_sh, ldown, ldown_sh, least, lsouth, lwest, lnorth,
     )
@@ -325,84 +485,97 @@ pub fn reflected_longwave(
 ) {
     let deg2rad = PI / 180.0;
     let shape = reflecting_surface.raw_dim();
-    let mut lside_ref = Array2::<f32>::zeros(shape.clone());
-    let mut ldown_ref = Array2::<f32>::zeros(shape.clone());
-    let mut least = Array2::<f32>::zeros(shape.clone());
-    let mut lsouth = Array2::<f32>::zeros(shape.clone());
-    let mut lwest = Array2::<f32>::zeros(shape.clone());
-    let mut lnorth = Array2::<f32>::zeros(shape.clone());
     // (Ldown_sky + Lup) * (1 - ewall) * 0.5 / np.pi
-    let reflected_radiation = ldown_sky + lup;
-    let reflected_radiation = reflected_radiation.mapv(|v| (v * (1.0 - ewall) * 0.5) / PI);
-    for ((i, j), &surf) in reflecting_surface.indexed_iter() {
-        lside_ref[(i, j)] = reflected_radiation[(i, j)] * steradian * angle_of_incidence * surf;
-        ldown_ref[(i, j)] = reflected_radiation[(i, j)] * steradian * angle_of_incidence_h * surf;
-        if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
-            least[(i, j)] = reflected_radiation[(i, j)]
-                * steradian
-                * angle_of_incidence
-                * surf
-                * ((90.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
-            lsouth[(i, j)] = reflected_radiation[(i, j)]
-                * steradian
-                * angle_of_incidence
-                * surf
-                * ((180.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
-            lwest[(i, j)] = reflected_radiation[(i, j)]
-                * steradian
-                * angle_of_incidence
-                * surf
-                * ((270.0 - patch_azimuth) * deg2rad).cos();
-        }
-        if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
-            lnorth[(i, j)] = reflected_radiation[(i, j)]
-                * steradian
-                * angle_of_incidence
-                * surf
-                * ((0.0 - patch_azimuth) * deg2rad).cos();
-        }
-    }
+    let reflected_radiation = (ldown_sky + lup).mapv(|v| (v * (1.0 - ewall) * 0.5) / PI);
+    let lside_ref = &reflected_radiation * steradian * angle_of_incidence * reflecting_surface;
+    let ldown_ref = &reflected_radiation * steradian * angle_of_incidence_h * reflecting_surface;
+
+    let least = if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
+        &reflected_radiation
+            * steradian
+            * angle_of_incidence
+            * reflecting_surface
+            * ((90.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lsouth = if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
+        &reflected_radiation
+            * steradian
+            * angle_of_incidence
+            * reflecting_surface
+            * ((180.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lwest = if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
+        &reflected_radiation
+            * steradian
+            * angle_of_incidence
+            * reflecting_surface
+            * ((270.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
+    let lnorth = if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
+        &reflected_radiation
+            * steradian
+            * angle_of_incidence
+            * reflecting_surface
+            * ((0.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        Array2::<f32>::zeros(shape.clone())
+    };
     (lside_ref, ldown_ref, least, lsouth, lwest, lnorth)
 }
 
-pub fn patch_steradians(l_patches: &Array2<f32>) -> (Array1<f32>, Array1<f32>, Array1<f32>) {
+pub fn reflected_longwave_pixel(
+    steradian: f32,
+    angle_of_incidence: f32,
+    angle_of_incidence_h: f32,
+    patch_azimuth: f32,
+    ldown_sky: f32,
+    lup: f32,
+    ewall: f32,
+) -> (f32, f32, f32, f32, f32, f32) {
     let deg2rad = PI / 180.0;
-    let patch_altitude = l_patches.column(0).to_owned();
-    // Find unique altitudes and their counts (mimic np.unique(..., return_counts=True))
-    let mut skyalt: Vec<f32> = Vec::new();
-    let mut skyalt_c: Vec<usize> = Vec::new();
-    for &alt in patch_altitude.iter() {
-        if let Some(idx) = skyalt.iter().position(|&x| (x - alt).abs() < 1e-6) {
-            skyalt_c[idx] += 1;
-        } else {
-            skyalt.push(alt);
-            skyalt_c.push(1);
-        }
-    }
-    let mut steradian = Array1::<f32>::zeros(patch_altitude.len());
-    for (i, &alt) in patch_altitude.iter().enumerate() {
-        // Find count for this altitude
-        let idx = skyalt.iter().position(|&x| (x - alt).abs() < 1e-6).unwrap();
-        let count = skyalt_c[idx] as f32;
-        if count > 1.0 {
-            steradian[i] = ((360.0 / count) * deg2rad)
-                * (((alt + patch_altitude[0]) * deg2rad).sin()
-                    - ((alt - patch_altitude[0]) * deg2rad).sin());
-        } else {
-            let prev = if i > 0 {
-                patch_altitude[i - 1]
-            } else {
-                patch_altitude[0]
-            };
-            steradian[i] = ((360.0 / count) * deg2rad)
-                * ((alt * deg2rad).sin() - ((prev + patch_altitude[0]) * deg2rad).sin());
-        }
-    }
-    (steradian, Array1::from_vec(skyalt), patch_altitude)
-}
+    let reflected_radiation = ((1.0 - ewall) * ldown_sky + (1.0 - ewall) * lup) / PI;
 
-// Additional functions (longwave_from_veg, longwave_from_buildings, etc.) can be ported similarly as needed.
+    let lside_ref = reflected_radiation * steradian * angle_of_incidence;
+    let ldown_ref = reflected_radiation * steradian * angle_of_incidence_h;
+
+    let least = if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
+        reflected_radiation
+            * steradian
+            * angle_of_incidence
+            * ((90.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lsouth = if patch_azimuth > 90.0 && patch_azimuth < 270.0 {
+        reflected_radiation
+            * steradian
+            * angle_of_incidence
+            * ((180.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lwest = if patch_azimuth > 180.0 && patch_azimuth < 360.0 {
+        reflected_radiation
+            * steradian
+            * angle_of_incidence
+            * ((270.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+    let lnorth = if patch_azimuth > 270.0 || patch_azimuth < 90.0 {
+        reflected_radiation
+            * steradian
+            * angle_of_incidence
+            * ((0.0 - patch_azimuth) * deg2rad).cos()
+    } else {
+        0.0
+    };
+
+    (lside_ref, ldown_ref, least, lsouth, lwest, lnorth)
+}
