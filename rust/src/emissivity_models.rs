@@ -26,17 +26,3 @@ pub fn model2(sky_patches: &Array2<f32>, esky: f32, _ta: f32) -> (Array1<f32>, A
     let patch_emissivity_normalized = patch_emissivity.mapv(|v| v / sum);
     (patch_emissivity_normalized, esky_band)
 }
-
-/// Scalar version of Model 2 for single value calculation.
-pub fn model2_pixel(sky_patch_altitude: f32, esky: f32, _ta: f32) -> f32 {
-    let deg2rad = std::f32::consts::PI / 180.0;
-    let skyzen = 90.0 - sky_patch_altitude;
-    let b_c = 0.308;
-    let cos_z = (skyzen * deg2rad).cos();
-
-    if cos_z.abs() < 1e-6 {
-        1.0
-    } else {
-        1.0 - (1.0 - esky) * ((b_c * (1.7 - (1.0 / cos_z))).exp())
-    }
-}

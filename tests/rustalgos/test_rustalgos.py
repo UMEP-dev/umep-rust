@@ -255,6 +255,8 @@ def test_solweig():
     relative_speed(ori_timings, py_timings)
     print("\n--- Relative Speed Original vs. Rust ---")
     relative_speed(ori_timings, hybrid_timings)
+    # NO ANISO - ~2.5
+    # WITH ANISO - ~2.5
     print("\n--- Relative Speed Core vs. Rust ---")
     relative_speed(py_timings, hybrid_timings)
 
@@ -283,10 +285,21 @@ def test_profile_solweig():
     # shadowing                 18    0.918    0.051    0.918    0.051 {built-in method shadowing.calculate_shadows_wall_ht_25}
 
     """
+    GVF time includes sun on surface!!
+    NO ANISO
     18    4.748    0.264    4.748    0.264 {built-in method gvf.gvf_calc}
        96    1.682    0.018    1.682    0.018 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Lvikt_veg.py:1(Lvikt_veg)
       170    1.164    0.007    1.830    0.011 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/common.py:52(save_raster)
        18    0.761    0.042    0.761    0.042 {built-in method shadowing.calculate_shadows_wall_ht_25}
+    WITH ANISO
+    18   10.380    0.577   13.064    0.726 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Kside_veg_v2022a.py:6(Kside_veg_v2022a)
+       18    5.385    0.299    5.385    0.299 {built-in method gvf.gvf_calc}
+       24    4.778    0.199    4.778    0.199 {built-in method sky.anisotropic_sky}
+     2754    2.101    0.001    2.101    0.001 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunlit_shaded_patches.py:6(shaded_or_sunlit)
+       96    1.896    0.020    1.896    0.020 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Lvikt_veg.py:1(Lvikt_veg)
+      170    1.325    0.008    2.124    0.012 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/common.py:52(save_raster)
+       24    1.323    0.055   28.091    1.170 /Users/gareth/dev/umep-rust/pysrc/umepr/functions/solweig.py:35(Solweig_2025a_calc)
+       18    1.139    0.063    1.139    0.063 {built-in method shadowing.calculate_shadows_wall_ht_25}
     """
     profiler = cProfile.Profile()
     profiler.enable()
@@ -300,10 +313,17 @@ def test_profile_solweig():
         params_json_path="tests/rustalgos/test_params_solweig.json",
     )
     """
+    NO ANISO
           324   16.477    0.051   17.924    0.055 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunonsurface_2018a.py:3(sunonsurface_2018a)
        18    3.574    0.199    3.813    0.212 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/util/SEBESOLWEIGCommonFiles/shadowingfunction_wallheight_23.py:42(shadowingfunction_wallheight_23)
        96    1.813    0.019    1.813    0.019 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Lvikt_veg.py:1(Lvikt_veg)
        18    1.275    0.071   18.695    1.039 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/gvf_2018a.py:6(gvf_2018a)
+    WITH ANISO
+    24   24.894    1.037   33.829    1.410 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/anisotropic_sky.py:11(anisotropic_sky)
+      324   14.680    0.045   15.968    0.049 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunonsurface_2018a.py:3(sunonsurface_2018a)
+       18    9.770    0.543   12.326    0.685 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Kside_veg_v2022a.py:6(Kside_veg_v2022a)
+     6426    4.469    0.001    4.469    0.001 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunlit_shaded_patches.py:6(shaded_or_sunlit)
+       18    3.817    0.212    4.071    0.226 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/util/SEBESOLWEIGCommonFiles/shadowingfunction_wallheight_23.py:42(shadowingfunction_wallheight_23)
     """
     profiler = cProfile.Profile()
     profiler.enable()

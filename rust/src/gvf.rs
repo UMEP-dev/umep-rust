@@ -65,7 +65,7 @@ pub fn gvf_calc(
     sbc: f32,
     albedo_b: f32,
     twater: f32,
-    lc_grid: PyReadonlyArray2<f32>,
+    lc_grid: Option<PyReadonlyArray2<f32>>,
     landcover: bool,
 ) -> PyResult<Py<GvfResult>> {
     let wallsun = wallsun.as_array();
@@ -76,7 +76,7 @@ pub fn gvf_calc(
     let tg = tg.as_array();
     let emis_grid = emis_grid.as_array();
     let alb_grid = alb_grid.as_array();
-    let lc_grid = lc_grid.as_array();
+    let lc_grid_arr = lc_grid.as_ref().map(|arr| arr.as_array());
 
     let (rows, cols) = (buildings.shape()[0], buildings.shape()[1]);
     let azimuth_a: Array1<f32> = Array1::range(5.0, 359.0, 20.0);
@@ -159,7 +159,7 @@ pub fn gvf_calc(
                 sbc,
                 albedo_b,
                 twater,
-                lc_grid,
+                lc_grid_arr.as_ref().map(|a| a.view()),
                 landcover,
             );
             a.lup.zip_mut_with(&gvf_lup_i, |x, &y| *x += y);

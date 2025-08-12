@@ -201,6 +201,10 @@ pub fn anisotropic_sky(
         lum_chi = patch_luminance.mapv(|lum| (lum * rad_d) / rad_tot);
     }
 
+    // Precompute emissivity per patch
+    let (_patch_emissivity_normalized, esky_band) =
+        emissivity_models::model2(&l_patches.to_owned(), esky, ta);
+
     // Create a flat list of pixel indices to parallelize over
     let pixel_indices: Vec<(usize, usize)> = (0..rows)
         .flat_map(|r| (0..cols).map(move |c| (r, c)))
@@ -228,7 +232,7 @@ pub fn anisotropic_sky(
 
                     // Longwave from sky
                     if temp_sky {
-                        let temp_emissivity = emissivity_models::model2_pixel(p_alt, esky, ta);
+                        let temp_emissivity = esky_band[i];
                         let ta_k = ta + 273.15;
                         let lval = (temp_emissivity * SBC * ta_k.powi(4)) / PI;
                         let lside_patch = lval * steradian * angle_of_incidence;

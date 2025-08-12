@@ -346,7 +346,7 @@ def Solweig_2025a_calc(
             SBC,
             albedo_b,
             Twater,
-            lc_grid.astype(np.float32),
+            lc_grid.astype(np.float32) if lc_grid is not None else None,
             landcover,
         )
 

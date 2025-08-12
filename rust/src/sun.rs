@@ -23,7 +23,7 @@ pub fn sun_on_surface(
     sbc: f32,
     wall_albedo: f32,
     t_water: f32,
-    lc_grid: ArrayView2<f32>,
+    lc_grid: Option<ArrayView2<f32>>,
     use_landcover: bool,
 ) -> (
     Array2<f32>,
@@ -49,13 +49,15 @@ pub fn sun_on_surface(
 
     let mut tground_mut = tground.to_owned();
     if use_landcover {
-        Zip::from(&mut tground_mut)
-            .and(lc_grid)
-            .for_each(|tg, &lc| {
-                if lc == 3. {
-                    *tg = t_water - t_air;
-                }
-            });
+        if let Some(lc_grid) = lc_grid {
+            Zip::from(&mut tground_mut)
+                .and(lc_grid)
+                .for_each(|tg, &lc| {
+                    if lc == 3. {
+                        *tg = t_water - t_air;
+                    }
+                });
+        }
     }
 
     let lwall = sbc * wall_emmisiv * (tg_wall + t_air + 273.15).powi(4)
