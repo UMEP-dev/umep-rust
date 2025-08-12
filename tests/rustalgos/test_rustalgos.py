@@ -283,25 +283,30 @@ def test_profile_solweig():
     # shadowing                 18    0.918    0.051    0.918    0.051 {built-in method shadowing.calculate_shadows_wall_ht_25}
 
     """
-    18      4.362    0.242    6.228    0.346 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Kside_veg_v2022a.py:6(Kside_veg_v2022a)
-    24      2.257    0.094    2.257    0.094 {built-in method sky.anisotropic_sky}
-    2754    1.584    0.001    1.584    0.001 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunlit_shaded_patches.py:6(shaded_or_sunlit)
-    18      0.930    0.052    0.930    0.052 {built-in method shadowing.calculate_shadows_wall_ht_25}
+    18    4.748    0.264    4.748    0.264 {built-in method gvf.gvf_calc}
+       96    1.682    0.018    1.682    0.018 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Lvikt_veg.py:1(Lvikt_veg)
+      170    1.164    0.007    1.830    0.011 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/common.py:52(save_raster)
+       18    0.761    0.042    0.761    0.042 {built-in method shadowing.calculate_shadows_wall_ht_25}
     """
+    profiler = cProfile.Profile()
+    profiler.enable()
+    SWR.run()
+    profiler.disable()
+    stats = pstats.Stats(profiler).sort_stats("tottime")
+    stats.print_stats(30)  # Show top 30 lines
+
     SWC = SolweigRunCore(
         config_path_str="tests/rustalgos/test_config_solweig.ini",
         params_json_path="tests/rustalgos/test_params_solweig.json",
     )
     """
-    24   10.249    0.427   16.128    0.672 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/anisotropic_sky.py:11(anisotropic_sky)
-    324    5.863    0.018    6.402    0.020 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunonsurface_2018a.py:3(sunonsurface_2018a)
-    18    4.218    0.234    6.002    0.333 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Kside_veg_v2022a.py:6(Kside_veg_v2022a)
-    6426    3.501    0.001    3.501    0.001 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunlit_shaded_patches.py:6(shaded_or_sunlit)
-    18    1.534    0.085    1.639    0.091 /Users/gareth/dev/umep/umep-rust/.venv/lib/python3.12/site-packages/umep/util/SEBESOLWEIGCommonFiles/shadowingfunction_wallheight_23.py:42(shadowingfunction_wallheight_23)
+          324   16.477    0.051   17.924    0.055 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunonsurface_2018a.py:3(sunonsurface_2018a)
+       18    3.574    0.199    3.813    0.212 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/util/SEBESOLWEIGCommonFiles/shadowingfunction_wallheight_23.py:42(shadowingfunction_wallheight_23)
+       96    1.813    0.019    1.813    0.019 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Lvikt_veg.py:1(Lvikt_veg)
+       18    1.275    0.071   18.695    1.039 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/gvf_2018a.py:6(gvf_2018a)
     """
     profiler = cProfile.Profile()
     profiler.enable()
-    # SWR.run()
     SWC.run()
     profiler.disable()
     stats = pstats.Stats(profiler).sort_stats("tottime")
