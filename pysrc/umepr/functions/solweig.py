@@ -18,7 +18,6 @@ from umep.functions.SOLWEIGpython.Kside_veg_v2022a import Kside_veg_v2022a
 from umep.functions.SOLWEIGpython.Kup_veg_2015a import Kup_veg_2015a
 
 # Anisotropic longwave
-from umep.functions.SOLWEIGpython.Lside_veg_v2022a import Lside_veg_v2022a
 from umep.functions.SOLWEIGpython.patch_radiation import patch_steradians
 from umep.functions.SOLWEIGpython.TsWaveDelay_2015a import TsWaveDelay_2015a
 
@@ -29,7 +28,7 @@ from umep.util.SEBESOLWEIGCommonFiles.create_patches import create_patches
 from umep.util.SEBESOLWEIGCommonFiles.diffusefraction import diffusefraction
 from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
 
-from ..rustalgos import gvf, shadowing, sky
+from ..rustalgos import gvf, shadowing, sky, vegetation
 
 
 def Solweig_2025a_calc(
@@ -498,36 +497,40 @@ def Solweig_2025a_calc(
         )  # NOT REALLY TESTED!!! BUT MORE CORRECT?
 
     # # # # Lside # # # #
-    Least, Lsouth, Lwest, Lnorth = Lside_veg_v2022a(
-        svfS,
-        svfW,
-        svfN,
-        svfE,
-        svfEveg,
-        svfSveg,
-        svfWveg,
-        svfNveg,
-        svfEaveg,
-        svfSaveg,
-        svfWaveg,
-        svfNaveg,
+    lside_veg_result = vegetation.lside_veg(
+        svfS.astype(np.float32),
+        svfW.astype(np.float32),
+        svfN.astype(np.float32),
+        svfE.astype(np.float32),
+        svfEveg.astype(np.float32),
+        svfSveg.astype(np.float32),
+        svfWveg.astype(np.float32),
+        svfNveg.astype(np.float32),
+        svfEaveg.astype(np.float32),
+        svfSaveg.astype(np.float32),
+        svfWaveg.astype(np.float32),
+        svfNaveg.astype(np.float32),
         azimuth,
         altitude,
         Ta,
         Tgwall,
         SBC,
         ewall,
-        Ldown,
+        Ldown.astype(np.float32),
         esky,
         t,
-        F_sh,
+        F_sh.astype(np.float32),
         CI,
-        LupE,
-        LupS,
-        LupW,
-        LupN,
-        anisotropic_sky,
+        LupE.astype(np.float32),
+        LupS.astype(np.float32),
+        LupW.astype(np.float32),
+        LupN.astype(np.float32),
+        bool(anisotropic_sky),
     )
+    Least = lside_veg_result.least
+    Lsouth = lside_veg_result.lsouth
+    Lwest = lside_veg_result.lwest
+    Lnorth = lside_veg_result.lnorth
 
     # New parameterization scheme for wall temperatures
     if wallScheme == 1:

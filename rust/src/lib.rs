@@ -8,6 +8,7 @@ mod sky;
 mod skyview;
 mod sun;
 mod sunlit_shaded_patches;
+mod vegetation;
 
 #[pymodule]
 fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -20,6 +21,7 @@ fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_skyview_module(py_module)?;
     register_gvf_module(py_module)?;
     register_sky_module(py_module)?;
+    register_vegetation_module(py_module)?;
     py_module.add("__doc__", "UMEP algorithms implemented in Rust.")?;
 
     Ok(())
@@ -56,6 +58,15 @@ fn register_sky_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     let submodule = PyModule::new(py_module.py(), "sky")?;
     submodule.add("__doc__", "Anisotropic sky radiation calculations.")?;
     submodule.add_function(wrap_pyfunction!(sky::anisotropic_sky, &submodule)?)?;
+    py_module.add_submodule(&submodule)?;
+    Ok(())
+}
+
+fn register_vegetation_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let submodule = PyModule::new(py_module.py(), "vegetation")?;
+    submodule.add("__doc__", "Vegetation-related calculations.")?;
+    submodule.add_class::<vegetation::LsideVegResult>()?;
+    submodule.add_function(wrap_pyfunction!(vegetation::lside_veg, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }
