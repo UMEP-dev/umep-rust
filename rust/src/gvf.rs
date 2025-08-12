@@ -82,197 +82,158 @@ pub fn gvf_calc(
     let azimuth_a: Array1<f32> = Array1::range(5.0, 359.0, 20.0);
     let num_azimuths = azimuth_a.len() as f32;
     let num_azimuths_half = num_azimuths / 2.0;
+    const SUNWALL_TOL: f32 = 1e-6;
 
-    // Struct to hold results for a single pixel
-    struct PixelResult {
-        r: usize,
-        c: usize,
-        gvf_lup: f32,
-        gvfalb: f32,
-        gvfalbnosh: f32,
-        gvf_sum: f32,
-        gvf_lup_e: f32,
-        gvfalb_e: f32,
-        gvfalbnosh_e: f32,
-        gvf_lup_s: f32,
-        gvfalb_s: f32,
-        gvfalbnosh_s: f32,
-        gvf_lup_w: f32,
-        gvfalb_w: f32,
-        gvfalbnosh_w: f32,
-        gvf_lup_n: f32,
-        gvfalb_n: f32,
-        gvfalbnosh_n: f32,
+    // Sunwall mask
+    let mut sunwall_mask = Array2::<f32>::zeros((rows, cols));
+    Zip::from(&mut sunwall_mask)
+        .and(&wallsun)
+        .and(&walls)
+        .and(&buildings)
+        .par_for_each(|mask, &wsun, &wall, &bldg| {
+            if wall > 0.0 && bldg > 0.0 {
+                let ratio = (wsun / wall) * bldg;
+                if (ratio - 1.0).abs() < SUNWALL_TOL {
+                    *mask = 1.0;
+                }
+            }
+        });
+    let dirwalls_rad = dirwalls.mapv(|d| d * PI / 180.0);
+
+    struct Accum {
+        lup: Array2<f32>,
+        alb: Array2<f32>,
+        albnosh: Array2<f32>,
+        sum: Array2<f32>,
+        lup_e: Array2<f32>,
+        alb_e: Array2<f32>,
+        albnosh_e: Array2<f32>,
+        lup_s: Array2<f32>,
+        alb_s: Array2<f32>,
+        albnosh_s: Array2<f32>,
+        lup_w: Array2<f32>,
+        alb_w: Array2<f32>,
+        albnosh_w: Array2<f32>,
+        lup_n: Array2<f32>,
+        alb_n: Array2<f32>,
+        albnosh_n: Array2<f32>,
     }
+    let init_accum = || Accum {
+        lup: Array2::zeros((rows, cols)),
+        alb: Array2::zeros((rows, cols)),
+        albnosh: Array2::zeros((rows, cols)),
+        sum: Array2::zeros((rows, cols)),
+        lup_e: Array2::zeros((rows, cols)),
+        alb_e: Array2::zeros((rows, cols)),
+        albnosh_e: Array2::zeros((rows, cols)),
+        lup_s: Array2::zeros((rows, cols)),
+        alb_s: Array2::zeros((rows, cols)),
+        albnosh_s: Array2::zeros((rows, cols)),
+        lup_w: Array2::zeros((rows, cols)),
+        alb_w: Array2::zeros((rows, cols)),
+        albnosh_w: Array2::zeros((rows, cols)),
+        lup_n: Array2::zeros((rows, cols)),
+        alb_n: Array2::zeros((rows, cols)),
+        albnosh_n: Array2::zeros((rows, cols)),
+    };
 
-    // Create a flat list of pixel indices to parallelize over
-    let pixel_indices: Vec<(usize, usize)> = (0..rows)
-        .flat_map(|r| (0..cols).map(move |c| (r, c)))
-        .collect();
-
-    // Main parallel computation over pixels
-    let pixel_results: Vec<PixelResult> = pixel_indices
-        .into_par_iter()
-        .map(|(r, c)| {
-            let building = buildings[(r, c)];
-            let wall = walls[(r, c)];
-            let wall_aspect = dirwalls[(r, c)] * PI / 180.0;
-            let wall_ht = wall;
-            let shadow_val = shadow[(r, c)];
-            let sunwall_val = if wall > 0.0 {
-                let ws = wallsun[(r, c)];
-                if (ws / wall * building) == 1.0 {
-                    1.0
-                } else {
-                    0.0
-                }
-            } else {
-                0.0
-            };
-            let tground = tg[(r, c)];
-            let emis = emis_grid[(r, c)];
-            let alb = alb_grid[(r, c)];
-            let lc = lc_grid[(r, c)];
-
-            let mut sum_lup = 0.0;
-            let mut sum_alb = 0.0;
-            let mut sum_albnosh = 0.0;
-            let mut sum_gvf2 = 0.0;
-
-            let mut sum_lup_e = 0.0;
-            let mut sum_alb_e = 0.0;
-            let mut sum_albnosh_e = 0.0;
-            let mut sum_lup_s = 0.0;
-            let mut sum_alb_s = 0.0;
-            let mut sum_albnosh_s = 0.0;
-            let mut sum_lup_w = 0.0;
-            let mut sum_alb_w = 0.0;
-            let mut sum_albnosh_w = 0.0;
-            let mut sum_lup_n = 0.0;
-            let mut sum_alb_n = 0.0;
-            let mut sum_albnosh_n = 0.0;
-
-            for &azimuth in azimuth_a.iter() {
-                let (_, gvfLup, gvfalb_val, gvfalbnosh_val, gvf2) =
-                    crate::sun::sun_on_surface_pixel(
-                        azimuth,
-                        scale,
-                        building,
-                        shadow_val,
-                        sunwall_val,
-                        first,
-                        second,
-                        wall_aspect,
-                        wall_ht,
-                        tground,
-                        tgwall,
-                        ta,
-                        emis,
-                        ewall,
-                        alb,
-                        sbc,
-                        albedo_b,
-                        twater,
-                        lc,
-                        landcover,
-                    );
-                sum_lup += gvfLup;
-                sum_alb += gvfalb_val;
-                sum_albnosh += gvfalbnosh_val;
-                sum_gvf2 += gvf2;
-
-                // Directional sums
-                if (0.0..180.0).contains(&azimuth) {
-                    sum_lup_e += gvfLup;
-                    sum_alb_e += gvfalb_val;
-                    sum_albnosh_e += gvfalbnosh_val;
-                }
-                if (90.0..270.0).contains(&azimuth) {
-                    sum_lup_s += gvfLup;
-                    sum_alb_s += gvfalb_val;
-                    sum_albnosh_s += gvfalbnosh_val;
-                }
-                if (180.0..360.0).contains(&azimuth) {
-                    sum_lup_w += gvfLup;
-                    sum_alb_w += gvfalb_val;
-                    sum_albnosh_w += gvfalbnosh_val;
-                }
-                if azimuth >= 270.0 || azimuth < 90.0 {
-                    sum_lup_n += gvfLup;
-                    sum_alb_n += gvfalb_val;
-                    sum_albnosh_n += gvfalbnosh_val;
-                }
+    let accum = azimuth_a
+        .par_iter()
+        .fold(init_accum, |mut a, &azimuth| {
+            let (_gvf, gvf_lup_i, gvfalb_i, gvfalbnosh_i, gvf2_i) = crate::sun::sun_on_surface(
+                azimuth,
+                scale,
+                buildings,
+                shadow,
+                sunwall_mask.view(),
+                first,
+                second,
+                dirwalls_rad.view(),
+                walls,
+                tg,
+                tgwall,
+                ta,
+                emis_grid,
+                ewall,
+                alb_grid,
+                sbc,
+                albedo_b,
+                twater,
+                lc_grid,
+                landcover,
+            );
+            a.lup.zip_mut_with(&gvf_lup_i, |x, &y| *x += y);
+            a.alb.zip_mut_with(&gvfalb_i, |x, &y| *x += y);
+            a.albnosh.zip_mut_with(&gvfalbnosh_i, |x, &y| *x += y);
+            a.sum.zip_mut_with(&gvf2_i, |x, &y| *x += y);
+            if (0.0..180.0).contains(&azimuth) {
+                a.lup_e.zip_mut_with(&gvf_lup_i, |x, &y| *x += y);
+                a.alb_e.zip_mut_with(&gvfalb_i, |x, &y| *x += y);
+                a.albnosh_e.zip_mut_with(&gvfalbnosh_i, |x, &y| *x += y);
             }
-
-            let ta_kelvin_pow4 = (ta + 273.15).powi(4);
-            let emis_add = emis * (sbc * ta_kelvin_pow4);
-
-            PixelResult {
-                r,
-                c,
-                gvf_lup: sum_lup / num_azimuths + emis_add,
-                gvfalb: sum_alb / num_azimuths,
-                gvfalbnosh: sum_albnosh / num_azimuths,
-                gvf_sum: sum_gvf2 / num_azimuths,
-                gvf_lup_e: sum_lup_e / num_azimuths_half + emis_add,
-                gvfalb_e: sum_alb_e / num_azimuths_half,
-                gvfalbnosh_e: sum_albnosh_e / num_azimuths_half,
-                gvf_lup_s: sum_lup_s / num_azimuths_half + emis_add,
-                gvfalb_s: sum_alb_s / num_azimuths_half,
-                gvfalbnosh_s: sum_albnosh_s / num_azimuths_half,
-                gvf_lup_w: sum_lup_w / num_azimuths_half + emis_add,
-                gvfalb_w: sum_alb_w / num_azimuths_half,
-                gvfalbnosh_w: sum_albnosh_w / num_azimuths_half,
-                gvf_lup_n: sum_lup_n / num_azimuths_half + emis_add,
-                gvfalb_n: sum_alb_n / num_azimuths_half,
-                gvfalbnosh_n: sum_albnosh_n / num_azimuths_half,
+            if (90.0..270.0).contains(&azimuth) {
+                a.lup_s.zip_mut_with(&gvf_lup_i, |x, &y| *x += y);
+                a.alb_s.zip_mut_with(&gvfalb_i, |x, &y| *x += y);
+                a.albnosh_s.zip_mut_with(&gvfalbnosh_i, |x, &y| *x += y);
             }
+            if (180.0..360.0).contains(&azimuth) {
+                a.lup_w.zip_mut_with(&gvf_lup_i, |x, &y| *x += y);
+                a.alb_w.zip_mut_with(&gvfalb_i, |x, &y| *x += y);
+                a.albnosh_w.zip_mut_with(&gvfalbnosh_i, |x, &y| *x += y);
+            }
+            if azimuth >= 270.0 || azimuth < 90.0 {
+                a.lup_n.zip_mut_with(&gvf_lup_i, |x, &y| *x += y);
+                a.alb_n.zip_mut_with(&gvfalb_i, |x, &y| *x += y);
+                a.albnosh_n.zip_mut_with(&gvfalbnosh_i, |x, &y| *x += y);
+            }
+            a
         })
-        .collect();
+        .reduce(init_accum, |mut a, b| {
+            a.lup.zip_mut_with(&b.lup, |x, &y| *x += y);
+            a.alb.zip_mut_with(&b.alb, |x, &y| *x += y);
+            a.albnosh.zip_mut_with(&b.albnosh, |x, &y| *x += y);
+            a.sum.zip_mut_with(&b.sum, |x, &y| *x += y);
+            a.lup_e.zip_mut_with(&b.lup_e, |x, &y| *x += y);
+            a.alb_e.zip_mut_with(&b.alb_e, |x, &y| *x += y);
+            a.albnosh_e.zip_mut_with(&b.albnosh_e, |x, &y| *x += y);
+            a.lup_s.zip_mut_with(&b.lup_s, |x, &y| *x += y);
+            a.alb_s.zip_mut_with(&b.alb_s, |x, &y| *x += y);
+            a.albnosh_s.zip_mut_with(&b.albnosh_s, |x, &y| *x += y);
+            a.lup_w.zip_mut_with(&b.lup_w, |x, &y| *x += y);
+            a.alb_w.zip_mut_with(&b.alb_w, |x, &y| *x += y);
+            a.albnosh_w.zip_mut_with(&b.albnosh_w, |x, &y| *x += y);
+            a.lup_n.zip_mut_with(&b.lup_n, |x, &y| *x += y);
+            a.alb_n.zip_mut_with(&b.alb_n, |x, &y| *x += y);
+            a.albnosh_n.zip_mut_with(&b.albnosh_n, |x, &y| *x += y);
+            a
+        });
 
-    // Prepare output arrays
-    let mut gvf_lup = Array2::<f32>::zeros((rows, cols));
-    let mut gvfalb = Array2::<f32>::zeros((rows, cols));
-    let mut gvfalbnosh = Array2::<f32>::zeros((rows, cols));
-    let mut gvf_sum = Array2::<f32>::zeros((rows, cols));
-    let mut gvf_lup_e = Array2::<f32>::zeros((rows, cols));
-    let mut gvfalb_e = Array2::<f32>::zeros((rows, cols));
-    let mut gvfalbnosh_e = Array2::<f32>::zeros((rows, cols));
-    let mut gvf_lup_s = Array2::<f32>::zeros((rows, cols));
-    let mut gvfalb_s = Array2::<f32>::zeros((rows, cols));
-    let mut gvfalbnosh_s = Array2::<f32>::zeros((rows, cols));
-    let mut gvf_lup_w = Array2::<f32>::zeros((rows, cols));
-    let mut gvfalb_w = Array2::<f32>::zeros((rows, cols));
-    let mut gvfalbnosh_w = Array2::<f32>::zeros((rows, cols));
-    let mut gvf_lup_n = Array2::<f32>::zeros((rows, cols));
-    let mut gvfalb_n = Array2::<f32>::zeros((rows, cols));
-    let mut gvfalbnosh_n = Array2::<f32>::zeros((rows, cols));
-
-    // Populate output arrays from results
-    for result in pixel_results {
-        gvf_lup[(result.r, result.c)] = result.gvf_lup;
-        gvfalb[(result.r, result.c)] = result.gvfalb;
-        gvfalbnosh[(result.r, result.c)] = result.gvfalbnosh;
-        gvf_sum[(result.r, result.c)] = result.gvf_sum;
-        gvf_lup_e[(result.r, result.c)] = result.gvf_lup_e;
-        gvfalb_e[(result.r, result.c)] = result.gvfalb_e;
-        gvfalbnosh_e[(result.r, result.c)] = result.gvfalbnosh_e;
-        gvf_lup_s[(result.r, result.c)] = result.gvf_lup_s;
-        gvfalb_s[(result.r, result.c)] = result.gvfalb_s;
-        gvfalbnosh_s[(result.r, result.c)] = result.gvfalbnosh_s;
-        gvf_lup_w[(result.r, result.c)] = result.gvf_lup_w;
-        gvfalb_w[(result.r, result.c)] = result.gvfalb_w;
-        gvfalbnosh_w[(result.r, result.c)] = result.gvfalbnosh_w;
-        gvf_lup_n[(result.r, result.c)] = result.gvf_lup_n;
-        gvfalb_n[(result.r, result.c)] = result.gvfalb_n;
-        gvfalbnosh_n[(result.r, result.c)] = result.gvfalbnosh_n;
-    }
-
-    let mut gvf_norm = gvf_sum.clone();
+    // Extract totals
+    let ta_kelvin_pow4 = (ta + 273.15).powi(4);
+    let emis_add = emis_grid.mapv(|e| e * sbc * ta_kelvin_pow4);
+    let scale_all = 1.0 / num_azimuths;
+    let scale_half = 1.0 / num_azimuths_half;
+    let gvf_lup = accum.lup.mapv(|v| v * scale_all) + &emis_add;
+    let gvfalb = accum.alb.mapv(|v| v * scale_all);
+    let gvfalbnosh = accum.albnosh.mapv(|v| v * scale_all);
+    let gvf_lup_e = accum.lup_e.mapv(|v| v * scale_half) + &emis_add;
+    let gvfalb_e = accum.alb_e.mapv(|v| v * scale_half);
+    let gvfalbnosh_e = accum.albnosh_e.mapv(|v| v * scale_half);
+    let gvf_lup_s = accum.lup_s.mapv(|v| v * scale_half) + &emis_add;
+    let gvfalb_s = accum.alb_s.mapv(|v| v * scale_half);
+    let gvfalbnosh_s = accum.albnosh_s.mapv(|v| v * scale_half);
+    let gvf_lup_w = accum.lup_w.mapv(|v| v * scale_half) + &emis_add;
+    let gvfalb_w = accum.alb_w.mapv(|v| v * scale_half);
+    let gvfalbnosh_w = accum.albnosh_w.mapv(|v| v * scale_half);
+    let gvf_lup_n = accum.lup_n.mapv(|v| v * scale_half) + &emis_add;
+    let gvfalb_n = accum.alb_n.mapv(|v| v * scale_half);
+    let gvfalbnosh_n = accum.albnosh_n.mapv(|v| v * scale_half);
+    let gvf_sum = accum.sum; // raw sum
+    let mut gvf_norm = gvf_sum.mapv(|v| v * scale_all);
     Zip::from(&mut gvf_norm)
         .and(&buildings)
-        .par_for_each(|norm, &bldg| {
-            if bldg == 0.0 {
+        .for_each(|norm, &b| {
+            if b == 0.0 {
                 *norm = 1.0;
             }
         });

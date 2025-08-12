@@ -231,7 +231,7 @@ def test_solweig():
         config_path_str="tests/rustalgos/test_config_solweig.ini",
         params_json_path="tests/rustalgos/test_params_solweig.json",
     )
-    SWC.config.output_dir = "temp/test_py/"
+    SWC.config.output_dir = "temp/goteborg/test_py/"
 
     def run_py():
         SWC.run()
