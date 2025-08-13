@@ -539,11 +539,9 @@ pub fn reflected_longwave_pixel(
     ewall: f32,
 ) -> (f32, f32, f32, f32, f32, f32) {
     let deg2rad = PI / 180.0;
-    let reflected_radiation = ((1.0 - ewall) * ldown_sky + (1.0 - ewall) * lup) / PI;
-
+    let reflected_radiation = (ldown_sky + lup) * (1.0 - ewall) * 0.5 / PI;
     let lside_ref = reflected_radiation * steradian * angle_of_incidence;
     let ldown_ref = reflected_radiation * steradian * angle_of_incidence_h;
-
     let least = if patch_azimuth > 360.0 || patch_azimuth < 180.0 {
         reflected_radiation
             * steradian

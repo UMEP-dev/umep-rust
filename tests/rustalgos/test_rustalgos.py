@@ -7,13 +7,21 @@ import numpy as np
 from memory_profiler import memory_usage
 from umep import common
 from umep.functions.SOLWEIGpython import Solweig_run
+from umep.functions.SOLWEIGpython.anisotropic_sky import anisotropic_sky as ani_sky
+from umep.functions.SOLWEIGpython.cylindric_wedge import cylindric_wedge
 from umep.functions.SOLWEIGpython.daylen import daylen
 from umep.functions.SOLWEIGpython.gvf_2018a import gvf_2018a
+from umep.functions.SOLWEIGpython.Kup_veg_2015a import Kup_veg_2015a
+from umep.functions.SOLWEIGpython.patch_radiation import patch_steradians
 from umep.functions.SOLWEIGpython.solweig_runner_core import SolweigRunCore
 from umep.functions.svf_functions import svfForProcessing153
+from umep.util.SEBESOLWEIGCommonFiles.clearnessindex_2013b import clearnessindex_2013b
+from umep.util.SEBESOLWEIGCommonFiles.create_patches import create_patches
+from umep.util.SEBESOLWEIGCommonFiles.diffusefraction import diffusefraction
+from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
 from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
 from umepr.hybrid.svf import svfForProcessing153_rust_shdw
-from umepr.rustalgos import gvf, shadowing, skyview
+from umepr.rustalgos import gvf, shadowing, sky, skyview
 from umepr.solweig_runner_rust import SolweigRunRust
 
 
@@ -24,7 +32,7 @@ def test_shadowing():
 
     # --- Timing only (no memory profiling) ---
     def run_py():
-        shadowingfunction_wallheight_23(
+        return shadowingfunction_wallheight_23(
             dsm,
             vegdsm,
             vegdsm2,
@@ -38,7 +46,7 @@ def test_shadowing():
         )
 
     def run_rust():
-        shadowing.calculate_shadows_wall_ht_25(
+        return shadowing.calculate_shadows_wall_ht_25(
             azi,
             alt,
             scale,
@@ -70,11 +78,7 @@ def test_shadowing():
     print(f"shadowing.calculate_shadows_wall_ht_25: max memory usage: {rust_memory:.2f} MiB")
 
     # Run Python version
-    veg_sh, bldg_sh, veg_blocks_bldg_sh, wall_sh, wall_sun, wall_sh_veg, face_sh, face_sun = (
-        shadowingfunction_wallheight_23(
-            dsm, vegdsm, vegdsm2, azi, alt, scale, amaxvalue, bush, wall_hts, wall_asp * np.pi / 180.0
-        )
-    )
+    veg_sh, bldg_sh, veg_blocks_bldg_sh, wall_sh, wall_sun, wall_sh_veg, face_sh, face_sun = run_py()
     result_py = {
         "veg_sh": veg_sh,
         "bldg_sh": bldg_sh,
@@ -86,20 +90,7 @@ def test_shadowing():
         "face_sun": face_sun,
     }
     # Run Rust version
-    result_rust = shadowing.calculate_shadows_wall_ht_25(
-        azi,
-        alt,
-        scale,
-        amaxvalue,
-        dsm,
-        vegdsm,
-        vegdsm2,
-        bush,
-        wall_hts,
-        wall_asp * np.pi / 180.0,
-        None,
-        None,
-    )
+    result_rust = run_rust()
     key_map = {
         "veg_sh": "veg_sh",
         "bldg_sh": "bldg_sh",
@@ -111,7 +102,7 @@ def test_shadowing():
         "face_sun": "face_sun",
     }
     # Compare results
-    compare_results(result_py, result_rust, key_map, atol=0.0001)
+    compare_results(result_py, result_rust, key_map)
     # Plot visual residuals
     plot_visual_residuals(bldg_sh, result_rust.bldg_sh, title_prefix="Building Shadows")
     plot_visual_residuals(veg_sh, result_rust.veg_sh, title_prefix="Vegetation Shadows")
@@ -130,13 +121,13 @@ def test_svf():
 
     # --- Timing only (no memory profiling) ---
     def run_py():
-        svfForProcessing153(dsm, vegdsm, vegdsm2, scale, 1)
+        return svfForProcessing153(dsm, vegdsm, vegdsm2, scale, 1)
 
     def run_hybrid():
-        svfForProcessing153_rust_shdw(dsm, vegdsm, vegdsm2, scale, 1)
+        return svfForProcessing153_rust_shdw(dsm, vegdsm, vegdsm2, scale, 1)
 
     def run_rust():
-        skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, 2)
+        return skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, 2)
 
     times_py = timeit.repeat(run_py, number=1, repeat=repeats)
     print_timing_stats("svfForProcessing153 - (shadowingfunction_20)", times_py)
@@ -168,9 +159,9 @@ def test_svf():
     # For testing outputs use hybrid version - shadowing is tested separately in above test
     # (otherwise testing against outputs from underlying shadowingfunction_20 gives different results)
     # Run Python version
-    result_py = svfForProcessing153_rust_shdw(dsm, vegdsm, vegdsm2, scale, 1)
+    result_py = run_hybrid()
     # Run Rust version
-    result_rust = skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, 2)
+    result_rust = run_rust()
     # Compare results
     key_map = {
         "svf": "svf",
@@ -189,7 +180,7 @@ def test_svf():
         "svfWaveg": "svf_veg_blocks_bldg_sh_west",
         "svfNaveg": "svf_veg_blocks_bldg_sh_north",
     }
-    compare_results(result_py, result_rust, key_map, atol=0.0001)
+    compare_results(result_py, result_rust, key_map)
 
     # Plot visual residuals for all comparable SVF components explicitly
     print("\nGenerating residual plots...")
@@ -335,7 +326,7 @@ def test_profile_solweig():
     stats.print_stats(30)  # Show top 30 lines
 
 
-def test_gvf():
+def test_solweig_sub_funcs():
     # prepare variables
     SWC = SolweigRunCore(
         config_path_str="tests/rustalgos/test_config_solweig.ini",
@@ -386,22 +377,22 @@ def test_gvf():
 
     repeats = 3
 
-    def run_py():
-        gvf_2018a(
-            sh_results.wall_sun,
-            SWC.wallheight,
-            SWC.buildings,
+    def run_gvf_py():
+        return gvf_2018a(
+            sh_results.wall_sun.astype(np.float32),
+            SWC.wallheight.astype(np.float32),
+            SWC.buildings.astype(np.float32),
             scale,
-            shadow,
+            shadow.astype(np.float32),
             first,
             second,
-            SWC.wallaspect,
-            Tg,
+            SWC.wallaspect.astype(np.float32),
+            Tg.astype(np.float32),
             Tgwall,
             Ta,
-            SWC.tg_maps.emis_grid,
+            SWC.tg_maps.emis_grid.astype(np.float32),
             SWC.params.Emissivity.Value.Walls,
-            SWC.tg_maps.alb_grid,
+            SWC.tg_maps.alb_grid.astype(np.float32),
             SBC,
             SWC.params.Albedo.Effective.Value.Walls,
             SWC.rows,
@@ -411,8 +402,8 @@ def test_gvf():
             False,
         )
 
-    def run_rust():
-        gvf.gvf_calc(
+    def run_gvf_rust():
+        return gvf.gvf_calc(
             sh_results.wall_sun.astype(np.float32),
             SWC.wallheight.astype(np.float32),
             SWC.buildings.astype(np.float32),
@@ -434,14 +425,14 @@ def test_gvf():
             False,
         )
 
-    py_timings = timeit.repeat(run_py, number=1, repeat=repeats)
-    print_timing_stats("gvf_2018a", py_timings)
+    py_gvf_timings = timeit.repeat(run_gvf_py, number=1, repeat=repeats)
+    print_timing_stats("gvf_2018a", py_gvf_timings)
 
-    rust_timings = timeit.repeat(run_rust, number=1, repeat=repeats)
-    print_timing_stats("gvf.gvf_calc", rust_timings)
+    rust_gvf_timings = timeit.repeat(run_gvf_rust, number=1, repeat=repeats)
+    print_timing_stats("gvf.gvf_calc", rust_gvf_timings)
 
     # Print relative speed as percentage
-    relative_speed(py_timings, rust_timings)
+    relative_speed(py_gvf_timings, rust_gvf_timings)
 
     (
         gvfLup,
@@ -461,30 +452,9 @@ def test_gvf():
         gvfalbnoshN,
         gvfSum,
         gvfNorm,
-    ) = gvf_2018a(
-        sh_results.wall_sun,
-        SWC.wallheight,
-        SWC.buildings,
-        scale,
-        shadow,
-        first,
-        second,
-        SWC.wallaspect,
-        Tg,
-        Tgwall,
-        Ta,
-        SWC.tg_maps.emis_grid,
-        SWC.params.Emissivity.Value.Walls,
-        SWC.tg_maps.alb_grid,
-        SBC,
-        SWC.params.Albedo.Effective.Value.Walls,
-        SWC.rows,
-        SWC.cols,
-        SWC.environ_data.Twater[idx],
-        None,
-        False,
-    )
-    result_py = {
+    ) = run_gvf_py()
+
+    result_gvf_py = {
         "gvfLup": gvfLup,
         "gvfalb": gvfalb,
         "gvfalbnosh": gvfalbnosh,
@@ -504,27 +474,8 @@ def test_gvf():
         "gvfNorm": gvfNorm,
     }
 
-    result_rust = gvf.gvf_calc(
-        sh_results.wall_sun.astype(np.float32),
-        SWC.wallheight.astype(np.float32),
-        SWC.buildings.astype(np.float32),
-        scale,
-        shadow.astype(np.float32),
-        first,
-        second,
-        SWC.wallaspect.astype(np.float32),
-        Tg.astype(np.float32),
-        Tgwall,
-        Ta,
-        SWC.tg_maps.emis_grid.astype(np.float32),
-        SWC.params.Emissivity.Value.Walls,
-        SWC.tg_maps.alb_grid.astype(np.float32),
-        SBC,
-        SWC.params.Albedo.Effective.Value.Walls,
-        SWC.environ_data.Twater[idx],
-        None,
-        False,
-    )
+    result_gvf_rust = run_gvf_rust()
+
     key_map = {
         "gvfSum": "gvf_sum",
         "gvfNorm": "gvf_norm",
@@ -545,16 +496,253 @@ def test_gvf():
         "gvfalbnoshW": "gvfalbnosh_w",
     }
     # Compare results
-    compare_results(result_py, result_rust, key_map, atol=0.0001)
+    compare_results(result_gvf_py, result_gvf_rust, key_map)
     # Plot visual residuals
-    plot_visual_residuals(bldg_sh, result_rust.bldg_sh, title_prefix="Building Shadows")
-    plot_visual_residuals(veg_sh, result_rust.veg_sh, title_prefix="Vegetation Shadows")
-    plot_visual_residuals(veg_blocks_bldg_sh, result_rust.veg_blocks_bldg_sh, title_prefix="Veg Blocks Bldg Shadows")
-    plot_visual_residuals(wall_sh, result_rust.wall_sh, title_prefix="Wall Shadows")
-    plot_visual_residuals(wall_sun, result_rust.wall_sun, title_prefix="Wall Sun")
-    plot_visual_residuals(wall_sh_veg, result_rust.wall_sh_veg, title_prefix="Wall Sh Veg")
-    plot_visual_residuals(face_sh, result_rust.face_sh, title_prefix="Face Sh")
-    plot_visual_residuals(face_sun, result_rust.face_sun, title_prefix="Face Sun")
+    plot_visual_residuals(gvfSum, result_gvf_rust.gvf_sum, title_prefix="GVF Sum")
+    plot_visual_residuals(gvfNorm, result_gvf_rust.gvf_norm, title_prefix="GVF Norm")
+    plot_visual_residuals(gvfLup, result_gvf_rust.gvf_lup, title_prefix="GVF Lup")
+    plot_visual_residuals(gvfLupN, result_gvf_rust.gvf_lup_n, title_prefix="GVF Lup N")
+    plot_visual_residuals(gvfLupS, result_gvf_rust.gvf_lup_s, title_prefix="GVF Lup S")
+    plot_visual_residuals(gvfLupW, result_gvf_rust.gvf_lup_w, title_prefix="GVF Lup W")
+    plot_visual_residuals(gvfLupE, result_gvf_rust.gvf_lup_e, title_prefix="GVF Lup E")
+    plot_visual_residuals(gvfalb, result_gvf_rust.gvfalb, title_prefix="GVF Albedo")
+    plot_visual_residuals(gvfalbN, result_gvf_rust.gvfalb_n, title_prefix="GVF Albedo N")
+    plot_visual_residuals(gvfalbS, result_gvf_rust.gvfalb_s, title_prefix="GVF Albedo S")
+    plot_visual_residuals(gvfalbW, result_gvf_rust.gvfalb_w, title_prefix="GVF Albedo W")
+    plot_visual_residuals(gvfalbE, result_gvf_rust.gvfalb_e, title_prefix="GVF Albedo E")
+    plot_visual_residuals(gvfalbnosh, result_gvf_rust.gvfalbnosh, title_prefix="GVF Albedo No Shadow")
+    plot_visual_residuals(gvfalbnoshN, result_gvf_rust.gvfalbnosh_n, title_prefix="GVF Albedo No Shadow N")
+    plot_visual_residuals(gvfalbnoshS, result_gvf_rust.gvfalbnosh_s, title_prefix="GVF Albedo No Shadow S")
+    plot_visual_residuals(gvfalbnoshW, result_gvf_rust.gvfalbnosh_w, title_prefix="GVF Albedo No Shadow W")
+    plot_visual_residuals(gvfalbnoshE, result_gvf_rust.gvfalbnosh_e, title_prefix="GVF Albedo No Shadow E")
+
+    # aniso
+    elvis = 0.0
+    # Vapor pressure
+    ea = 6.107 * 10 ** ((7.5 * Ta) / (237.3 + Ta)) * (SWC.environ_data.RH[idx] / 100.0)
+    # Determination of clear - sky emissivity from Prata (1996)
+    msteg = 46.5 * (ea / (Ta + 273.15))
+    esky = (1 - (1 + msteg) * np.exp(-((1.2 + 3.0 * msteg) ** 0.5))) + elvis  # -0.04 old error from Jonsson et al.2006
+    skyvaultalt, skyvaultazi, _, _, _, _, _ = create_patches(2)
+    patch_emissivities = np.zeros(skyvaultalt.shape[0])
+    x = np.transpose(np.atleast_2d(skyvaultalt))
+    y = np.transpose(np.atleast_2d(skyvaultazi))
+    z = np.transpose(np.atleast_2d(patch_emissivities))
+    L_patches = np.append(np.append(x, y, axis=1), z, axis=1)
+    steradians, skyalt, patch_altitude = patch_steradians(L_patches)
+    Lup = SBC * SWC.tg_maps.emis_grid * ((SWC.tg_maps.Knight + Ta + Tg + 273.15) ** 4)
+    I0, CI, Kt, I0et, CIuncorr = clearnessindex_2013b(
+        SWC.environ_data.zen[idx],
+        SWC.environ_data.jday[idx],
+        Ta,
+        SWC.environ_data.RH[idx] / 100.0,
+        SWC.environ_data.radG[idx],
+        SWC.location,
+        SWC.environ_data.P[idx],
+    )
+    radI, radD = diffusefraction(
+        SWC.environ_data.radG[idx], SWC.environ_data.altitude[idx], Kt, Ta, SWC.environ_data.RH[idx]
+    )
+    zenDeg = SWC.environ_data.zen[idx] * (180 / np.pi)
+    lv, pc_, pb_ = Perez_v3(
+        zenDeg,
+        SWC.environ_data.azimuth[idx],
+        SWC.environ_data.radD[idx],
+        SWC.environ_data.radI[idx],
+        SWC.environ_data.jday[idx],
+        1,
+        2,
+    )
+    F_sh = cylindric_wedge(SWC.environ_data.zen[idx], SWC.svf_data.svfalfa, SWC.rows, SWC.cols)
+    Kup, KupE, KupS, KupW, KupN = Kup_veg_2015a(
+        SWC.environ_data.radI[idx],
+        SWC.environ_data.radD[idx],
+        SWC.environ_data.radG[idx],
+        SWC.environ_data.altitude[idx],
+        SWC.vegetation.svfbuveg,
+        SWC.params.Emissivity.Value.Walls,
+        F_sh,
+        result_gvf_rust.gvfalb,
+        result_gvf_rust.gvfalb_e,
+        result_gvf_rust.gvfalb_s,
+        result_gvf_rust.gvfalb_w,
+        result_gvf_rust.gvfalb_n,
+        result_gvf_rust.gvfalbnosh,
+        result_gvf_rust.gvfalbnosh_e,
+        result_gvf_rust.gvfalbnosh_s,
+        result_gvf_rust.gvfalbnosh_w,
+        result_gvf_rust.gvfalbnosh_n,
+    )
+
+    def run_ani_py():
+        return ani_sky(
+            SWC.shadow_mats.shmat.astype(np.float32),
+            SWC.shadow_mats.vegshmat.astype(np.float32),
+            SWC.shadow_mats.vbshvegshmat.astype(np.float32),
+            SWC.environ_data.altitude[idx],
+            SWC.environ_data.azimuth[idx],
+            SWC.shadow_mats.asvf.astype(np.float32),
+            SWC.config.person_cylinder,
+            esky,
+            L_patches.astype(np.float32),
+            0,  # wall scheme,
+            SWC.walls_data.voxelTable.astype(np.float32) if SWC.walls_data.voxelTable is not None else None,
+            SWC.walls_data.voxelMaps.astype(np.float32) if SWC.walls_data.voxelMaps is not None else None,
+            steradians.astype(np.float32),
+            Ta,
+            Tgwall,
+            SWC.params.Emissivity.Value.Walls,
+            Lup.astype(np.float32),
+            radI,
+            radD,
+            SWC.environ_data.radG[idx],
+            lv.astype(np.float32),
+            SWC.params.Albedo.Effective.Value.Walls,
+            0,
+            SWC.shadow_mats.diffsh.astype(np.float32),
+            shadow.astype(np.float32),
+            KupE.astype(np.float32),
+            KupS.astype(np.float32),
+            KupW.astype(np.float32),
+            KupN.astype(np.float32),
+            idx,
+        )
+
+    def run_ani_rust():
+        return sky.anisotropic_sky(
+            SWC.shadow_mats.shmat.astype(np.float32),
+            SWC.shadow_mats.vegshmat.astype(np.float32),
+            SWC.shadow_mats.vbshvegshmat.astype(np.float32),
+            SWC.environ_data.altitude[idx],
+            SWC.environ_data.azimuth[idx],
+            SWC.shadow_mats.asvf.astype(np.float32),
+            SWC.config.person_cylinder,
+            esky,
+            L_patches.astype(np.float32),
+            False,  # wall scheme,
+            SWC.walls_data.voxelTable.astype(np.float32) if SWC.walls_data.voxelTable is not None else None,
+            SWC.walls_data.voxelMaps.astype(np.float32) if SWC.walls_data.voxelMaps is not None else None,
+            steradians.astype(np.float32),
+            Ta,
+            Tgwall,
+            SWC.params.Emissivity.Value.Walls,
+            Lup.astype(np.float32),
+            radI,
+            radD,
+            SWC.environ_data.radG[idx],
+            lv.astype(np.float32),
+            SWC.params.Albedo.Effective.Value.Walls,
+            False,
+            SWC.shadow_mats.diffsh.astype(np.float32),
+            shadow.astype(np.float32),
+            KupE.astype(np.float32),
+            KupS.astype(np.float32),
+            KupW.astype(np.float32),
+            KupN.astype(np.float32),
+            idx,
+        )
+
+    py_ani_timings = timeit.repeat(run_ani_py, number=1, repeat=repeats)
+    print_timing_stats("anisotropic_sky", py_ani_timings)
+
+    rust_ani_timings = timeit.repeat(run_ani_rust, number=1, repeat=repeats)
+    print_timing_stats("sky.anisotropic_sky", rust_ani_timings)
+
+    # Print relative speed as percentage
+    relative_speed(py_ani_timings, rust_ani_timings)
+
+    (
+        Ldown,
+        Lside,
+        Lside_sky,
+        Lside_veg,
+        Lside_sh,
+        Lside_sun,
+        Lside_ref,
+        Least,
+        Lwest,
+        Lnorth,
+        Lsouth,
+        Keast,
+        Ksouth,
+        Kwest,
+        Knorth,
+        KsideI,
+        KsideD,
+        Kside,
+        steradians,
+        skyalt,
+    ) = run_ani_py()
+
+    result_ani_py = {
+        "Ldown": Ldown,
+        "Lside": Lside,
+        "Lside_sky": Lside_sky,
+        "Lside_veg": Lside_veg,
+        "Lside_sh": Lside_sh,
+        "Lside_sun": Lside_sun,
+        "Lside_ref": Lside_ref,
+        "Least": Least,
+        "Lwest": Lwest,
+        "Lnorth": Lnorth,
+        "Lsouth": Lsouth,
+        "Keast": Keast,
+        "Ksouth": Ksouth,
+        "Kwest": Kwest,
+        "Knorth": Knorth,
+        "KsideI": KsideI,
+        "KsideD": KsideD,
+        "Kside": Kside,
+        "steradians": steradians,
+        "skyalt": skyalt,
+    }
+
+    result_ani_rust = run_ani_rust()
+
+    key_map = {
+        "Ldown": "ldown",
+        "Lside": "lside",
+        "Lside_sky": "lside_sky",
+        "Lside_veg": "lside_veg",
+        "Lside_sh": "lside_sh",
+        "Lside_sun": "lside_sun",
+        "Lside_ref": "lside_ref",
+        "Least": "least",
+        "Lwest": "lwest",
+        "Lnorth": "lnorth",
+        "Lsouth": "lsouth",
+        "Keast": "keast",
+        "Ksouth": "ksouth",
+        "Kwest": "kwest",
+        "Knorth": "knorth",
+        "KsideI": "kside_i",
+        "KsideD": "kside_d",
+        "Kside": "kside",
+        "steradians": "steradians",
+        "skyalt": "skyalt",
+    }
+
+    # Compare results
+    compare_results(result_ani_py, result_ani_rust, key_map)
+    # Plot visual residuals
+    plot_visual_residuals(Ldown, result_ani_rust.ldown, title_prefix="Ldown")
+    plot_visual_residuals(Lside, result_ani_rust.lside, title_prefix="Lside")
+    plot_visual_residuals(Lside_sky, result_ani_rust.lside_sky, title_prefix="Lside_sky")
+    plot_visual_residuals(Lside_veg, result_ani_rust.lside_veg, title_prefix="Lside_veg")
+    plot_visual_residuals(Lside_sh, result_ani_rust.lside_sh, title_prefix="Lside_sh")
+    plot_visual_residuals(Lside_sun, result_ani_rust.lside_sun, title_prefix="Lside_sun")
+    plot_visual_residuals(Lside_ref, result_ani_rust.lside_ref, title_prefix="Lside_ref")
+    plot_visual_residuals(Least, result_ani_rust.least, title_prefix="Least")
+    plot_visual_residuals(Lwest, result_ani_rust.lwest, title_prefix="Lwest")
+    plot_visual_residuals(Lnorth, result_ani_rust.lnorth, title_prefix="Lnorth")
+    plot_visual_residuals(Lsouth, result_ani_rust.lsouth, title_prefix="Lsouth")
+    plot_visual_residuals(Keast, result_ani_rust.keast, title_prefix="Keast")
+    plot_visual_residuals(Ksouth, result_ani_rust.ksouth, title_prefix="Ksouth")
+    plot_visual_residuals(Kwest, result_ani_rust.kwest, title_prefix="Kwest")
+    plot_visual_residuals(Knorth, result_ani_rust.knorth, title_prefix="Knorth")
+    plot_visual_residuals(KsideI, result_ani_rust.kside_i, title_prefix="KsideI")
+    plot_visual_residuals(KsideD, result_ani_rust.kside_d, title_prefix="KsideD")
+    plot_visual_residuals(Kside, result_ani_rust.kside, title_prefix="Kside")
 
 
 def make_test_arrays(
@@ -587,21 +775,21 @@ def make_test_arrays(
 
 
 # Calculate and print per-array right percentage
-def pct(a, b, atol=0.001):
+def pct(a, b, atol, rtol):
     if a is None or b is None:
         return float("nan")
     # Ensure shapes match before comparison
     if a.shape != b.shape:
         return f"Shape mismatch: {a.shape} vs {b.shape}"
-    return 100.0 * np.isclose(a, b, atol=atol, rtol=0, equal_nan=True).sum() / a.size
+    return 100.0 * np.isclose(a, b, atol=atol, rtol=rtol, equal_nan=True).sum() / a.size
 
 
-def compare_results(result_py, result_rust, key_map, atol=0.0001):
+def compare_results(result_py, result_rust, key_map, atol=0.001, rtol=0.001):
     print("\n--- Comparison ---")
     for py_key, rust_attr in key_map.items():
         py_val = result_py.get(py_key)
         rust_val = getattr(result_rust, rust_attr, None)
-        match_pct = pct(py_val, rust_val, atol=atol)
+        match_pct = pct(py_val, rust_val, atol=atol, rtol=rtol)
         mean_diff = (
             np.nanmean(np.abs(py_val - rust_val)) if py_val is not None and rust_val is not None else float("nan")
         )
@@ -646,9 +834,6 @@ def plot_visual_residuals(
 
     residuals = rust_array - py_array
 
-    # Determine the symmetric range for the residuals colormap
-    max_abs_residual = np.abs(residuals).max()
-
     fig, axes = plt.subplots(3, 1, figsize=(6, 12))  # 3 rows, 1 column
 
     # Plot Array 1 (Python)
@@ -665,7 +850,10 @@ def plot_visual_residuals(
     axes[1].set_title(f"{title_prefix} - Array 2 (Rust)")
     axes[1].axis("off")
 
-    # Plot Residuals with centered colormap
+    # Determine the symmetric range for the residuals colormap
+    min_extent = 0.001
+    max_abs_residual = max(np.abs(residuals).max(), min_extent)
+
     im3 = axes[2].imshow(residuals, cmap=cmap_residuals, vmin=-max_abs_residual, vmax=max_abs_residual)
     cbar3 = fig.colorbar(im3, ax=axes[2], shrink=colorbar_shrink)
     cbar3.ax.tick_params(labelsize=tick_fontsize)
