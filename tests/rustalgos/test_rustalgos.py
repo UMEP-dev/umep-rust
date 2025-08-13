@@ -7,11 +7,13 @@ import numpy as np
 from memory_profiler import memory_usage
 from umep import common
 from umep.functions.SOLWEIGpython import Solweig_run
+from umep.functions.SOLWEIGpython.daylen import daylen
+from umep.functions.SOLWEIGpython.gvf_2018a import gvf_2018a
 from umep.functions.SOLWEIGpython.solweig_runner_core import SolweigRunCore
 from umep.functions.svf_functions import svfForProcessing153
 from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
 from umepr.hybrid.svf import svfForProcessing153_rust_shdw
-from umepr.rustalgos import shadowing, skyview
+from umepr.rustalgos import gvf, shadowing, skyview
 from umepr.solweig_runner_rust import SolweigRunRust
 
 
@@ -331,6 +333,228 @@ def test_profile_solweig():
     profiler.disable()
     stats = pstats.Stats(profiler).sort_stats("tottime")
     stats.print_stats(30)  # Show top 30 lines
+
+
+def test_gvf():
+    # prepare variables
+    SWC = SolweigRunCore(
+        config_path_str="tests/rustalgos/test_config_solweig.ini",
+        params_json_path="tests/rustalgos/test_params_solweig.json",
+    )
+    idx = 12
+    scale = 1 / SWC.dsm_trf_arr[1]
+    SBC = 5.67051e-8
+    if SWC.params.Tmrt_params.Value.posture == "Standing":
+        posture = SWC.params.Posture.Standing.Value
+    else:
+        posture = SWC.params.Posture.Sitting.Value
+    _, _, _, SNUP = daylen(SWC.environ_data.jday[idx], SWC.location["latitude"])
+    first = np.round(posture.height)
+    if first == 0.0:
+        first = 1.0
+    second = np.round(posture.height * 20.0)
+    dectime = SWC.environ_data.dectime[idx]
+    altmax = SWC.environ_data.altmax[idx]
+    Ta = SWC.environ_data.Ta[idx]
+    Tgamp = SWC.tg_maps.TgK * altmax + SWC.tg_maps.Tstart  # Fixed 2021
+    # Tgampwall = (TgK_wall * altmax - (Tstart_wall)) + (Tstart_wall) # Old
+    Tgampwall = SWC.tg_maps.TgK_wall * altmax + SWC.tg_maps.Tstart_wall
+    Tg = Tgamp * np.sin(
+        (((dectime - np.floor(dectime)) - SNUP / 24) / (SWC.tg_maps.TmaxLST / 24 - SNUP / 24)) * np.pi / 2
+    )  # 2015 a, based on max sun altitude
+    Tgwall = Tgampwall * np.sin(
+        (((dectime - np.floor(dectime)) - SNUP / 24) / (SWC.tg_maps.TmaxLST_wall / 24 - SNUP / 24)) * np.pi / 2
+    )  # 2015a, based on max sun altitude
+    if Tgwall < 0:  # temporary for removing low Tg during morning 20130205
+        # Tg = 0
+        Tgwall = 0
+    sh_results = shadowing.calculate_shadows_wall_ht_25(
+        SWC.environ_data.azimuth[idx],
+        SWC.environ_data.altitude[idx],
+        scale,
+        SWC.vegetation.amaxvalue,
+        SWC.dsm_arr.astype(np.float32),
+        SWC.vegetation.vegdsm.astype(np.float32),
+        SWC.vegetation.vegdsm2.astype(np.float32),
+        SWC.vegetation.bush.astype(np.float32),
+        SWC.wallheight.astype(np.float32),
+        SWC.wallaspect.astype(np.float32) * np.pi / 180.0,
+        None,
+        None,
+    )
+    shadow = sh_results.wall_sh - (1 - sh_results.veg_sh) * (1 - SWC.environ_data.psi[idx])
+
+    repeats = 3
+
+    def run_py():
+        gvf_2018a(
+            sh_results.wall_sun,
+            SWC.wallheight,
+            SWC.buildings,
+            scale,
+            shadow,
+            first,
+            second,
+            SWC.wallaspect,
+            Tg,
+            Tgwall,
+            Ta,
+            SWC.tg_maps.emis_grid,
+            SWC.params.Emissivity.Value.Walls,
+            SWC.tg_maps.alb_grid,
+            SBC,
+            SWC.params.Albedo.Effective.Value.Walls,
+            SWC.rows,
+            SWC.cols,
+            SWC.environ_data.Twater[idx],
+            None,
+            False,
+        )
+
+    def run_rust():
+        gvf.gvf_calc(
+            sh_results.wall_sun.astype(np.float32),
+            SWC.wallheight.astype(np.float32),
+            SWC.buildings.astype(np.float32),
+            scale,
+            shadow.astype(np.float32),
+            first,
+            second,
+            SWC.wallaspect.astype(np.float32),
+            Tg.astype(np.float32),
+            Tgwall,
+            Ta,
+            SWC.tg_maps.emis_grid.astype(np.float32),
+            SWC.params.Emissivity.Value.Walls,
+            SWC.tg_maps.alb_grid.astype(np.float32),
+            SBC,
+            SWC.params.Albedo.Effective.Value.Walls,
+            SWC.environ_data.Twater[idx],
+            None,
+            False,
+        )
+
+    py_timings = timeit.repeat(run_py, number=1, repeat=repeats)
+    print_timing_stats("gvf_2018a", py_timings)
+
+    rust_timings = timeit.repeat(run_rust, number=1, repeat=repeats)
+    print_timing_stats("gvf.gvf_calc", rust_timings)
+
+    # Print relative speed as percentage
+    relative_speed(py_timings, rust_timings)
+
+    (
+        gvfLup,
+        gvfalb,
+        gvfalbnosh,
+        gvfLupE,
+        gvfalbE,
+        gvfalbnoshE,
+        gvfLupS,
+        gvfalbS,
+        gvfalbnoshS,
+        gvfLupW,
+        gvfalbW,
+        gvfalbnoshW,
+        gvfLupN,
+        gvfalbN,
+        gvfalbnoshN,
+        gvfSum,
+        gvfNorm,
+    ) = gvf_2018a(
+        sh_results.wall_sun,
+        SWC.wallheight,
+        SWC.buildings,
+        scale,
+        shadow,
+        first,
+        second,
+        SWC.wallaspect,
+        Tg,
+        Tgwall,
+        Ta,
+        SWC.tg_maps.emis_grid,
+        SWC.params.Emissivity.Value.Walls,
+        SWC.tg_maps.alb_grid,
+        SBC,
+        SWC.params.Albedo.Effective.Value.Walls,
+        SWC.rows,
+        SWC.cols,
+        SWC.environ_data.Twater[idx],
+        None,
+        False,
+    )
+    result_py = {
+        "gvfLup": gvfLup,
+        "gvfalb": gvfalb,
+        "gvfalbnosh": gvfalbnosh,
+        "gvfLupE": gvfLupE,
+        "gvfalbE": gvfalbE,
+        "gvfalbnoshE": gvfalbnoshE,
+        "gvfLupS": gvfLupS,
+        "gvfalbS": gvfalbS,
+        "gvfalbnoshS": gvfalbnoshS,
+        "gvfLupW": gvfLupW,
+        "gvfalbW": gvfalbW,
+        "gvfalbnoshW": gvfalbnoshW,
+        "gvfLupN": gvfLupN,
+        "gvfalbN": gvfalbN,
+        "gvfalbnoshN": gvfalbnoshN,
+        "gvfSum": gvfSum,
+        "gvfNorm": gvfNorm,
+    }
+
+    result_rust = gvf.gvf_calc(
+        sh_results.wall_sun.astype(np.float32),
+        SWC.wallheight.astype(np.float32),
+        SWC.buildings.astype(np.float32),
+        scale,
+        shadow.astype(np.float32),
+        first,
+        second,
+        SWC.wallaspect.astype(np.float32),
+        Tg.astype(np.float32),
+        Tgwall,
+        Ta,
+        SWC.tg_maps.emis_grid.astype(np.float32),
+        SWC.params.Emissivity.Value.Walls,
+        SWC.tg_maps.alb_grid.astype(np.float32),
+        SBC,
+        SWC.params.Albedo.Effective.Value.Walls,
+        SWC.environ_data.Twater[idx],
+        None,
+        False,
+    )
+    key_map = {
+        "gvfSum": "gvf_sum",
+        "gvfNorm": "gvf_norm",
+        "gvfLup": "gvf_lup",
+        "gvfLupN": "gvf_lup_n",
+        "gvfLupS": "gvf_lup_s",
+        "gvfLupE": "gvf_lup_e",
+        "gvfLupW": "gvf_lup_w",
+        "gvfalb": "gvfalb",
+        "gvfalbN": "gvfalb_n",
+        "gvfalbS": "gvfalb_s",
+        "gvfalbE": "gvfalb_e",
+        "gvfalbW": "gvfalb_w",
+        "gvfalbnosh": "gvfalbnosh",
+        "gvfalbnoshN": "gvfalbnosh_n",
+        "gvfalbnoshS": "gvfalbnosh_s",
+        "gvfalbnoshE": "gvfalbnosh_e",
+        "gvfalbnoshW": "gvfalbnosh_w",
+    }
+    # Compare results
+    compare_results(result_py, result_rust, key_map, atol=0.0001)
+    # Plot visual residuals
+    plot_visual_residuals(bldg_sh, result_rust.bldg_sh, title_prefix="Building Shadows")
+    plot_visual_residuals(veg_sh, result_rust.veg_sh, title_prefix="Vegetation Shadows")
+    plot_visual_residuals(veg_blocks_bldg_sh, result_rust.veg_blocks_bldg_sh, title_prefix="Veg Blocks Bldg Shadows")
+    plot_visual_residuals(wall_sh, result_rust.wall_sh, title_prefix="Wall Shadows")
+    plot_visual_residuals(wall_sun, result_rust.wall_sun, title_prefix="Wall Sun")
+    plot_visual_residuals(wall_sh_veg, result_rust.wall_sh_veg, title_prefix="Wall Sh Veg")
+    plot_visual_residuals(face_sh, result_rust.face_sh, title_prefix="Face Sh")
+    plot_visual_residuals(face_sun, result_rust.face_sun, title_prefix="Face Sun")
 
 
 def make_test_arrays(
