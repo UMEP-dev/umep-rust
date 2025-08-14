@@ -12,8 +12,10 @@ from umep.functions.SOLWEIGpython.cylindric_wedge import cylindric_wedge
 from umep.functions.SOLWEIGpython.daylen import daylen
 from umep.functions.SOLWEIGpython.gvf_2018a import gvf_2018a
 from umep.functions.SOLWEIGpython.Kup_veg_2015a import Kup_veg_2015a
+from umep.functions.SOLWEIGpython.Lside_veg_v2022a import Lside_veg_v2022a
 from umep.functions.SOLWEIGpython.patch_radiation import patch_steradians
 from umep.functions.SOLWEIGpython.solweig_runner_core import SolweigRunCore
+from umep.functions.SOLWEIGpython.TsWaveDelay_2015a import TsWaveDelay_2015a
 from umep.functions.svf_functions import svfForProcessing153
 from umep.util.SEBESOLWEIGCommonFiles.clearnessindex_2013b import clearnessindex_2013b
 from umep.util.SEBESOLWEIGCommonFiles.create_patches import create_patches
@@ -21,7 +23,7 @@ from umep.util.SEBESOLWEIGCommonFiles.diffusefraction import diffusefraction
 from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
 from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
 from umepr.hybrid.svf import svfForProcessing153_rust_shdw
-from umepr.rustalgos import gvf, shadowing, sky, skyview
+from umepr.rustalgos import gvf, shadowing, sky, skyview, vegetation
 from umepr.solweig_runner_rust import SolweigRunRust
 
 
@@ -516,21 +518,12 @@ def test_solweig_sub_funcs():
     plot_visual_residuals(gvfalbnoshW, result_gvf_rust.gvfalbnosh_w, title_prefix="GVF Albedo No Shadow W")
     plot_visual_residuals(gvfalbnoshE, result_gvf_rust.gvfalbnosh_e, title_prefix="GVF Albedo No Shadow E")
 
-    # aniso
+    ### LSIDE
+    t = 0.0
     elvis = 0.0
-    # Vapor pressure
     ea = 6.107 * 10 ** ((7.5 * Ta) / (237.3 + Ta)) * (SWC.environ_data.RH[idx] / 100.0)
-    # Determination of clear - sky emissivity from Prata (1996)
     msteg = 46.5 * (ea / (Ta + 273.15))
-    esky = (1 - (1 + msteg) * np.exp(-((1.2 + 3.0 * msteg) ** 0.5))) + elvis  # -0.04 old error from Jonsson et al.2006
-    skyvaultalt, skyvaultazi, _, _, _, _, _ = create_patches(2)
-    patch_emissivities = np.zeros(skyvaultalt.shape[0])
-    x = np.transpose(np.atleast_2d(skyvaultalt))
-    y = np.transpose(np.atleast_2d(skyvaultazi))
-    z = np.transpose(np.atleast_2d(patch_emissivities))
-    L_patches = np.append(np.append(x, y, axis=1), z, axis=1)
-    steradians, skyalt, patch_altitude = patch_steradians(L_patches)
-    Lup = SBC * SWC.tg_maps.emis_grid * ((SWC.tg_maps.Knight + Ta + Tg + 273.15) ** 4)
+    esky = (1 - (1 + msteg) * np.exp(-((1.2 + 3.0 * msteg) ** 0.5))) + elvis
     I0, CI, Kt, I0et, CIuncorr = clearnessindex_2013b(
         SWC.environ_data.zen[idx],
         SWC.environ_data.jday[idx],
@@ -540,6 +533,142 @@ def test_solweig_sub_funcs():
         SWC.location,
         SWC.environ_data.P[idx],
     )
+    ewall = SWC.params.Albedo.Effective.Value.Walls
+    Ldown = (
+        (SWC.svf_data.svf + SWC.svf_data.svf_veg - 1) * esky * SBC * ((Ta + 273.15) ** 4)
+        + (2 - SWC.svf_data.svf_veg - SWC.svf_data.svf_veg_blocks_bldg_sh) * ewall * SBC * ((Ta + 273.15) ** 4)
+        + (SWC.svf_data.svf_veg_blocks_bldg_sh - SWC.svf_data.svf) * ewall * SBC * ((Ta + 273.15 + Tgwall) ** 4)
+        + (2 - SWC.svf_data.svf - SWC.svf_data.svf_veg) * (1 - ewall) * esky * SBC * ((Ta + 273.15) ** 4)
+    )
+    if CI < 0.95:
+        c = 1 - CI
+        Ldown = Ldown * (1 - c) + c * (
+            (SWC.svf_data.svf + SWC.svf_data.svf_veg - 1) * SBC * ((Ta + 273.15) ** 4)
+            + (2 - SWC.svf_data.svf_veg - SWC.svf_data.svf_veg_blocks_bldg_sh) * ewall * SBC * ((Ta + 273.15) ** 4)
+            + (SWC.svf_data.svf_veg_blocks_bldg_sh - SWC.svf_data.svf) * ewall * SBC * ((Ta + 273.15 + Tgwall) ** 4)
+            + (2 - SWC.svf_data.svf - SWC.svf_data.svf_veg) * (1 - ewall) * esky * SBC * ((Ta + 273.15) ** 4)
+        )
+    F_sh = cylindric_wedge(SWC.environ_data.zen[idx], SWC.svf_data.svfalfa, SWC.rows, SWC.cols)
+    timestepdec = 0
+    timeadd = 0.0
+    firstdaytime = 1.0
+    Lup, timeaddnotused, Tgmap1 = TsWaveDelay_2015a(gvfLup, firstdaytime, timeadd, timestepdec, SWC.tg_maps.Tgmap1)
+    LupE, timeaddnotused, Tgmap1E = TsWaveDelay_2015a(gvfLupE, firstdaytime, timeadd, timestepdec, SWC.tg_maps.Tgmap1E)
+    LupS, timeaddnotused, Tgmap1S = TsWaveDelay_2015a(gvfLupS, firstdaytime, timeadd, timestepdec, SWC.tg_maps.Tgmap1S)
+    LupW, timeaddnotused, Tgmap1W = TsWaveDelay_2015a(gvfLupW, firstdaytime, timeadd, timestepdec, SWC.tg_maps.Tgmap1W)
+    LupN, timeaddnotused, Tgmap1N = TsWaveDelay_2015a(gvfLupN, firstdaytime, timeadd, timestepdec, SWC.tg_maps.Tgmap1N)
+
+    def run_lside_py():
+        return Lside_veg_v2022a(
+            SWC.svf_data.svf_south.astype(np.float32),
+            SWC.svf_data.svf_west.astype(np.float32),
+            SWC.svf_data.svf_north.astype(np.float32),
+            SWC.svf_data.svf_east.astype(np.float32),
+            SWC.svf_data.svf_veg_east.astype(np.float32),
+            SWC.svf_data.svf_veg_south.astype(np.float32),
+            SWC.svf_data.svf_veg_west.astype(np.float32),
+            SWC.svf_data.svf_veg_north.astype(np.float32),
+            SWC.svf_data.svf_veg_blocks_bldg_sh_east.astype(np.float32),
+            SWC.svf_data.svf_veg_blocks_bldg_sh_south.astype(np.float32),
+            SWC.svf_data.svf_veg_blocks_bldg_sh_west.astype(np.float32),
+            SWC.svf_data.svf_veg_blocks_bldg_sh_north.astype(np.float32),
+            SWC.environ_data.azimuth[idx],
+            SWC.environ_data.altitude[idx],
+            Ta,
+            Tgwall,
+            SBC,
+            SWC.params.Albedo.Effective.Value.Walls,
+            Ldown.astype(np.float32),
+            esky,
+            t,
+            F_sh.astype(np.float32),
+            CI,
+            LupE.astype(np.float32),
+            LupS.astype(np.float32),
+            LupW.astype(np.float32),
+            LupN.astype(np.float32),
+            0,
+        )
+
+    def run_lside_rust():
+        return vegetation.lside_veg(
+            SWC.svf_data.svf_south.astype(np.float32),
+            SWC.svf_data.svf_west.astype(np.float32),
+            SWC.svf_data.svf_north.astype(np.float32),
+            SWC.svf_data.svf_east.astype(np.float32),
+            SWC.svf_data.svf_veg_east.astype(np.float32),
+            SWC.svf_data.svf_veg_south.astype(np.float32),
+            SWC.svf_data.svf_veg_west.astype(np.float32),
+            SWC.svf_data.svf_veg_north.astype(np.float32),
+            SWC.svf_data.svf_veg_blocks_bldg_sh_east.astype(np.float32),
+            SWC.svf_data.svf_veg_blocks_bldg_sh_south.astype(np.float32),
+            SWC.svf_data.svf_veg_blocks_bldg_sh_west.astype(np.float32),
+            SWC.svf_data.svf_veg_blocks_bldg_sh_north.astype(np.float32),
+            SWC.environ_data.azimuth[idx],
+            SWC.environ_data.altitude[idx],
+            Ta,
+            Tgwall,
+            SBC,
+            SWC.params.Albedo.Effective.Value.Walls,
+            Ldown.astype(np.float32),
+            esky,
+            t,
+            F_sh.astype(np.float32),
+            CI,
+            LupE.astype(np.float32),
+            LupS.astype(np.float32),
+            LupW.astype(np.float32),
+            LupN.astype(np.float32),
+            False,
+        )
+
+    py_lside_timings = timeit.repeat(run_lside_py, number=1, repeat=repeats)
+    print_timing_stats("lside_veg_v2022a", py_lside_timings)
+
+    rust_lside_timings = timeit.repeat(run_lside_rust, number=1, repeat=repeats)
+    print_timing_stats("vegetation.lside_veg", rust_lside_timings)
+
+    # Print relative speed as percentage
+    relative_speed(py_gvf_timings, rust_gvf_timings)
+
+    (
+        Least,
+        Lsouth,
+        Lwest,
+        Lnorth,
+    ) = run_lside_py()
+
+    result_lside_py = {
+        "Least": Least,
+        "Lsouth": Lsouth,
+        "Lwest": Lwest,
+        "Lnorth": Lnorth,
+    }
+    result_lside_rust = run_lside_rust()
+
+    key_map = {
+        "Least": "least",
+        "Lsouth": "lsouth",
+        "Lwest": "lwest",
+        "Lnorth": "lnorth",
+    }
+    # Compare results
+    compare_results(result_lside_py, result_lside_rust, key_map)
+    # Plot visual residuals
+    plot_visual_residuals(Least, result_lside_rust.least, title_prefix="Least_veg")
+    plot_visual_residuals(Lsouth, result_lside_rust.lsouth, title_prefix="Lsouth_veg")
+    plot_visual_residuals(Lwest, result_lside_rust.lwest, title_prefix="Lwest_veg")
+    plot_visual_residuals(Lnorth, result_lside_rust.lnorth, title_prefix="Lnorth_veg")
+
+    ### aniso
+    skyvaultalt, skyvaultazi, _, _, _, _, _ = create_patches(2)
+    patch_emissivities = np.zeros(skyvaultalt.shape[0])
+    x = np.transpose(np.atleast_2d(skyvaultalt))
+    y = np.transpose(np.atleast_2d(skyvaultazi))
+    z = np.transpose(np.atleast_2d(patch_emissivities))
+    L_patches = np.append(np.append(x, y, axis=1), z, axis=1)
+    steradians, skyalt, patch_altitude = patch_steradians(L_patches)
+    Lup = SBC * SWC.tg_maps.emis_grid * ((SWC.tg_maps.Knight + Ta + Tg + 273.15) ** 4)
     radI, radD = diffusefraction(
         SWC.environ_data.radG[idx], SWC.environ_data.altitude[idx], Kt, Ta, SWC.environ_data.RH[idx]
     )
@@ -553,7 +682,6 @@ def test_solweig_sub_funcs():
         1,
         2,
     )
-    F_sh = cylindric_wedge(SWC.environ_data.zen[idx], SWC.svf_data.svfalfa, SWC.rows, SWC.cols)
     Kup, KupE, KupS, KupW, KupN = Kup_veg_2015a(
         SWC.environ_data.radI[idx],
         SWC.environ_data.radD[idx],
@@ -832,8 +960,6 @@ def plot_visual_residuals(
         print(f"Error: Input arrays have different shapes: {py_array.shape} vs {rust_array.shape}")
         return
 
-    residuals = rust_array - py_array
-
     fig, axes = plt.subplots(3, 1, figsize=(6, 12))  # 3 rows, 1 column
 
     # Plot Array 1 (Python)
@@ -852,6 +978,7 @@ def plot_visual_residuals(
 
     # Determine the symmetric range for the residuals colormap
     min_extent = 0.001
+    residuals = rust_array - py_array
     max_abs_residual = max(np.abs(residuals).max(), min_extent)
 
     im3 = axes[2].imshow(residuals, cmap=cmap_residuals, vmin=-max_abs_residual, vmax=max_abs_residual)

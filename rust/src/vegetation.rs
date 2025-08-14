@@ -82,11 +82,10 @@ pub fn lside_veg(
     let Lsky_allsky = esky * SBC * TaK_pow4 * (1.0 - c) + c * SBC * TaK_pow4;
     let altitude_day = altitude > 0.0;
 
-    // Precompute azimuth flags based on Kside_veg logic, which seems more correct
-    let sun_east = azimuth > (360.0 - t) || azimuth <= (180.0 - t);
-    let sun_south = azimuth > (90.0 - t) && azimuth <= (270.0 - t);
-    let sun_west = azimuth > (180.0 - t) && azimuth <= (360.0 - t);
-    let sun_north = azimuth <= (90.0 - t) || azimuth > (270.0 - t);
+    let sun_east = azimuth > (180.0 - t) && azimuth <= (360.0 - t);
+    let sun_south = azimuth <= (90.0 - t) || azimuth > (270.0 - t);
+    let sun_west = azimuth > (360.0 - t) || azimuth <= (180.0 - t);
+    let sun_north = azimuth > (90.0 - t) && azimuth <= (270.0 - t);
 
     // Precompute azimuth temperature offsets (constant per grid)
     let temp_e = TaK + Tw * ((azimuth - 180.0 + t) * std::f32::consts::PI / 180.0).sin();
@@ -145,7 +144,7 @@ pub fn lside_veg(
                 let f_sh_scaled = 2.0 * fsh_val - 1.0;
                 let (lwallsun, lwallsh) = if altitude_day {
                     let alfa_b = svfalfa.atan();
-                    let beta_b = (svfalfa.tan() * f_sh_scaled).atan();
+                    let beta_b = (svfalfa * f_sh_scaled).tan().atan();
                     let betasun = ((alfa_b - beta_b) / 2.0) + beta_b;
                     if sun_cond {
                         let lwallsun = SBC
