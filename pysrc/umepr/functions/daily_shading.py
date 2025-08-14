@@ -10,7 +10,7 @@ import numpy as np
 from tqdm import tqdm
 from umep.util.SEBESOLWEIGCommonFiles import sun_position as sp
 
-from .. import common
+from umep import common
 from ..rustalgos import shadowing
 
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import common
+from umep import common
 from .rustalgos import skyview
 
 
