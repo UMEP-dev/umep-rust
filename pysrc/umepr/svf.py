@@ -8,8 +8,8 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
-
 from umep import common
+
 from .rustalgos import skyview
 
 
@@ -19,44 +19,54 @@ def generate_svf(
     bbox: list[int, int, int, int],
     out_dir: str,
     cdsm_path: str | None = None,
-    trans_veg: float = 3,
-    trunk_ratio: float = 0.25,
+    trans_veg_perc: float = 3,
+    trunk_ratio_perc: float = 25,
 ):
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     out_path_str = str(out_path)
 
     # Open the DSM file
-    dsm_rast, dsm_transf, dsm_crs, _dsm_nd = common.load_raster(dsm_path, bbox)
+    dsm, dsm_transf, dsm_crs, _dsm_nd = common.load_raster(dsm_path, bbox)
     dsm_scale = 1 / dsm_transf[1]
 
     # veg transmissivity as percentage
-    if not trans_veg >= 0 and trans_veg <= 100:
+    if not (0 <= trans_veg_perc <= 100):
         raise ValueError("Vegetation transmissivity should be a number between 0 and 100")
-    trans = trans_veg / 100.0
+    trans_veg = trans_veg_perc / 100.0
 
     # CDSM
-    rows, cols = dsm_rast.shape
+    rows, cols = dsm.shape
     if cdsm_path is None:
         use_cdsm = False
-        cdsm_rast = np.zeros([rows, cols])
+        cdsm = np.zeros([rows, cols])
+        tdsm = np.zeros([rows, cols])
     else:
         use_cdsm = True
-        cdsm_rast, cdsm_transf, cdsm_crs, _cdsm_nd = common.load_raster(cdsm_path, bbox)
-        if not cdsm_crs == dsm_crs:
+        cdsm, cdsm_transf, cdsm_crs, _cdsm_nd = common.load_raster(cdsm_path, bbox)
+        if not cdsm.shape == dsm.shape:
+            raise ValueError("Mismatching raster shapes for DSM and CDSM.")
+        if cdsm_crs is not None and cdsm_crs != dsm_crs:
             raise ValueError("Mismatching CRS for DSM and CDSM.")
-        if not dsm_transf == cdsm_transf:
+        if not np.allclose(dsm_transf, cdsm_transf):
             raise ValueError("Mismatching spatial transform for DSM and CDSM.")
+        # TDSM
+        if not (0 <= trunk_ratio_perc <= 100):
+            raise ValueError("Vegetation trunk ratio should be a number between 0 and 100")
+        trunk_ratio = trunk_ratio_perc / 100.0
+        tdsm = cdsm * trunk_ratio
+        # Check if CDSM has DEM info
+        cdsm_zero_ratio = np.sum(cdsm <= 0) / (rows * cols)
+        if cdsm_zero_ratio > 0.05:
+            print("CDSM appears to have no DEM information: boosting CDSM to DSM heights.")
+            # Set vegetated pixels to DSM + CDSM otherwise zero
+            cdsm = np.where(cdsm > 0, dsm + cdsm, 0)
+            tdsm = np.where(tdsm > 0, dsm + tdsm, 0)
 
-    # CDSM 2
-    cdsm_2_rast = cdsm_rast * trunk_ratio  # issue8
-    # compute
-    # Ensure arrays are float32 before passing to Rust
-    dsm_rast_f32 = dsm_rast.astype(np.float32)
-    cdsm_rast_f32 = cdsm_rast.astype(np.float32)
-    cdsm_2_rast_f32 = cdsm_2_rast.astype(np.float32)
     # 2 = 153 patches
-    ret = skyview.calculate_svf(dsm_rast_f32, cdsm_rast_f32, cdsm_2_rast_f32, dsm_scale, use_cdsm, 2)
+    ret = skyview.calculate_svf(
+        dsm.astype(np.float32), cdsm.astype(np.float32), tdsm.astype(np.float32), dsm_scale, use_cdsm, 2
+    )
 
     # Save the rasters using rasterio
     common.save_raster(out_path_str + "/" + "svf.tif", ret.svf, dsm_transf, dsm_crs)
@@ -123,7 +133,7 @@ def generate_svf(
         os.remove(out_path_str + "/" + "svfNaveg.tif")
 
         # Calculate final total SVF
-        svftotal = ret.svf - (1 - ret.svf_veg) * (1 - trans)
+        svftotal = ret.svf - (1 - ret.svf_veg) * (1 - trans_veg)
 
     # Save the final svftotal raster
     common.save_raster(out_path_str + "/" + "svf_total.tif", svftotal, dsm_transf, dsm_crs)

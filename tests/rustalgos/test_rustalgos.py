@@ -335,7 +335,7 @@ def test_solweig_sub_funcs():
         params_json_path="tests/rustalgos/test_params_solweig.json",
     )
     idx = 12
-    scale = 1 / SWC.dsm_trf_arr[1]
+    scale = 1 / SWC.raster_data.trf_arr[1]
     SBC = 5.67051e-8
     if SWC.params.Tmrt_params.Value.posture == "Standing":
         posture = SWC.params.Posture.Standing.Value
@@ -365,13 +365,13 @@ def test_solweig_sub_funcs():
         SWC.environ_data.azimuth[idx],
         SWC.environ_data.altitude[idx],
         scale,
-        SWC.vegetation.amaxvalue,
-        SWC.dsm_arr.astype(np.float32),
-        SWC.vegetation.vegdsm.astype(np.float32),
-        SWC.vegetation.vegdsm2.astype(np.float32),
-        SWC.vegetation.bush.astype(np.float32),
-        SWC.wallheight.astype(np.float32),
-        SWC.wallaspect.astype(np.float32) * np.pi / 180.0,
+        SWC.raster_data.amaxvalue,
+        SWC.raster_data.dsm.astype(np.float32),
+        SWC.raster_data.cdsm.astype(np.float32),
+        SWC.raster_data.tdsm.astype(np.float32),
+        SWC.raster_data.bush.astype(np.float32),
+        SWC.raster_data.wallheight.astype(np.float32),
+        SWC.raster_data.wallaspect.astype(np.float32) * np.pi / 180.0,
         None,
         None,
     )
@@ -380,15 +380,15 @@ def test_solweig_sub_funcs():
     repeats = 3
 
     def run_gvf_py():
-        return gvf_2018a(
+        return gvf_2018a(  # type: ignore
             sh_results.wall_sun.astype(np.float32),
-            SWC.wallheight.astype(np.float32),
-            SWC.buildings.astype(np.float32),
+            SWC.raster_data.wallheight.astype(np.float32),
+            SWC.raster_data.buildings.astype(np.float32),
             scale,
             shadow.astype(np.float32),
             first,
             second,
-            SWC.wallaspect.astype(np.float32),
+            SWC.raster_data.wallaspect.astype(np.float32),
             Tg.astype(np.float32),
             Tgwall,
             Ta,
@@ -397,23 +397,23 @@ def test_solweig_sub_funcs():
             SWC.tg_maps.alb_grid.astype(np.float32),
             SBC,
             SWC.params.Albedo.Effective.Value.Walls,
-            SWC.rows,
-            SWC.cols,
+            SWC.raster_data.rows,
+            SWC.raster_data.cols,
             SWC.environ_data.Twater[idx],
             None,
             False,
         )
 
     def run_gvf_rust():
-        return gvf.gvf_calc(
+        return gvf.gvf_calc(  # type: ignore
             sh_results.wall_sun.astype(np.float32),
-            SWC.wallheight.astype(np.float32),
-            SWC.buildings.astype(np.float32),
+            SWC.raster_data.wallheight.astype(np.float32),
+            SWC.raster_data.buildings.astype(np.float32),
             scale,
             shadow.astype(np.float32),
             first,
             second,
-            SWC.wallaspect.astype(np.float32),
+            SWC.raster_data.wallaspect.astype(np.float32),
             Tg.astype(np.float32),
             Tgwall,
             Ta,
@@ -548,7 +548,7 @@ def test_solweig_sub_funcs():
             + (SWC.svf_data.svf_veg_blocks_bldg_sh - SWC.svf_data.svf) * ewall * SBC * ((Ta + 273.15 + Tgwall) ** 4)
             + (2 - SWC.svf_data.svf - SWC.svf_data.svf_veg) * (1 - ewall) * esky * SBC * ((Ta + 273.15) ** 4)
         )
-    F_sh = cylindric_wedge(SWC.environ_data.zen[idx], SWC.svf_data.svfalfa, SWC.rows, SWC.cols)
+    F_sh = cylindric_wedge(SWC.environ_data.zen[idx], SWC.svf_data.svfalfa, SWC.raster_data.rows, SWC.raster_data.cols)
     timestepdec = 0
     timeadd = 0.0
     firstdaytime = 1.0
@@ -687,7 +687,7 @@ def test_solweig_sub_funcs():
         SWC.environ_data.radD[idx],
         SWC.environ_data.radG[idx],
         SWC.environ_data.altitude[idx],
-        SWC.vegetation.svfbuveg,
+        SWC.raster_data.svfbuveg,
         SWC.params.Emissivity.Value.Walls,
         F_sh,
         result_gvf_rust.gvfalb,
