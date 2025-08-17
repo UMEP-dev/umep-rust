@@ -11,6 +11,7 @@ from umep.functions.SOLWEIGpython.anisotropic_sky import anisotropic_sky as ani_
 from umep.functions.SOLWEIGpython.cylindric_wedge import cylindric_wedge
 from umep.functions.SOLWEIGpython.daylen import daylen
 from umep.functions.SOLWEIGpython.gvf_2018a import gvf_2018a
+from umep.functions.SOLWEIGpython.Kside_veg_v2022a import Kside_veg_v2022a
 from umep.functions.SOLWEIGpython.Kup_veg_2015a import Kup_veg_2015a
 from umep.functions.SOLWEIGpython.Lside_veg_v2022a import Lside_veg_v2022a
 from umep.functions.SOLWEIGpython.patch_radiation import patch_steradians
@@ -19,7 +20,6 @@ from umep.functions.SOLWEIGpython.TsWaveDelay_2015a import TsWaveDelay_2015a
 from umep.functions.svf_functions import svfForProcessing153
 from umep.util.SEBESOLWEIGCommonFiles.clearnessindex_2013b import clearnessindex_2013b
 from umep.util.SEBESOLWEIGCommonFiles.create_patches import create_patches
-from umep.util.SEBESOLWEIGCommonFiles.diffusefraction import diffusefraction
 from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
 from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
 from umepr.hybrid.svf import svfForProcessing153_rust_shdw
@@ -282,19 +282,51 @@ def test_profile_solweig():
     """
     GVF time includes sun on surface!!
     NO ANISO
-    18    4.748    0.264    4.748    0.264 {built-in method gvf.gvf_calc}
-       96    1.682    0.018    1.682    0.018 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Lvikt_veg.py:1(Lvikt_veg)
-      170    1.164    0.007    1.830    0.011 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/common.py:52(save_raster)
-       18    0.761    0.042    0.761    0.042 {built-in method shadowing.calculate_shadows_wall_ht_25}
-    WITH ANISO
-    18   10.380    0.577   13.064    0.726 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Kside_veg_v2022a.py:6(Kside_veg_v2022a)
-       18    5.385    0.299    5.385    0.299 {built-in method gvf.gvf_calc}
-       24    4.778    0.199    4.778    0.199 {built-in method sky.anisotropic_sky}
-     2754    2.101    0.001    2.101    0.001 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/sunlit_shaded_patches.py:6(shaded_or_sunlit)
-       96    1.896    0.020    1.896    0.020 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Lvikt_veg.py:1(Lvikt_veg)
-      170    1.325    0.008    2.124    0.012 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/common.py:52(save_raster)
-       24    1.323    0.055   28.091    1.170 /Users/gareth/dev/umep-rust/pysrc/umepr/functions/solweig.py:35(Solweig_2025a_calc)
-       18    1.139    0.063    1.139    0.063 {built-in method shadowing.calculate_shadows_wall_ht_25}
+    Running SOLWEIG: 100%|██████████| 24/24 [00:09<00:00,  2.61step/s]         100276 function calls (100107 primitive calls) in 9.306 seconds
+       18    5.285    0.294    5.285    0.294 {built-in method gvf.gvf_calc}
+      169    1.455    0.009    2.228    0.013 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/common.py:57(save_raster)
+       18    1.095    0.061    1.095    0.061 {built-in method shadowing.calculate_shadows_wall_ht_25}
+      169    0.558    0.003    0.596    0.004 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/rasterio/__init__.py:99(open)
+       24    0.135    0.006    6.941    0.289 /Users/gareth/dev/umep-rust/pysrc/umepr/functions/solweig.py:30(Solweig_2025a_calc)
+       18    0.126    0.007    0.129    0.007 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/cylindric_wedge.py:3(cylindric_wedge)
+       24    0.090    0.004    0.090    0.004 {built-in method vegetation.lside_veg}
+      2/1    0.070    0.035    9.290    9.290 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/solweig_runner.py:343(run)
+       18    0.069    0.004    0.069    0.004 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Kup_veg_2015a.py:3(Kup_veg_2015a)
+      990    0.053    0.000    0.053    0.000 {method 'astype' of 'numpy.ndarray' objects}
+       18    0.053    0.003    0.053    0.003 {built-in method vegetation.kside_veg}
+    WITH ANISO - CYLINDER
+    Running SOLWEIG: 100%|██████████| 24/24 [00:15<00:00,  1.54step/s]         171116 function calls (170947 primitive calls) in 16.461 seconds
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       18    5.073    0.282    5.073    0.282 {built-in method gvf.gvf_calc}
+       24    4.182    0.174    4.182    0.174 {built-in method sky.anisotropic_sky}
+       24    1.394    0.058   13.789    0.575 /Users/gareth/dev/umep-rust/pysrc/umepr/functions/solweig.py:30(Solweig_2025a_calc)
+      169    1.285    0.008    2.079    0.012 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/common.py:57(save_raster)
+       18    1.031    0.057    1.031    0.057 {built-in method shadowing.calculate_shadows_wall_ht_25}
+     1436    0.938    0.001    0.938    0.001 {method 'astype' of 'numpy.ndarray' objects}
+       18    0.892    0.050    0.892    0.050 {built-in method vegetation.kside_veg}
+      169    0.588    0.003    0.624    0.004 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/rasterio/__init__.py:99(open)
+        1    0.391    0.391    0.391    0.391 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/solweig_runner.py:185(hemispheric_image)
+       18    0.104    0.006    0.107    0.006 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/cylindric_wedge.py:3(cylindric_wedge)
+      2/1    0.077    0.038   16.005   16.005 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/solweig_runner.py:343(run)
+       18    0.052    0.003    0.052    0.003 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/Kup_veg_2015a.py:3(Kup_veg_2015a)
+      169    0.050    0.000    0.053    0.000 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/pyproj/crs/crs.py:185(__init__)
+       24    0.048    0.002   13.838    0.577 /Users/gareth/dev/umep-rust/pysrc/umepr/solweig_runner_rust.py:15(calc_solweig)
+      108    0.026    0.000    0.026    0.000 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/TsWaveDelay_2015a.py:4(TsWaveDelay_2015a)
+       24    0.024    0.001    0.024    0.001 {built-in method vegetation.lside_veg}
+    WITH ANISO - BOX
+    Running SOLWEIG: 100%|██████████| 24/24 [00:13<00:00,  1.71step/s]         171116 function calls (170947 primitive calls) in 14.697 seconds
+           18    5.305    0.295    5.305    0.295 {built-in method gvf.gvf_calc}
+       24    2.288    0.095    2.288    0.095 {built-in method sky.anisotropic_sky}
+       24    1.603    0.067   12.705    0.529 /Users/gareth/dev/umep-rust/pysrc/umepr/functions/solweig.py:30(Solweig_2025a_calc)
+       18    1.483    0.082    1.483    0.082 {built-in method shadowing.calculate_shadows_wall_ht_25}
+      169    1.457    0.009    2.292    0.014 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/common.py:57(save_raster)
+     1436    1.101    0.001    1.101    0.001 {method 'astype' of 'numpy.ndarray' objects}
+       18    0.940    0.052    0.940    0.052 {built-in method vegetation.kside_veg}
+      169    0.610    0.004    0.649    0.004 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/rasterio/__init__.py:99(open)
+        1    0.384    0.384    0.384    0.384 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/solweig_runner.py:185(hemispheric_image)
+       18    0.125    0.007    0.128    0.007 /Users/gareth/dev/umep-rust/.venv/lib/python3.12/site-packages/umep/functions/SOLWEIGpython/cylindric_wedge.py:3(cylindric_wedge)
+     12/6    0.106    0.009    0.553    0.092 {method 'acquire' of '_thread.lock' objects}
+       24    0.099    0.004    0.099    0.004 {built-in method vegetation.lside_veg}
     """
     profiler = cProfile.Profile()
     profiler.enable()
@@ -518,8 +550,166 @@ def test_solweig_sub_funcs():
     plot_visual_residuals(gvfalbnoshW, result_gvf_rust.gvfalbnosh_w, title_prefix="GVF Albedo No Shadow W")
     plot_visual_residuals(gvfalbnoshE, result_gvf_rust.gvfalbnosh_e, title_prefix="GVF Albedo No Shadow E")
 
-    ### LSIDE
+    ### KSIDE
     t = 0.0
+    F_sh = cylindric_wedge(
+        SWC.environ_data.zen[idx],
+        SWC.svf_data.svfalfa,
+        SWC.raster_data.rows,
+        SWC.raster_data.cols,
+    )
+    Kup, KupE, KupS, KupW, KupN = Kup_veg_2015a(
+        SWC.environ_data.radI[idx],
+        SWC.environ_data.radD[idx],
+        SWC.environ_data.radG[idx],
+        SWC.environ_data.altitude[idx],
+        SWC.raster_data.svfbuveg,
+        SWC.params.Emissivity.Value.Walls,
+        F_sh,
+        result_gvf_rust.gvfalb,
+        result_gvf_rust.gvfalb_e,
+        result_gvf_rust.gvfalb_s,
+        result_gvf_rust.gvfalb_w,
+        result_gvf_rust.gvfalb_n,
+        result_gvf_rust.gvfalbnosh,
+        result_gvf_rust.gvfalbnosh_e,
+        result_gvf_rust.gvfalbnosh_s,
+        result_gvf_rust.gvfalbnosh_w,
+        result_gvf_rust.gvfalbnosh_n,
+    )
+    zenDeg = SWC.environ_data.zen[idx] * (180 / np.pi)
+    lv, pc_, pb_ = Perez_v3(
+        zenDeg,
+        SWC.environ_data.azimuth[idx],
+        SWC.environ_data.radD[idx],
+        SWC.environ_data.radI[idx],
+        SWC.environ_data.jday[idx],
+        1,
+        2,
+    )
+
+    def run_kside_py():
+        return Kside_veg_v2022a(  # type: ignore
+            SWC.environ_data.radI[idx],
+            SWC.environ_data.radD[idx],
+            SWC.environ_data.radG[idx],
+            shadow.astype(np.float32),
+            SWC.svf_data.svf_south.astype(np.float32),
+            SWC.svf_data.svf_west.astype(np.float32),
+            SWC.svf_data.svf_north.astype(np.float32),
+            SWC.svf_data.svf_east.astype(np.float32),
+            SWC.svf_data.svf_veg_east.astype(np.float32),
+            SWC.svf_data.svf_veg_south.astype(np.float32),
+            SWC.svf_data.svf_veg_west.astype(np.float32),
+            SWC.svf_data.svf_veg_north.astype(np.float32),
+            SWC.environ_data.azimuth[idx],
+            SWC.environ_data.altitude[idx],
+            SWC.environ_data.psi[idx],
+            t,
+            SWC.params.Albedo.Effective.Value.Walls,
+            F_sh.astype(np.float32),
+            KupE.astype(np.float32),
+            KupS.astype(np.float32),
+            KupW.astype(np.float32),
+            KupN.astype(np.float32),
+            True,  # cylindrical
+            lv.astype(np.float32) if lv is not None else None,
+            True,  # anisotropic sky
+            SWC.shadow_mats.diffsh.astype(np.float32) if SWC.shadow_mats.diffsh is not None else None,
+            SWC.raster_data.rows,
+            SWC.raster_data.cols,
+            SWC.shadow_mats.asvf.astype(np.float32) if SWC.shadow_mats.asvf is not None else None,
+            SWC.shadow_mats.shmat.astype(np.float32) if SWC.shadow_mats.shmat is not None else None,
+            SWC.shadow_mats.vegshmat.astype(np.float32) if SWC.shadow_mats.vegshmat is not None else None,
+            SWC.shadow_mats.vbshvegshmat.astype(np.float32) if SWC.shadow_mats.vbshvegshmat is not None else None,
+        )
+
+    def run_kside_rust():
+        return vegetation.kside_veg(  # type: ignore
+            SWC.environ_data.radI[idx],
+            SWC.environ_data.radD[idx],
+            SWC.environ_data.radG[idx],
+            shadow.astype(np.float32),
+            SWC.svf_data.svf_south.astype(np.float32),
+            SWC.svf_data.svf_west.astype(np.float32),
+            SWC.svf_data.svf_north.astype(np.float32),
+            SWC.svf_data.svf_east.astype(np.float32),
+            SWC.svf_data.svf_veg_east.astype(np.float32),
+            SWC.svf_data.svf_veg_south.astype(np.float32),
+            SWC.svf_data.svf_veg_west.astype(np.float32),
+            SWC.svf_data.svf_veg_north.astype(np.float32),
+            SWC.environ_data.azimuth[idx],
+            SWC.environ_data.altitude[idx],
+            SWC.environ_data.psi[idx],
+            t,
+            SWC.params.Albedo.Effective.Value.Walls,
+            F_sh.astype(np.float32),
+            KupE.astype(np.float32),
+            KupS.astype(np.float32),
+            KupW.astype(np.float32),
+            KupN.astype(np.float32),
+            True,  # cylindrical
+            lv.astype(np.float32) if lv is not None else None,
+            True,  # anisotropic sky
+            SWC.shadow_mats.diffsh.astype(np.float32) if SWC.shadow_mats.diffsh is not None else None,
+            SWC.shadow_mats.asvf.astype(np.float32) if SWC.shadow_mats.asvf is not None else None,
+            SWC.shadow_mats.shmat.astype(np.float32) if SWC.shadow_mats.shmat is not None else None,
+            SWC.shadow_mats.vegshmat.astype(np.float32) if SWC.shadow_mats.vegshmat is not None else None,
+            SWC.shadow_mats.vbshvegshmat.astype(np.float32) if SWC.shadow_mats.vbshvegshmat is not None else None,
+        )
+
+    py_kside_timings = timeit.repeat(run_kside_py, number=1, repeat=repeats)
+    print_timing_stats("kside_veg_v2022a", py_kside_timings)
+
+    rust_kside_timings = timeit.repeat(run_kside_rust, number=1, repeat=repeats)
+    print_timing_stats("vegetation.kside_veg", rust_kside_timings)
+
+    # Print relative speed as percentage
+    relative_speed(py_kside_timings, rust_kside_timings)
+
+    (
+        Keast,
+        Ksouth,
+        Kwest,
+        Knorth,
+        KsideI,
+        KsideD,
+        Kside,
+    ) = run_kside_py()
+
+    result_kside_py = {
+        "Keast": Keast,
+        "Ksouth": Ksouth,
+        "Kwest": Kwest,
+        "Knorth": Knorth,
+        "KsideI": KsideI,
+        "KsideD": KsideD,
+        "Kside": Kside,
+    }
+
+    result_kside_rust = run_kside_rust()
+
+    key_map = {
+        "Keast": "keast",
+        "Ksouth": "ksouth",
+        "Kwest": "kwest",
+        "Knorth": "knorth",
+        "KsideI": "kside_i",
+        "KsideD": "kside_d",
+        "Kside": "kside",
+    }
+    # Compare results
+    compare_results(result_kside_py, result_kside_rust, key_map)
+    # Plot visual residuals
+    plot_visual_residuals(Keast, result_kside_rust.keast, title_prefix="Keast_veg")
+    plot_visual_residuals(Ksouth, result_kside_rust.ksouth, title_prefix="Ksouth_veg")
+    plot_visual_residuals(Kwest, result_kside_rust.kwest, title_prefix="Kwest_veg")
+    plot_visual_residuals(Knorth, result_kside_rust.knorth, title_prefix="Knorth_veg")
+    plot_visual_residuals(KsideI, result_kside_rust.kside_i, title_prefix="KsideI_veg")
+    plot_visual_residuals(KsideD, result_kside_rust.kside_d, title_prefix="KsideD_veg")
+    plot_visual_residuals(Kside, result_kside_rust.kside, title_prefix="Kside_veg")
+
+    ### LSIDE
     elvis = 0.0
     ea = 6.107 * 10 ** ((7.5 * Ta) / (237.3 + Ta)) * (SWC.environ_data.RH[idx] / 100.0)
     msteg = 46.5 * (ea / (Ta + 273.15))
@@ -548,7 +738,6 @@ def test_solweig_sub_funcs():
             + (SWC.svf_data.svf_veg_blocks_bldg_sh - SWC.svf_data.svf) * ewall * SBC * ((Ta + 273.15 + Tgwall) ** 4)
             + (2 - SWC.svf_data.svf - SWC.svf_data.svf_veg) * (1 - ewall) * esky * SBC * ((Ta + 273.15) ** 4)
         )
-    F_sh = cylindric_wedge(SWC.environ_data.zen[idx], SWC.svf_data.svfalfa, SWC.raster_data.rows, SWC.raster_data.cols)
     timestepdec = 0
     timeadd = 0.0
     firstdaytime = 1.0
@@ -629,7 +818,7 @@ def test_solweig_sub_funcs():
     print_timing_stats("vegetation.lside_veg", rust_lside_timings)
 
     # Print relative speed as percentage
-    relative_speed(py_gvf_timings, rust_gvf_timings)
+    relative_speed(py_lside_timings, rust_lside_timings)
 
     (
         Least,
@@ -669,38 +858,6 @@ def test_solweig_sub_funcs():
     L_patches = np.append(np.append(x, y, axis=1), z, axis=1)
     steradians, skyalt, patch_altitude = patch_steradians(L_patches)
     Lup = SBC * SWC.tg_maps.emis_grid * ((SWC.tg_maps.Knight + Ta + Tg + 273.15) ** 4)
-    radI, radD = diffusefraction(
-        SWC.environ_data.radG[idx], SWC.environ_data.altitude[idx], Kt, Ta, SWC.environ_data.RH[idx]
-    )
-    zenDeg = SWC.environ_data.zen[idx] * (180 / np.pi)
-    lv, pc_, pb_ = Perez_v3(
-        zenDeg,
-        SWC.environ_data.azimuth[idx],
-        SWC.environ_data.radD[idx],
-        SWC.environ_data.radI[idx],
-        SWC.environ_data.jday[idx],
-        1,
-        2,
-    )
-    Kup, KupE, KupS, KupW, KupN = Kup_veg_2015a(
-        SWC.environ_data.radI[idx],
-        SWC.environ_data.radD[idx],
-        SWC.environ_data.radG[idx],
-        SWC.environ_data.altitude[idx],
-        SWC.raster_data.svfbuveg,
-        SWC.params.Emissivity.Value.Walls,
-        F_sh,
-        result_gvf_rust.gvfalb,
-        result_gvf_rust.gvfalb_e,
-        result_gvf_rust.gvfalb_s,
-        result_gvf_rust.gvfalb_w,
-        result_gvf_rust.gvfalb_n,
-        result_gvf_rust.gvfalbnosh,
-        result_gvf_rust.gvfalbnosh_e,
-        result_gvf_rust.gvfalbnosh_s,
-        result_gvf_rust.gvfalbnosh_w,
-        result_gvf_rust.gvfalbnosh_n,
-    )
 
     def run_ani_py():
         return ani_sky(
@@ -721,8 +878,8 @@ def test_solweig_sub_funcs():
             Tgwall,
             SWC.params.Emissivity.Value.Walls,
             Lup.astype(np.float32),
-            radI,
-            radD,
+            SWC.environ_data.radI[idx],
+            SWC.environ_data.radD[idx],
             SWC.environ_data.radG[idx],
             lv.astype(np.float32),
             SWC.params.Albedo.Effective.Value.Walls,
@@ -755,8 +912,8 @@ def test_solweig_sub_funcs():
             Tgwall,
             SWC.params.Emissivity.Value.Walls,
             Lup.astype(np.float32),
-            radI,
-            radD,
+            SWC.environ_data.radI[idx],
+            SWC.environ_data.radD[idx],
             SWC.environ_data.radG[idx],
             lv.astype(np.float32),
             SWC.params.Albedo.Effective.Value.Walls,

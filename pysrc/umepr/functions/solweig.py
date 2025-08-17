@@ -11,10 +11,6 @@ from copy import deepcopy
 import numpy as np
 from umep.functions.SOLWEIGpython.cylindric_wedge import cylindric_wedge
 from umep.functions.SOLWEIGpython.daylen import daylen
-
-# from .Lside_veg_v2015a import Lside_veg_v2015a
-# from .Kside_veg_v2019a import Kside_veg_v2019a
-from umep.functions.SOLWEIGpython.Kside_veg_v2022a import Kside_veg_v2022a
 from umep.functions.SOLWEIGpython.Kup_veg_2015a import Kup_veg_2015a
 
 # Anisotropic longwave
@@ -402,40 +398,45 @@ def Solweig_2025a_calc(
             gvf_result.gvfalbnosh_n,
         )
 
-        Keast, Ksouth, Kwest, Knorth, KsideI, KsideD, Kside = Kside_veg_v2022a(
+        kside_result = vegetation.kside_veg(
             radI,
             radD,
             radG,
-            shadow,
-            svfS,
-            svfW,
-            svfN,
-            svfE,
-            svfEveg,
-            svfSveg,
-            svfWveg,
-            svfNveg,
+            shadow.astype(np.float32),
+            svfS.astype(np.float32),
+            svfW.astype(np.float32),
+            svfN.astype(np.float32),
+            svfE.astype(np.float32),
+            svfEveg.astype(np.float32),
+            svfSveg.astype(np.float32),
+            svfWveg.astype(np.float32),
+            svfNveg.astype(np.float32),
             azimuth,
             altitude,
             psi,
             t,
             albedo_b,
-            F_sh,
-            KupE,
-            KupS,
-            KupW,
-            KupN,
-            cyl,
-            lv,
-            anisotropic_sky,
-            diffsh,
-            rows,
-            cols,
-            asvf,
-            shmat,
-            vegshmat,
-            vbshvegshmat,
+            F_sh.astype(np.float32),
+            KupE.astype(np.float32),
+            KupS.astype(np.float32),
+            KupW.astype(np.float32),
+            KupN.astype(np.float32),
+            bool(cyl),
+            lv.astype(np.float32) if lv is not None else None,
+            bool(anisotropic_sky),
+            diffsh.astype(np.float32) if diffsh is not None else None,
+            asvf.astype(np.float32) if asvf is not None else None,
+            shmat.astype(np.float32) if shmat is not None else None,
+            vegshmat.astype(np.float32) if vegshmat is not None else None,
+            vbshvegshmat.astype(np.float32) if vbshvegshmat is not None else None,
         )
+        Keast = kside_result.keast
+        Ksouth = kside_result.ksouth
+        Kwest = kside_result.kwest
+        Knorth = kside_result.knorth
+        KsideI = kside_result.kside_i
+        KsideD = kside_result.kside_d
+        Kside = kside_result.kside
 
         firstdaytime = 0
 

@@ -66,7 +66,9 @@ fn register_vegetation_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     let submodule = PyModule::new(py_module.py(), "vegetation")?;
     submodule.add("__doc__", "Vegetation-related calculations.")?;
     submodule.add_class::<vegetation::LsideVegResult>()?;
+    submodule.add_class::<vegetation::KsideVegResult>()?;
     submodule.add_function(wrap_pyfunction!(vegetation::lside_veg, &submodule)?)?;
+    submodule.add_function(wrap_pyfunction!(vegetation::kside_veg, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }
