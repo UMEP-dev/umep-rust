@@ -67,7 +67,7 @@ SRR = solweig_runner_rust.SolweigRunRust(
 )
 SRR.run()
 """
-Running SOLWEIG: 100%|| 72/72 [03:28<00:00,  2.16s/step]
+Running SOLWEIG: 100%|| 72/72 [00:57<00:00,  1.63step/s]
 """
 
 # %%
@@ -75,7 +75,7 @@ SRC = solweig_runner_core.SolweigRunCore(
     "tests/data/athens/configsolweig.ini",
     "tests/data/athens/parametersforsolweig.json",
 )
-# SRC.run()
+SRC.run()
 """
-
+Running SOLWEIG: 100%|| 72/72 [04:49<00:00,  4.02s/step]
 """
