@@ -11,7 +11,7 @@ reload(solweig_algorithm)
 
 #
 bbox = [789700, 784130, 790100, 784470]
-working_folder = "temp/tests/small_nbhd"
+working_folder = "temp/demos/small_nbhd"
 pixel_resolution = 1  # metres
 working_crs = 32651
 
@@ -20,7 +20,7 @@ working_path.mkdir(parents=True, exist_ok=True)
 working_path_str = str(working_path)
 
 # %%
-dsm_path = Path("tests/data/small_nbhd/dsm_clipped.tif").absolute()
+dsm_path = Path("demos/data/small_nbhd/dsm_clipped.tif").absolute()
 # if not Path.exists(working_path / "walls"):
 wall_heightaspect_algorithm.generate_wall_hts(
     dsm_path=str(dsm_path),

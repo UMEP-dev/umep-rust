@@ -11,7 +11,7 @@ from umep.functions.SOLWEIGpython import solweig_runner_core
 from umepr import solweig_runner_rust, svf
 
 # working folder
-input_folder = "tests/data/athens"
+input_folder = "demos/data/athens"
 input_path = Path(input_folder).absolute()
 input_path.mkdir(parents=True, exist_ok=True)
 input_path_str = str(input_path)
@@ -62,8 +62,8 @@ svf.generate_svf(
 
 # %%
 SRR = solweig_runner_rust.SolweigRunRust(
-    "tests/data/athens/configsolweig.ini",
-    "tests/data/athens/parametersforsolweig.json",
+    "demos/data/athens/configsolweig.ini",
+    "demos/data/athens/parametersforsolweig.json",
 )
 SRR.run()
 """
@@ -72,8 +72,8 @@ Running SOLWEIG: 100%|| 72/72 [00:57<00:00,  1.63step/s]
 
 # %%
 SRC = solweig_runner_core.SolweigRunCore(
-    "tests/data/athens/configsolweig.ini",
-    "tests/data/athens/parametersforsolweig.json",
+    "demos/data/athens/configsolweig.ini",
+    "demos/data/athens/parametersforsolweig.json",
 )
 SRC.run()
 """

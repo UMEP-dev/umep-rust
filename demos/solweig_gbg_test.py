@@ -18,8 +18,8 @@ working_path.mkdir(parents=True, exist_ok=True)
 working_path_str = str(working_path)
 
 # input files for computing
-dsm_path = "tests/data/Goteborg_SWEREF99_1200/DSM_KRbig.tif"
-cdsm_path = "tests/data/Goteborg_SWEREF99_1200/CDSM_KRbig.tif"
+dsm_path = "demos/data/Goteborg_SWEREF99_1200/DSM_KRbig.tif"
+cdsm_path = "demos/data/Goteborg_SWEREF99_1200/CDSM_KRbig.tif"
 lc_path = ""
 
 # setup parameters
@@ -46,6 +46,6 @@ svf.generate_svf(
 )
 
 # %%
-sr.solweig_run("tests/data/Goteborg_SWEREF99_1200/configsolweig.ini", feedback=None)
+sr.solweig_run("demos/data/Goteborg_SWEREF99_1200/configsolweig.ini", feedback=None)
 
 # %%
