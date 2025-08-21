@@ -1,6 +1,6 @@
 [project]
 name = "umepr"
-version = "0.0.1b19"
+version = "0.0.1b20"
 description = "rust implementation of urban multi-scale environmental predictor"
 readme = "README.md"
 requires-python = ">=3.9, <3.14"
@@ -35,14 +35,12 @@ classifiers = [
 dependencies = [
     "geopandas>=1.0.1",
     "matplotlib>=3.9.4",
-    "memory-profiler>=0.61.0",
     "momepy>=0.6.0",
     "numpy>=2.0.2",
     "pandas>=2.3.1",
     "pvlib>=0.13.0",
     "pyepw>=0.1",
     "pyproj>=3.6.1",
-    "pythermalcomfort>=3.3.0",
     "pytz>=2025.2",
     "rasterio>=1.4.3",
     "rioxarray>=0.15.0",
@@ -70,6 +68,7 @@ packages = ["umepr"]
 dev-dependencies = [
     "pytest>=7.2.0",
     "pandas-stubs>=1.5.2.221213",
+    "memory-profiler>=0.61.0",
     "jupyterlab>=3.5.2",
     "jupyter>=1.0.0",
     "maturin>=1.8.3",
