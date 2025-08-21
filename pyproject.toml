@@ -1,6 +1,6 @@
 [project]
 name = "umepr"
-version = "0.0.1b20"
+version = "0.0.1b21"
 description = "rust implementation of urban multi-scale environmental predictor"
 readme = "README.md"
 requires-python = ">=3.9, <3.14"
@@ -47,7 +47,7 @@ dependencies = [
     "scipy>=1.13.1",
     "shapely>=2.0.7",
     "tqdm>=4.67.1",
-    "umep>=0.0.1b33",
+    "umep>=0.0.1b34",
     "xarray>=2024.7.0",
 ]
 
