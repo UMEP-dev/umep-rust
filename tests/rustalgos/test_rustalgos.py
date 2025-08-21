@@ -30,11 +30,11 @@ from umepr.solweig_runner_rust import SolweigRunRust
 def test_shadowing():
     # Test shadowingfunction_wallheight_23 vs calculate_shadows_wall_ht_25 for speed and memory
     repeats = 3
-    dsm, vegdsm, vegdsm2, azi, alt, scale, amaxvalue, bush, wall_hts, wall_asp = make_test_arrays(resolution=1)
+    dsm, vegdsm, vegdsm2, azi, alt, scale, amaxvalue, bush, wall_hts, wall_asp = make_test_arrays()
 
     # --- Timing only (no memory profiling) ---
     def run_py():
-        return shadowingfunction_wallheight_23(
+        return shadowingfunction_wallheight_23(  # type: ignore
             dsm,
             vegdsm,
             vegdsm2,
@@ -119,7 +119,7 @@ def test_shadowing():
 def test_svf():
     # Test svfForProcessing153 vs skyview.calculate_svf_153 for speed
     repeats = 1
-    dsm, vegdsm, vegdsm2, azi, alt, scale, amaxvalue, bush, wall_hts, wall_asp = make_test_arrays(resolution=2)
+    dsm, vegdsm, vegdsm2, azi, alt, scale, amaxvalue, bush, wall_hts, wall_asp = make_test_arrays()
 
     # --- Timing only (no memory profiling) ---
     def run_py():
@@ -1031,14 +1031,13 @@ def test_solweig_sub_funcs():
 
 
 def make_test_arrays(
-    resolution,
-    dsm_path="demos/data/athens/DSM_{res}m.tif",
-    veg_dsm_path="demos/data/athens/CDSM_{res}m.tif",
-    wall_hts_path="demos/data/athens/walls_{res}m/wall_hts.tif",
-    wall_aspect_path="demos/data/athens/walls_{res}m/wall_aspects.tif",
+    dsm_path="demos/data/athens/DSM.tif",
+    veg_dsm_path="temp/athens/CDSM.tif",
+    wall_hts_path="temp/athens/walls/wall_hts.tif",
+    wall_aspect_path="temp/athens/walls/wall_aspects.tif",
 ):
-    dsm, dsm_transf, _crs, _nd_val = common.load_raster(dsm_path.format(res=resolution), bbox=None)
-    vegdsm, _transf, _crs, _nd_val = common.load_raster(veg_dsm_path.format(res=resolution), bbox=None)
+    dsm, dsm_transf, _crs, _nd_val = common.load_raster(dsm_path, bbox=None)
+    vegdsm, _transf, _crs, _nd_val = common.load_raster(veg_dsm_path, bbox=None)
     vegdsm2 = np.zeros(dsm.shape, dtype=np.float32)  # Ensure float32
     azi = 45.0
     alt = 30.0
@@ -1047,8 +1046,8 @@ def make_test_arrays(
     amaxvalue = dsm.max() - dsm.min()
     amaxvalue = np.maximum(amaxvalue, vegmax)
     bush = np.zeros(dsm.shape, dtype=np.float32)  # Ensure float32
-    wall_hts, _transf, _crs, _nd_val = common.load_raster(wall_hts_path.format(res=resolution), bbox=None)
-    wall_asp, _transf, _crs, _nd_val = common.load_raster(wall_aspect_path.format(res=resolution), bbox=None)
+    wall_hts, _transf, _crs, _nd_val = common.load_raster(wall_hts_path, bbox=None)
+    wall_asp, _transf, _crs, _nd_val = common.load_raster(wall_aspect_path, bbox=None)
 
     # Convert all loaded arrays to float32
     dsm = dsm.astype(np.float32)
