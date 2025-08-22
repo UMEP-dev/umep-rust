@@ -126,6 +126,8 @@ def svfForProcessing153_rust_shdw(dsm, vegdem, vegdem2, scale, usevegdem):
                     None,
                     None,
                     None,
+                    None,
+                    None,
                 )
                 vegsh = result.veg_sh
                 vbshvegsh = result.veg_blocks_bldg_sh

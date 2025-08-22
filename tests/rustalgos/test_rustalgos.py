@@ -48,7 +48,7 @@ def test_shadowing():
         )
 
     def run_rust():
-        return shadowing.calculate_shadows_wall_ht_25(
+        return shadowing.calculate_shadows_wall_ht_25(  # type: ignore
             azi,
             alt,
             scale,
@@ -59,6 +59,8 @@ def test_shadowing():
             bush,
             wall_hts,
             wall_asp * np.pi / 180.0,
+            None,
+            None,
             None,
             None,
         )
@@ -129,7 +131,7 @@ def test_svf():
         return svfForProcessing153_rust_shdw(dsm, vegdsm, vegdsm2, scale, 1)
 
     def run_rust():
-        return skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, 2, None)
+        return skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, 2, None, None, None)
 
     times_py = timeit.repeat(run_py, number=1, repeat=repeats)
     print_timing_stats("svfForProcessing153 - (shadowingfunction_20)", times_py)
@@ -404,6 +406,8 @@ def test_solweig_sub_funcs():
         SWC.raster_data.bush.astype(np.float32),
         SWC.raster_data.wallheight.astype(np.float32),
         SWC.raster_data.wallaspect.astype(np.float32) * np.pi / 180.0,
+        None,
+        None,
         None,
         None,
     )

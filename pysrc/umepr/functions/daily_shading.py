@@ -8,9 +8,9 @@ from builtins import range
 
 import numpy as np
 from tqdm import tqdm
+from umep import common
 from umep.util.SEBESOLWEIGCommonFiles import sun_position as sp
 
-from umep import common
 from ..rustalgos import shadowing
 
 
@@ -147,6 +147,8 @@ def daily_shading(
                     waspect * np.pi / 180.0 if wallshadow == 1 else np.zeros((dsm_height, dsm_width)),
                     None,
                     None,
+                    None,
+                    None,
                 )
                 sh = result.bldg_sh - (1 - result.veg_sh) * (1 - psi)
                 if onetime == 0:
@@ -169,6 +171,8 @@ def daily_shading(
                     bush,
                     np.zeros((dsm_height, dsm_width)),
                     np.zeros((dsm_height, dsm_width)),
+                    None,
+                    None,
                     None,
                     None,
                 )

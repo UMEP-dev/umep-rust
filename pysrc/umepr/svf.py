@@ -82,6 +82,8 @@ def generate_svf(
                 dsm_scale,
                 use_cdsm,
                 2,
+                None,
+                None,
             )
             q.put(res)
         except Exception as e:

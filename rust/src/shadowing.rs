@@ -55,7 +55,7 @@ pub(crate) fn calculate_shadows_rust(
     azimuth_deg: f32,
     altitude_deg: f32,
     scale: f32,
-    max_height_diff: f32,
+    max_local_dsm_ht: f32,
     dsm_view: ArrayView2<f32>,
     veg_canopy_dsm_view_opt: Option<ArrayView2<f32>>,
     veg_trunk_dsm_view_opt: Option<ArrayView2<f32>>,
@@ -64,6 +64,8 @@ pub(crate) fn calculate_shadows_rust(
     aspect_view_opt: Option<ArrayView2<f32>>,
     walls_scheme_view_opt: Option<ArrayView2<f32>>,
     aspect_scheme_view_opt: Option<ArrayView2<f32>>,
+    min_sun_elev_deg: f32,
+    max_shadow_length: f32,
 ) -> ShadowingResultRust {
     let shape = dsm_view.shape();
     let num_rows = shape[0];
@@ -117,7 +119,29 @@ pub(crate) fn calculate_shadows_rust(
     let mut ds: f32;
     let mut index = 0.0;
 
-    while max_height_diff >= dz && dx.abs() < num_rows as f32 && dy.abs() < num_cols as f32 {
+    // compute raster diagonal (meters) to avoid > dataset
+    let raster_diag_m =
+        ((num_rows as f32 * scale).powi(2) + (num_cols as f32 * scale).powi(2)).sqrt();
+    let max_allowed_m = max_shadow_length.min(raster_diag_m * 0.5);
+
+    // avoid zero/near-zero tan: clamp elevation used for reach computation
+    let effective_elev_deg = altitude_deg.max(min_sun_elev_deg);
+    let effective_elev_rad = effective_elev_deg.to_radians();
+    let reach_m = if effective_elev_rad.tan().abs() > 1e-6 {
+        (max_local_dsm_ht / effective_elev_rad.tan()).min(max_allowed_m)
+    } else {
+        max_allowed_m // fallback
+    };
+
+    let radius_pixels = (reach_m / scale).ceil() as usize;
+    let max_index = radius_pixels as f32; // index uses f32 in your loop
+
+    // then update while condition:
+    while index <= max_index
+        && max_local_dsm_ht >= dz
+        && dx.abs() < num_rows as f32
+        && dy.abs() < num_cols as f32
+    {
         if (PI_OVER_4 <= azimuth_rad && azimuth_rad < THREE_PI_OVER_4)
             || (FIVE_PI_OVER_4 <= azimuth_rad && azimuth_rad < SEVEN_PI_OVER_4)
         {
@@ -468,7 +492,7 @@ fn shade_on_walls(
 /// * `azimuth_deg` - Sun azimuth in degrees (0=N, 90=E, 180=S, 270=W)
 /// * `altitude_deg` - Sun altitude/elevation in degrees (0=horizon, 90=zenith)
 /// * `scale` - Pixel size (meters)
-/// * `max_height_diff` - Maximum height difference in the DSM (optimization hint)
+/// * `max_local_dsm_ht` - Maximum local DSM height (optimization hint)
 /// * `bush` - Optional: Bush/low vegetation layer (binary or height)
 /// * `walls` - Optional wall height layer. If None, wall calculations are skipped.
 /// * `aspect` - Optional wall aspect/orientation layer (radians or degrees). Required if `walls` is provided.
@@ -482,7 +506,7 @@ pub fn calculate_shadows_wall_ht_25(
     azimuth_deg: f32,
     altitude_deg: f32,
     scale: f32,
-    max_height_diff: f32,
+    max_local_dsm_ht: f32,
     dsm: PyReadonlyArray2<f32>,
     veg_canopy_dsm: Option<PyReadonlyArray2<f32>>,
     veg_trunk_dsm: Option<PyReadonlyArray2<f32>>,
@@ -491,6 +515,8 @@ pub fn calculate_shadows_wall_ht_25(
     aspect: Option<PyReadonlyArray2<f32>>,
     walls_scheme: Option<PyReadonlyArray2<f32>>,
     aspect_scheme: Option<PyReadonlyArray2<f32>>,
+    min_sun_elev_deg: Option<f32>,
+    max_shadow_length: Option<f32>,
 ) -> PyResult<PyObject> {
     let dsm_view = dsm.as_array();
     let shape = dsm_view.shape();
@@ -579,7 +605,7 @@ pub fn calculate_shadows_wall_ht_25(
         azimuth_deg,
         altitude_deg,
         scale,
-        max_height_diff,
+        max_local_dsm_ht,
         dsm_view,
         veg_canopy_dsm_view_opt,
         veg_trunk_dsm_view_opt,
@@ -588,6 +614,8 @@ pub fn calculate_shadows_wall_ht_25(
         aspect_view_opt,
         walls_scheme_view_opt,
         aspect_scheme_view_opt,
+        min_sun_elev_deg.unwrap_or(6.0_f32),
+        max_shadow_length.unwrap_or(1000.0_f32),
     );
 
     let py_result = ShadowingResult {

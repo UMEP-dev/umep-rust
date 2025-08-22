@@ -282,7 +282,7 @@ impl PatchContribution {
 }
 
 // --- Helper Functions ---
-fn calculate_max_height_diff(dsm: ArrayView2<f32>, scale: f32) -> f32 {
+fn calculate_max_local_dsm_ht(dsm: ArrayView2<f32>, scale: f32) -> f32 {
     // Sliding-window size in meters (assumption). Use 100m by default.
     const LOCAL_WINDOW_M: f32 = 100.0;
     if !(scale.is_finite()) || scale <= 0.0 {
@@ -374,6 +374,8 @@ fn calculate_svf_inner(
     scale: f32,
     usevegdem: bool,
     patch_option: u8,
+    min_sun_elev_deg: Option<f32>,
+    max_shadow_length: Option<f32>,
     progress_counter: Option<Arc<AtomicUsize>>,
 ) -> PyResult<SvfIntermediate> {
     // Get array views from Python arrays
@@ -385,12 +387,7 @@ fn calculate_svf_inner(
     let num_cols = dsm_f32.ncols();
 
     // Calculate maximum height for shadow calculations (local sliding-window)
-    let max_height_diff = calculate_max_height_diff(dsm_f32, scale);
-    // Log the computed max height difference (useful for debugging/benchmarks)
-    eprintln!(
-        "[umep-rust] calculate_max_height_diff = {:.3}",
-        max_height_diff
-    );
+    let max_local_dsm_ht = calculate_max_local_dsm_ht(dsm_f32, scale);
 
     // Prepare bushes
     let bush_f32 = prepare_bushes(vegdem_f32.view(), vegdem2_f32.view());
@@ -437,7 +434,7 @@ fn calculate_svf_inner(
                 patch.azimuth,
                 patch.altitude,
                 scale,
-                max_height_diff,
+                max_local_dsm_ht,
                 dsm_view,
                 vegdem_view,
                 vegdem2_view,
@@ -446,6 +443,8 @@ fn calculate_svf_inner(
                 None,
                 None,
                 None,
+                min_sun_elev_deg.unwrap_or(6.0_f32),
+                max_shadow_length.unwrap_or(1000.0_f32),
             );
 
             // --- Calculate SVF contribution for this patch ---
@@ -615,6 +614,8 @@ pub fn calculate_svf(
     scale: f32,
     usevegdem: bool,
     patch_option: Option<u8>, // New argument for patch option
+    min_sun_elev_deg: Option<f32>,
+    max_shadow_length: Option<f32>,
     _progress_callback: Option<PyObject>,
 ) -> PyResult<Py<SvfResult>> {
     let patch_option = patch_option.unwrap_or(2);
@@ -625,6 +626,8 @@ pub fn calculate_svf(
         scale,
         usevegdem,
         patch_option,
+        Some(min_sun_elev_deg.unwrap_or(6.0_f32)),
+        Some(max_shadow_length.unwrap_or(1000.0_f32)),
         None,
     )?;
     svf_intermediate_to_py(py, inter)
@@ -658,6 +661,8 @@ impl SkyviewRunner {
         scale: f32,
         usevegdem: bool,
         patch_option: Option<u8>,
+        min_sun_elev_deg: Option<f32>,
+        max_shadow_length: Option<f32>,
     ) -> PyResult<Py<SvfResult>> {
         let patch_option = patch_option.unwrap_or(2);
         // reset progress
@@ -669,6 +674,8 @@ impl SkyviewRunner {
             scale,
             usevegdem,
             patch_option,
+            Some(min_sun_elev_deg.unwrap_or(6.0_f32)),
+            Some(max_shadow_length.unwrap_or(1000.0_f32)),
             Some(self.progress.clone()),
         )?;
         svf_intermediate_to_py(py, inter)
