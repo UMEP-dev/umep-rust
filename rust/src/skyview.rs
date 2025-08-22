@@ -282,88 +282,73 @@ impl PatchContribution {
 }
 
 // --- Helper Functions ---
-fn calculate_max_height_diff(
-    dsm: ArrayView2<f32>,
-    vegdem: ArrayView2<f32>,
-    usevegdem: bool,
-    scale: f32,
-) -> f32 {
+fn calculate_max_height_diff(dsm: ArrayView2<f32>, scale: f32) -> f32 {
     // Sliding-window size in meters (assumption). Use 100m by default.
     const LOCAL_WINDOW_M: f32 = 100.0;
-
     if !(scale.is_finite()) || scale <= 0.0 {
         return 0.0;
     }
-
     // Convert window radius from meters to pixels
     let radius = ((LOCAL_WINDOW_M / scale).ceil() as usize).max(0);
     if radius == 0 {
         return 0.0;
     }
-
     let (num_rows, num_cols) = (dsm.nrows(), dsm.ncols());
-
-    // Build combined array
-    let mut combined = Array2::<f32>::zeros((num_rows, num_cols));
-    if usevegdem {
-        Zip::from(&mut combined)
-            .and(&dsm)
-            .and(&vegdem)
-            .for_each(|c, &d, &v| {
-                *c = if v.is_finite() && d.is_finite() {
-                    d.max(v)
-                } else if d.is_finite() {
-                    d
-                } else if v.is_finite() {
-                    v
-                } else {
-                    0.0
-                };
-            });
-    } else {
-        Zip::from(&mut combined)
-            .and(&dsm)
-            .for_each(|c, &d| *c = if d.is_finite() { d } else { 0.0 });
-    }
-
-    // Parallelize across rows: each row computes its local maxima and returns the row's best local range
-    let largest_local_range = (0..num_rows)
+    // Parallel per-pixel implementation:
+    // - Iterate over the flattened pixel indices in parallel
+    // - Compute local min/max for each pixel's square window and return the range
+    let total_pixels = num_rows.saturating_mul(num_cols);
+    let ranges: Vec<f32> = (0..total_pixels)
         .into_par_iter()
-        .map(|r| {
-            let mut row_best: f32 = 0.0;
-            for c in 0..num_cols {
-                let r0 = if r >= radius { r - radius } else { 0 };
-                let r1 = (r + radius).min(num_rows - 1);
-                let c0 = if c >= radius { c - radius } else { 0 };
-                let c1 = (c + radius).min(num_cols - 1);
+        .map(|idx| {
+            let r = idx / num_cols;
+            let c = idx % num_cols;
 
-                let mut local_min = f32::INFINITY;
-                let mut local_max = f32::NEG_INFINITY;
-                for rr in r0..=r1 {
-                    for cc in c0..=c1 {
-                        let v = combined[[rr, cc]];
-                        if v.is_finite() {
-                            if v < local_min {
-                                local_min = v;
-                            }
-                            if v > local_max {
-                                local_max = v;
-                            }
-                        }
+            let r0 = if r >= radius { r - radius } else { 0 };
+            let r1 = (r + radius).min(num_rows - 1);
+            let c0 = if c >= radius { c - radius } else { 0 };
+            let c1 = (c + radius).min(num_cols - 1);
+
+            let mut local_min = f32::INFINITY;
+            let mut local_max = f32::NEG_INFINITY;
+            for rr in r0..=r1 {
+                for cc in c0..=c1 {
+                    let dv = dsm[[rr, cc]];
+                    let v = if dv.is_finite() { dv } else { 0.0 };
+                    if v < local_min {
+                        local_min = v;
                     }
-                }
-                if local_min.is_finite() && local_max.is_finite() {
-                    let local_range = (local_max - local_min).max(0.0);
-                    if local_range > row_best {
-                        row_best = local_range;
+                    if v > local_max {
+                        local_max = v;
                     }
                 }
             }
-            row_best
+            if local_min.is_finite() && local_max.is_finite() {
+                (local_max - local_min).max(0.0)
+            } else {
+                0.0
+            }
         })
-        .reduce(|| 0.0, |a, b| a.max(b));
+        .collect();
 
-    largest_local_range
+    // Keep only finite values (should already be finite) to be safe
+    let mut finite_ranges: Vec<f32> = ranges.into_iter().filter(|v| v.is_finite()).collect();
+
+    let final_value = if finite_ranges.is_empty() {
+        0.0
+    } else {
+        let idx = (((finite_ranges.len() - 1) as f64) * 0.999).floor() as usize;
+        // Use comparator for f32 partial ordering
+        finite_ranges.select_nth_unstable_by(idx, |a, b| a.partial_cmp(b).unwrap());
+        finite_ranges[idx]
+    };
+
+    eprintln!(
+        "[umep-rust] percentile_of_local_ranges(99.9)={:.3}",
+        final_value
+    );
+
+    final_value
 }
 
 fn prepare_bushes(vegdem: ArrayView2<f32>, vegdem2: ArrayView2<f32>) -> Array2<f32> {
@@ -400,7 +385,7 @@ fn calculate_svf_inner(
     let num_cols = dsm_f32.ncols();
 
     // Calculate maximum height for shadow calculations (local sliding-window)
-    let max_height_diff = calculate_max_height_diff(dsm_f32, vegdem_f32, usevegdem, scale);
+    let max_height_diff = calculate_max_height_diff(dsm_f32, scale);
     // Log the computed max height difference (useful for debugging/benchmarks)
     eprintln!(
         "[umep-rust] calculate_max_height_diff = {:.3}",
