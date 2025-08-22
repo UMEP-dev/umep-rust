@@ -287,13 +287,35 @@ fn calculate_max_height_diff(
     vegdem: ArrayView2<f32>,
     usevegdem: bool,
 ) -> f32 {
-    let dsm_max = dsm.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    // Compute a representative *relative* height so that the maximum ray
+    // distance is based on height above local ground, not absolute elevation.
+    // We take the raster minimum as a baseline and compute (value - min),
+    // then pick the 99th percentile of those differences.
+    let mut vals: Vec<f32> = dsm.iter().cloned().filter(|v| v.is_finite()).collect();
+
     if usevegdem {
-        let vegmax = vegdem.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        dsm_max.max(vegmax)
-    } else {
-        dsm_max
+        vals.extend(vegdem.iter().cloned().filter(|v| v.is_finite()));
     }
+
+    if vals.is_empty() {
+        return 0.0;
+    }
+
+    // Determine the minimum to use as baseline
+    let min_val = vals.iter().cloned().fold(f32::INFINITY, |a, b| a.min(b));
+
+    // Convert to relative heights (non-negative) and sort
+    let mut rel: Vec<f32> = vals.iter().map(|v| (v - min_val).max(0.0)).collect();
+    rel.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    // Pick the 99th percentile index of relative heights
+    let pct: f32 = 0.99;
+    let idx_f = ((rel.len() - 1) as f32) * pct;
+    let mut idx = idx_f.round() as usize;
+    if idx >= rel.len() {
+        idx = rel.len() - 1;
+    }
+    rel[idx]
 }
 
 fn prepare_bushes(vegdem: ArrayView2<f32>, vegdem2: ArrayView2<f32>) -> Array2<f32> {
