@@ -42,6 +42,8 @@ fn register_skyview_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     let submodule = PyModule::new(py_module.py(), "skyview")?;
     submodule.add("__doc__", "Sky View Factor calculation.")?;
     submodule.add_function(wrap_pyfunction!(skyview::calculate_svf, &submodule)?)?;
+    // Expose the SkyviewRunner class so Python can create a runner and poll progress()
+    submodule.add_class::<skyview::SkyviewRunner>()?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }

@@ -4,10 +4,14 @@ SVF wrapper for Python - calls full Rust SVF via skyview rust module.
 
 # %%
 import os
+import threading
+import time
 import zipfile
 from pathlib import Path
+from queue import Queue
 
 import numpy as np
+from tqdm import tqdm
 from umep import common
 
 from .rustalgos import skyview
@@ -63,10 +67,50 @@ def generate_svf(
             cdsm = np.where(cdsm > 0, dsm + cdsm, 0)
             tdsm = np.where(tdsm > 0, dsm + tdsm, 0)
 
+    # Run SVF in background and poll progress via SkyviewRunner.progress()
     # 2 = 153 patches
-    ret = skyview.calculate_svf(
-        dsm.astype(np.float32), cdsm.astype(np.float32), tdsm.astype(np.float32), dsm_scale, use_cdsm, 2
-    )
+    runner = skyview.SkyviewRunner()
+
+    result_queue: Queue = Queue()
+
+    def _runner_thread(q: Queue):
+        try:
+            res = runner.calculate_svf(
+                dsm.astype(np.float32),
+                cdsm.astype(np.float32),
+                tdsm.astype(np.float32),
+                dsm_scale,
+                use_cdsm,
+                2,
+            )
+            q.put(res)
+        except Exception as e:
+            q.put(e)
+
+    thread = threading.Thread(target=_runner_thread, args=(result_queue,))
+    thread.start()
+
+    # show progress bar for 153 patches (patch option 2)
+    total_patches = 153
+    pbar = tqdm(total=total_patches)
+    try:
+        while thread.is_alive():
+            time.sleep(1)
+            try:
+                current = runner.progress()
+                pbar.update(current - pbar.n)
+            except Exception:
+                # ignore transient errors polling progress
+                pass
+        # finish
+        pbar.update(total_patches - pbar.n)
+    finally:
+        pbar.close()
+
+    ret = result_queue.get()
+    thread.join()
+    if isinstance(ret, Exception):
+        raise ret
 
     # Save the rasters using rasterio
     common.save_raster(out_path_str + "/" + "svf.tif", ret.svf, dsm_transf, dsm_crs)

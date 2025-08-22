@@ -3,6 +3,7 @@ use numpy::{IntoPyArray, PyArray2, PyArray3, PyReadonlyArray2};
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use std::f32::consts::PI;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 // Import the correct result struct from shadowing
@@ -115,6 +116,28 @@ pub struct SvfResult {
     pub veg_blocks_bldg_sh_matrix: Py<PyArray3<f32>>,
 }
 
+// Intermediate (pure Rust) SVF result used to avoid holding the GIL during compute
+pub struct SvfIntermediate {
+    pub svf: Array2<f32>,
+    pub svf_n: Array2<f32>,
+    pub svf_e: Array2<f32>,
+    pub svf_s: Array2<f32>,
+    pub svf_w: Array2<f32>,
+    pub svf_veg: Array2<f32>,
+    pub svf_veg_n: Array2<f32>,
+    pub svf_veg_e: Array2<f32>,
+    pub svf_veg_s: Array2<f32>,
+    pub svf_veg_w: Array2<f32>,
+    pub svf_veg_blocks_bldg_sh: Array2<f32>,
+    pub svf_veg_blocks_bldg_sh_n: Array2<f32>,
+    pub svf_veg_blocks_bldg_sh_e: Array2<f32>,
+    pub svf_veg_blocks_bldg_sh_s: Array2<f32>,
+    pub svf_veg_blocks_bldg_sh_w: Array2<f32>,
+    pub bldg_sh_matrix: Array3<f32>,
+    pub veg_sh_matrix: Array3<f32>,
+    pub veg_blocks_bldg_sh_matrix: Array3<f32>,
+}
+
 // Internal structure for accumulating contributions during parallel processing
 #[derive(Clone)]
 struct PatchContribution {
@@ -184,16 +207,15 @@ impl PatchContribution {
         self
     }
 
-    // Finalize the results and convert to Python objects
-    fn finalize(
+    // Finalize the results and convert to an intermediate pure-Rust result
+    fn finalize_intermediate(
         mut self,
-        py: Python,
         usevegdem: bool,
         vegdem2: ArrayView2<f32>,
         bldg_sh_matrix: Array3<f32>,
         veg_sh_matrix: Array3<f32>,
         veg_blocks_bldg_sh_matrix: Array3<f32>,
-    ) -> PyResult<Py<SvfResult>> {
+    ) -> SvfIntermediate {
         // Apply correction factors (matching Python code)
         self.svf_s += LAST_ANNULUS_CORRECTION;
         self.svf_w += LAST_ANNULUS_CORRECTION;
@@ -236,41 +258,26 @@ impl PatchContribution {
             self.svf_veg_blocks_bldg_sh_w.mapv_inplace(|x| x.min(1.0));
         }
 
-        Py::new(
-            py,
-            SvfResult {
-                svf: self.svf.into_pyarray(py).unbind(),
-                svf_north: self.svf_n.into_pyarray(py).unbind(),
-                svf_east: self.svf_e.into_pyarray(py).unbind(),
-                svf_south: self.svf_s.into_pyarray(py).unbind(),
-                svf_west: self.svf_w.into_pyarray(py).unbind(),
-                svf_veg: self.svf_veg.into_pyarray(py).unbind(),
-                svf_veg_north: self.svf_veg_n.into_pyarray(py).unbind(),
-                svf_veg_east: self.svf_veg_e.into_pyarray(py).unbind(),
-                svf_veg_south: self.svf_veg_s.into_pyarray(py).unbind(),
-                svf_veg_west: self.svf_veg_w.into_pyarray(py).unbind(),
-                svf_veg_blocks_bldg_sh: self.svf_veg_blocks_bldg_sh.into_pyarray(py).unbind(),
-                svf_veg_blocks_bldg_sh_north: self
-                    .svf_veg_blocks_bldg_sh_n
-                    .into_pyarray(py)
-                    .unbind(),
-                svf_veg_blocks_bldg_sh_east: self
-                    .svf_veg_blocks_bldg_sh_e
-                    .into_pyarray(py)
-                    .unbind(),
-                svf_veg_blocks_bldg_sh_south: self
-                    .svf_veg_blocks_bldg_sh_s
-                    .into_pyarray(py)
-                    .unbind(),
-                svf_veg_blocks_bldg_sh_west: self
-                    .svf_veg_blocks_bldg_sh_w
-                    .into_pyarray(py)
-                    .unbind(),
-                bldg_sh_matrix: bldg_sh_matrix.into_pyarray(py).unbind(),
-                veg_sh_matrix: veg_sh_matrix.into_pyarray(py).unbind(),
-                veg_blocks_bldg_sh_matrix: veg_blocks_bldg_sh_matrix.into_pyarray(py).unbind(),
-            },
-        )
+        SvfIntermediate {
+            svf: self.svf,
+            svf_n: self.svf_n,
+            svf_e: self.svf_e,
+            svf_s: self.svf_s,
+            svf_w: self.svf_w,
+            svf_veg: self.svf_veg,
+            svf_veg_n: self.svf_veg_n,
+            svf_veg_e: self.svf_veg_e,
+            svf_veg_s: self.svf_veg_s,
+            svf_veg_w: self.svf_veg_w,
+            svf_veg_blocks_bldg_sh: self.svf_veg_blocks_bldg_sh,
+            svf_veg_blocks_bldg_sh_n: self.svf_veg_blocks_bldg_sh_n,
+            svf_veg_blocks_bldg_sh_e: self.svf_veg_blocks_bldg_sh_e,
+            svf_veg_blocks_bldg_sh_s: self.svf_veg_blocks_bldg_sh_s,
+            svf_veg_blocks_bldg_sh_w: self.svf_veg_blocks_bldg_sh_w,
+            bldg_sh_matrix,
+            veg_sh_matrix,
+            veg_blocks_bldg_sh_matrix,
+        }
     }
 }
 
@@ -304,18 +311,16 @@ fn prepare_bushes(vegdem: ArrayView2<f32>, vegdem2: ArrayView2<f32>) -> Array2<f
 
 // --- Main Calculation Function ---
 // Calculate SVF with 153 patches (equivalent to Python's svfForProcessing153)
-#[pyfunction]
-pub fn calculate_svf(
-    py: Python,
+// Internal implementation that supports an optional progress counter
+fn calculate_svf_inner(
     dsm_py: PyReadonlyArray2<f32>,
     vegdem_py: PyReadonlyArray2<f32>,
     vegdem2_py: PyReadonlyArray2<f32>,
     scale: f32,
     usevegdem: bool,
-    patch_option: Option<u8>, // New argument for patch option
-) -> PyResult<Py<SvfResult>> {
-    let patch_option = patch_option.unwrap_or(2); // Default to 2 if not provided
-
+    patch_option: u8,
+    progress_counter: Option<Arc<AtomicUsize>>,
+) -> PyResult<SvfIntermediate> {
     // Get array views from Python arrays
     let dsm_f32 = dsm_py.as_array();
     let vegdem_f32 = vegdem_py.as_array();
@@ -335,7 +340,6 @@ pub fn calculate_svf(
     let total_patches = patches.len(); // Needed for 3D array dimensions
 
     // Initialize 3D arrays to store shadow maps for each patch
-    // wrapped in Arc<Mutex<...>> for thread-safe access
     let bldg_sh_matrix = Arc::new(Mutex::new(Array::zeros((
         num_rows,
         num_cols,
@@ -478,6 +482,11 @@ pub fn calculate_svf(
                     .assign(&shadow_result.veg_blocks_bldg_sh);
             }
 
+            // Update progress counter if provided (cheap atomic op)
+            if let Some(ref counter) = progress_counter {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
+
             contribution
         })
         .reduce(
@@ -499,13 +508,109 @@ pub fn calculate_svf(
         .into_inner()
         .unwrap();
 
-    // Finalize and return results - pass the populated 3D arrays
-    final_contribution.finalize(
-        py,
+    // Finalize and return an intermediate result - pass the populated 3D arrays
+    Ok(final_contribution.finalize_intermediate(
         usevegdem,
         vegdem2_f32,
         bldg_sh_matrix,
         veg_sh_matrix,
         veg_blocks_bldg_sh_matrix,
+    ))
+}
+
+// Convert SvfIntermediate into Python SvfResult under the GIL
+fn svf_intermediate_to_py(py: Python, inter: SvfIntermediate) -> PyResult<Py<SvfResult>> {
+    Py::new(
+        py,
+        SvfResult {
+            svf: inter.svf.into_pyarray(py).unbind(),
+            svf_north: inter.svf_n.into_pyarray(py).unbind(),
+            svf_east: inter.svf_e.into_pyarray(py).unbind(),
+            svf_south: inter.svf_s.into_pyarray(py).unbind(),
+            svf_west: inter.svf_w.into_pyarray(py).unbind(),
+            svf_veg: inter.svf_veg.into_pyarray(py).unbind(),
+            svf_veg_north: inter.svf_veg_n.into_pyarray(py).unbind(),
+            svf_veg_east: inter.svf_veg_e.into_pyarray(py).unbind(),
+            svf_veg_south: inter.svf_veg_s.into_pyarray(py).unbind(),
+            svf_veg_west: inter.svf_veg_w.into_pyarray(py).unbind(),
+            svf_veg_blocks_bldg_sh: inter.svf_veg_blocks_bldg_sh.into_pyarray(py).unbind(),
+            svf_veg_blocks_bldg_sh_north: inter.svf_veg_blocks_bldg_sh_n.into_pyarray(py).unbind(),
+            svf_veg_blocks_bldg_sh_east: inter.svf_veg_blocks_bldg_sh_e.into_pyarray(py).unbind(),
+            svf_veg_blocks_bldg_sh_south: inter.svf_veg_blocks_bldg_sh_s.into_pyarray(py).unbind(),
+            svf_veg_blocks_bldg_sh_west: inter.svf_veg_blocks_bldg_sh_w.into_pyarray(py).unbind(),
+            bldg_sh_matrix: inter.bldg_sh_matrix.into_pyarray(py).unbind(),
+            veg_sh_matrix: inter.veg_sh_matrix.into_pyarray(py).unbind(),
+            veg_blocks_bldg_sh_matrix: inter.veg_blocks_bldg_sh_matrix.into_pyarray(py).unbind(),
+        },
     )
+}
+
+// Keep existing pyfunction wrapper for backward compatibility (ignores progress)
+#[pyfunction]
+pub fn calculate_svf(
+    py: Python,
+    dsm_py: PyReadonlyArray2<f32>,
+    vegdem_py: PyReadonlyArray2<f32>,
+    vegdem2_py: PyReadonlyArray2<f32>,
+    scale: f32,
+    usevegdem: bool,
+    patch_option: Option<u8>, // New argument for patch option
+    _progress_callback: Option<PyObject>,
+) -> PyResult<Py<SvfResult>> {
+    let patch_option = patch_option.unwrap_or(2);
+    let inter = calculate_svf_inner(
+        dsm_py,
+        vegdem_py,
+        vegdem2_py,
+        scale,
+        usevegdem,
+        patch_option,
+        None,
+    )?;
+    svf_intermediate_to_py(py, inter)
+}
+
+// New pyclass runner that exposes a progress() method and a calculate_svf that updates an internal counter
+#[pyclass]
+pub struct SkyviewRunner {
+    progress: Arc<AtomicUsize>,
+}
+
+#[pymethods]
+impl SkyviewRunner {
+    #[new]
+    pub fn new() -> Self {
+        Self {
+            progress: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    pub fn progress(&self) -> usize {
+        self.progress.load(Ordering::SeqCst)
+    }
+
+    pub fn calculate_svf(
+        &self,
+        py: Python,
+        dsm_py: PyReadonlyArray2<f32>,
+        vegdem_py: PyReadonlyArray2<f32>,
+        vegdem2_py: PyReadonlyArray2<f32>,
+        scale: f32,
+        usevegdem: bool,
+        patch_option: Option<u8>,
+    ) -> PyResult<Py<SvfResult>> {
+        let patch_option = patch_option.unwrap_or(2);
+        // reset progress
+        self.progress.store(0, Ordering::SeqCst);
+        let inter = calculate_svf_inner(
+            dsm_py,
+            vegdem_py,
+            vegdem2_py,
+            scale,
+            usevegdem,
+            patch_option,
+            Some(self.progress.clone()),
+        )?;
+        svf_intermediate_to_py(py, inter)
+    }
 }
