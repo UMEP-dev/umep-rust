@@ -25,6 +25,8 @@ def generate_svf(
     cdsm_path: str | None = None,
     trans_veg_perc: float = 3,
     trunk_ratio_perc: float = 25,
+    min_sun_elev_deg: float | None = None,
+    max_shadow_length: float | None = None,
 ):
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -82,8 +84,8 @@ def generate_svf(
                 dsm_scale,
                 use_cdsm,
                 2,
-                None,
-                None,
+                min_sun_elev_deg,
+                max_shadow_length,
             )
             q.put(res)
         except Exception as e:
