@@ -129,7 +129,7 @@ def test_svf():
         return svfForProcessing153_rust_shdw(dsm, vegdsm, vegdsm2, scale, 1)
 
     def run_rust():
-        return skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, 2)
+        return skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, 2, None)
 
     times_py = timeit.repeat(run_py, number=1, repeat=repeats)
     print_timing_stats("svfForProcessing153 - (shadowingfunction_20)", times_py)
