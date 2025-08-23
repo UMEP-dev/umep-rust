@@ -1,11 +1,10 @@
 use core::f32;
-use ndarray::{Array, Array2, Array3, ArrayView2, Zip};
+use ndarray::{Array2, Array3, ArrayView2, Zip};
 use numpy::{IntoPyArray, PyArray2, PyArray3, PyReadonlyArray2};
 use pyo3::prelude::*;
-use rayon::prelude::*;
 use std::f32::consts::PI;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // Import the correct result struct from shadowing
 use crate::shadowing::{calculate_shadows_rust, ShadowingResultRust};
@@ -139,145 +138,31 @@ pub struct SvfIntermediate {
     pub veg_blocks_bldg_sh_matrix: Array3<f32>,
 }
 
-// Internal structure for accumulating contributions during parallel processing
-#[derive(Clone)]
-struct PatchContribution {
-    num_rows: usize,
-    num_cols: usize,
-    svf: Array2<f32>,
-    svf_n: Array2<f32>,
-    svf_e: Array2<f32>,
-    svf_s: Array2<f32>,
-    svf_w: Array2<f32>,
-    svf_veg: Array2<f32>,
-    svf_veg_n: Array2<f32>,
-    svf_veg_e: Array2<f32>,
-    svf_veg_s: Array2<f32>,
-    svf_veg_w: Array2<f32>,
-    svf_veg_blocks_bldg_sh: Array2<f32>,
-    svf_veg_blocks_bldg_sh_n: Array2<f32>,
-    svf_veg_blocks_bldg_sh_e: Array2<f32>,
-    svf_veg_blocks_bldg_sh_s: Array2<f32>,
-    svf_veg_blocks_bldg_sh_w: Array2<f32>,
-}
-
-impl PatchContribution {
-    // Create a new contribution object initialized with zeros
-    // Always initialize all arrays, regardless of usevegdem
-    fn zeros(num_rows: usize, num_cols: usize) -> Self {
-        let zero_array = || Array2::zeros((num_rows, num_cols));
-        Self {
-            num_rows,
-            num_cols,
-            svf: zero_array(),
-            svf_n: zero_array(),
-            svf_e: zero_array(),
-            svf_s: zero_array(),
-            svf_w: zero_array(),
-            svf_veg: zero_array(),
-            svf_veg_n: zero_array(),
-            svf_veg_e: zero_array(),
-            svf_veg_s: zero_array(),
-            svf_veg_w: zero_array(),
-            svf_veg_blocks_bldg_sh: zero_array(),
-            svf_veg_blocks_bldg_sh_n: zero_array(),
-            svf_veg_blocks_bldg_sh_e: zero_array(),
-            svf_veg_blocks_bldg_sh_s: zero_array(),
-            svf_veg_blocks_bldg_sh_w: zero_array(),
-        }
-    }
-
-    // Combine two contributions (used in reduce step)
-    fn combine(mut self, other: Self) -> Self {
-        self.svf += &other.svf;
-        self.svf_n += &other.svf_n;
-        self.svf_e += &other.svf_e;
-        self.svf_s += &other.svf_s;
-        self.svf_w += &other.svf_w;
-        // Always combine veg arrays as they are always initialized
-        self.svf_veg += &other.svf_veg;
-        self.svf_veg_n += &other.svf_veg_n;
-        self.svf_veg_e += &other.svf_veg_e;
-        self.svf_veg_s += &other.svf_veg_s;
-        self.svf_veg_w += &other.svf_veg_w;
-        self.svf_veg_blocks_bldg_sh += &other.svf_veg_blocks_bldg_sh;
-        self.svf_veg_blocks_bldg_sh_n += &other.svf_veg_blocks_bldg_sh_n;
-        self.svf_veg_blocks_bldg_sh_e += &other.svf_veg_blocks_bldg_sh_e;
-        self.svf_veg_blocks_bldg_sh_s += &other.svf_veg_blocks_bldg_sh_s;
-        self.svf_veg_blocks_bldg_sh_w += &other.svf_veg_blocks_bldg_sh_w;
-        self
-    }
-
-    // Finalize the results and convert to an intermediate pure-Rust result
-    fn finalize_intermediate(
-        mut self,
-        usevegdem: bool,
-        vegdem2: ArrayView2<f32>,
-        bldg_sh_matrix: Array3<f32>,
-        veg_sh_matrix: Array3<f32>,
-        veg_blocks_bldg_sh_matrix: Array3<f32>,
-    ) -> SvfIntermediate {
-        // Apply correction factors (matching Python code)
-        self.svf_s += LAST_ANNULUS_CORRECTION;
-        self.svf_w += LAST_ANNULUS_CORRECTION;
-
-        // Ensure no values exceed 1.0
-        self.svf.mapv_inplace(|x| x.min(1.0));
-        self.svf_n.mapv_inplace(|x| x.min(1.0));
-        self.svf_e.mapv_inplace(|x| x.min(1.0));
-        self.svf_s.mapv_inplace(|x| x.min(1.0));
-        self.svf_w.mapv_inplace(|x| x.min(1.0));
-
-        // Process veg arrays if needed
-        if usevegdem {
-            // Create correction array for veg components
-            let last_veg =
-                Array::from_shape_fn((self.num_rows, self.num_cols), |(row_idx, col_idx)| {
-                    if vegdem2[[row_idx, col_idx]] == 0.0 {
-                        LAST_ANNULUS_CORRECTION
-                    } else {
-                        0.0
-                    }
-                });
-
-            // Apply corrections
-            self.svf_veg_s += &last_veg;
-            self.svf_veg_w += &last_veg;
-            self.svf_veg_blocks_bldg_sh_s += &last_veg;
-            self.svf_veg_blocks_bldg_sh_w += &last_veg;
-
-            // Ensure no values exceed 1.0
-            self.svf_veg.mapv_inplace(|x| x.min(1.0));
-            self.svf_veg_n.mapv_inplace(|x| x.min(1.0));
-            self.svf_veg_e.mapv_inplace(|x| x.min(1.0));
-            self.svf_veg_s.mapv_inplace(|x| x.min(1.0));
-            self.svf_veg_w.mapv_inplace(|x| x.min(1.0));
-            self.svf_veg_blocks_bldg_sh.mapv_inplace(|x| x.min(1.0));
-            self.svf_veg_blocks_bldg_sh_n.mapv_inplace(|x| x.min(1.0));
-            self.svf_veg_blocks_bldg_sh_e.mapv_inplace(|x| x.min(1.0));
-            self.svf_veg_blocks_bldg_sh_s.mapv_inplace(|x| x.min(1.0));
-            self.svf_veg_blocks_bldg_sh_w.mapv_inplace(|x| x.min(1.0));
-        }
+impl SvfIntermediate {
+    /// Create a zero-initialized SvfIntermediate with the given dimensions.
+    pub fn zeros(num_rows: usize, num_cols: usize, total_patches: usize) -> Self {
+        let shape2 = (num_rows, num_cols);
+        let shape3 = (num_rows, num_cols, total_patches);
 
         SvfIntermediate {
-            svf: self.svf,
-            svf_n: self.svf_n,
-            svf_e: self.svf_e,
-            svf_s: self.svf_s,
-            svf_w: self.svf_w,
-            svf_veg: self.svf_veg,
-            svf_veg_n: self.svf_veg_n,
-            svf_veg_e: self.svf_veg_e,
-            svf_veg_s: self.svf_veg_s,
-            svf_veg_w: self.svf_veg_w,
-            svf_veg_blocks_bldg_sh: self.svf_veg_blocks_bldg_sh,
-            svf_veg_blocks_bldg_sh_n: self.svf_veg_blocks_bldg_sh_n,
-            svf_veg_blocks_bldg_sh_e: self.svf_veg_blocks_bldg_sh_e,
-            svf_veg_blocks_bldg_sh_s: self.svf_veg_blocks_bldg_sh_s,
-            svf_veg_blocks_bldg_sh_w: self.svf_veg_blocks_bldg_sh_w,
-            bldg_sh_matrix,
-            veg_sh_matrix,
-            veg_blocks_bldg_sh_matrix,
+            svf: Array2::<f32>::zeros(shape2),
+            svf_n: Array2::<f32>::zeros(shape2),
+            svf_e: Array2::<f32>::zeros(shape2),
+            svf_s: Array2::<f32>::zeros(shape2),
+            svf_w: Array2::<f32>::zeros(shape2),
+            svf_veg: Array2::<f32>::zeros(shape2),
+            svf_veg_n: Array2::<f32>::zeros(shape2),
+            svf_veg_e: Array2::<f32>::zeros(shape2),
+            svf_veg_s: Array2::<f32>::zeros(shape2),
+            svf_veg_w: Array2::<f32>::zeros(shape2),
+            svf_veg_blocks_bldg_sh: Array2::<f32>::zeros(shape2),
+            svf_veg_blocks_bldg_sh_n: Array2::<f32>::zeros(shape2),
+            svf_veg_blocks_bldg_sh_e: Array2::<f32>::zeros(shape2),
+            svf_veg_blocks_bldg_sh_s: Array2::<f32>::zeros(shape2),
+            svf_veg_blocks_bldg_sh_w: Array2::<f32>::zeros(shape2),
+            bldg_sh_matrix: Array3::<f32>::zeros(shape3),
+            veg_sh_matrix: Array3::<f32>::zeros(shape3),
+            veg_blocks_bldg_sh_matrix: Array3::<f32>::zeros(shape3),
         }
     }
 }
@@ -324,183 +209,187 @@ fn calculate_svf_inner(
     let patches = create_patches(patch_option);
     let total_patches = patches.len(); // Needed for 3D array dimensions
 
-    // Initialize 3D arrays to store shadow maps for each patch
-    let bldg_sh_matrix = Arc::new(Mutex::new(Array::zeros((
-        num_rows,
-        num_cols,
-        total_patches,
-    ))));
-    let veg_sh_matrix = Arc::new(Mutex::new(Array::zeros((
-        num_rows,
-        num_cols,
-        total_patches,
-    ))));
-    let veg_blocks_bldg_sh_matrix = Arc::new(Mutex::new(Array::zeros((
-        num_rows,
-        num_cols,
-        total_patches,
-    ))));
+    // Create a single intermediate result and allocate all arrays there
+    let mut inter = SvfIntermediate::zeros(num_rows, num_cols, total_patches);
 
-    // Use parallel iterator with reduce to avoid collecting all results in memory
-    let final_contribution = patches
-        .par_iter()
-        .enumerate()
-        .map(|(patch_idx, patch)| {
-            let dsm_view = dsm_f32.view();
-            // Only pass vegetation views if usevegdem is true, otherwise pass None
-            let (vegdem_view, vegdem2_view, bush_view) = if usevegdem {
-                (
-                    Some(vegdem_f32.view()),
-                    Some(vegdem2_f32.view()),
-                    Some(bush_f32.view()),
-                )
-            } else {
-                (None, None, None)
-            };
-            // Calculate shadows for this patch
-            let shadow_result: ShadowingResultRust = calculate_shadows_rust(
-                patch.azimuth,
-                patch.altitude,
-                scale,
-                max_local_dsm_ht,
-                dsm_view,
-                vegdem_view,
-                vegdem2_view,
-                bush_view,
-                None,
-                None,
-                None,
-                None,
-                min_sun_elev_deg.unwrap_or(5.0_f32),
-            );
-            // --- Calculate SVF contribution for this patch ---
-            let mut contribution = PatchContribution::zeros(num_rows, num_cols);
-            let bldg_sh_view = shadow_result.bldg_sh.view();
-
-            let n = 90.0;
-            let common_w_factor = (1.0 / (2.0 * PI)) * (PI / (2.0 * n)).sin();
-            let steprad_iso = (360.0 / patch.azimuth_patches) * (PI / 180.0);
-            let steprad_aniso = (360.0 / patch.azimuth_patches_aniso) * (PI / 180.0);
-
-            for annulus_idx in patch.annulino_start..=patch.annulino_end {
-                let annulus = 91.0 - annulus_idx as f32;
-                let sin_term = ((PI * (2.0 * annulus - 1.0)) / (2.0 * n)).sin();
-                let common_w_part = common_w_factor * sin_term;
-
-                let weight_iso = steprad_iso * common_w_part;
-                let weight_aniso = steprad_aniso * common_w_part;
-
-                contribution.svf.scaled_add(weight_iso, &bldg_sh_view);
-
-                if patch.azimuth >= 0.0 && patch.azimuth < 180.0 {
-                    contribution.svf_e.scaled_add(weight_aniso, &bldg_sh_view);
-                }
-                if patch.azimuth >= 90.0 && patch.azimuth < 270.0 {
-                    contribution.svf_s.scaled_add(weight_aniso, &bldg_sh_view);
-                }
-                if patch.azimuth >= 180.0 && patch.azimuth < 360.0 {
-                    contribution.svf_w.scaled_add(weight_aniso, &bldg_sh_view);
-                }
-                if patch.azimuth >= 270.0 || patch.azimuth < 90.0 {
-                    contribution.svf_n.scaled_add(weight_aniso, &bldg_sh_view);
-                }
-
-                if usevegdem {
-                    let veg_sh_view = shadow_result.veg_sh.view();
-                    let veg_blocks_bldg_sh_view = shadow_result.veg_blocks_bldg_sh.view();
-
-                    contribution.svf_veg.scaled_add(weight_iso, &veg_sh_view);
-                    contribution
-                        .svf_veg_blocks_bldg_sh
-                        .scaled_add(weight_iso, &veg_blocks_bldg_sh_view);
-
-                    if patch.azimuth >= 0.0 && patch.azimuth < 180.0 {
-                        contribution
-                            .svf_veg_e
-                            .scaled_add(weight_aniso, &veg_sh_view);
-                        contribution
-                            .svf_veg_blocks_bldg_sh_e
-                            .scaled_add(weight_aniso, &veg_blocks_bldg_sh_view);
-                    }
-                    if patch.azimuth >= 90.0 && patch.azimuth < 270.0 {
-                        contribution
-                            .svf_veg_s
-                            .scaled_add(weight_aniso, &veg_sh_view);
-                        contribution
-                            .svf_veg_blocks_bldg_sh_s
-                            .scaled_add(weight_aniso, &veg_blocks_bldg_sh_view);
-                    }
-                    if patch.azimuth >= 180.0 && patch.azimuth < 360.0 {
-                        contribution
-                            .svf_veg_w
-                            .scaled_add(weight_aniso, &veg_sh_view);
-                        contribution
-                            .svf_veg_blocks_bldg_sh_w
-                            .scaled_add(weight_aniso, &veg_blocks_bldg_sh_view);
-                    }
-                    if patch.azimuth >= 270.0 || patch.azimuth < 90.0 {
-                        contribution
-                            .svf_veg_n
-                            .scaled_add(weight_aniso, &veg_sh_view);
-                        contribution
-                            .svf_veg_blocks_bldg_sh_n
-                            .scaled_add(weight_aniso, &veg_blocks_bldg_sh_view);
-                    }
-                }
-            }
-
-            // Assign the shadow maps to the correct slice in the 3D arrays using Mutex for thread safety
-            {
-                let mut bldg_lock = bldg_sh_matrix.lock().unwrap();
-                bldg_lock
-                    .slice_mut(ndarray::s![.., .., patch_idx])
-                    .assign(&shadow_result.bldg_sh);
-            }
-            if usevegdem {
-                let mut veg_lock = veg_sh_matrix.lock().unwrap();
-                veg_lock
-                    .slice_mut(ndarray::s![.., .., patch_idx])
-                    .assign(&shadow_result.veg_sh);
-                let mut veg_blocks_lock = veg_blocks_bldg_sh_matrix.lock().unwrap();
-                veg_blocks_lock
-                    .slice_mut(ndarray::s![.., .., patch_idx])
-                    .assign(&shadow_result.veg_blocks_bldg_sh);
-            }
-
-            // Update progress counter if provided (cheap atomic op)
-            if let Some(ref counter) = progress_counter {
-                counter.fetch_add(1, Ordering::SeqCst);
-            }
-
-            contribution
-        })
-        .reduce(
-            || PatchContribution::zeros(num_rows, num_cols),
-            |a, b| a.combine(b),
+    // Process patches sequentially: compute shadows (may be parallel internally),
+    // immediately write shadow slices, then compute the per-patch contribution
+    // using local parallelism (row-chunked) and merge into accumulator.
+    for (patch_idx, patch) in patches.iter().enumerate() {
+        let dsm_view = dsm_f32.view();
+        // Only pass vegetation views if usevegdem is true, otherwise pass None
+        let (vegdem_view, vegdem2_view, bush_view) = if usevegdem {
+            (
+                Some(vegdem_f32.view()),
+                Some(vegdem2_f32.view()),
+                Some(bush_f32.view()),
+            )
+        } else {
+            (None, None, None)
+        };
+        // Calculate shadows for this patch
+        let shadow_result: ShadowingResultRust = calculate_shadows_rust(
+            patch.azimuth,
+            patch.altitude,
+            scale,
+            max_local_dsm_ht,
+            dsm_view,
+            vegdem_view,
+            vegdem2_view,
+            bush_view,
+            None,
+            None,
+            None,
+            None,
+            min_sun_elev_deg.unwrap_or(5.0_f32),
         );
+        // --- Assign the shadow slices into the 3D matrices ---
+        inter
+            .bldg_sh_matrix
+            .slice_mut(ndarray::s![.., .., patch_idx])
+            .assign(&shadow_result.bldg_sh);
+        if usevegdem {
+            inter
+                .veg_sh_matrix
+                .slice_mut(ndarray::s![.., .., patch_idx])
+                .assign(&shadow_result.veg_sh);
+            inter
+                .veg_blocks_bldg_sh_matrix
+                .slice_mut(ndarray::s![.., .., patch_idx])
+                .assign(&shadow_result.veg_blocks_bldg_sh);
+        }
 
-    // Unwrap the matrices from Arc<Mutex<...>>
-    let bldg_sh_matrix = Arc::try_unwrap(bldg_sh_matrix)
-        .unwrap()
-        .into_inner()
-        .unwrap();
-    let veg_sh_matrix = Arc::try_unwrap(veg_sh_matrix)
-        .unwrap()
-        .into_inner()
-        .unwrap();
-    let veg_blocks_bldg_sh_matrix = Arc::try_unwrap(veg_blocks_bldg_sh_matrix)
-        .unwrap()
-        .into_inner()
-        .unwrap();
-    eprint!("E");
-    // Finalize and return an intermediate result - pass the populated 3D arrays
-    Ok(final_contribution.finalize_intermediate(
-        usevegdem,
-        vegdem2_f32,
-        bldg_sh_matrix,
-        veg_sh_matrix,
-        veg_blocks_bldg_sh_matrix,
-    ))
+        // --- Per-patch vectorized accumulation (per-pixel) ---
+        // --- Algorithmic block: Patch/annulus loop, weights, and accumulation ---
+        let n = 90.0;
+        let common_w_factor = (1.0 / (2.0 * PI)) * (PI / (2.0 * n)).sin();
+        let steprad_iso = (360.0 / patch.azimuth_patches) * (PI / 180.0);
+        let steprad_aniso = (360.0 / patch.azimuth_patches_aniso) * (PI / 180.0);
+
+        for annulus_idx in patch.annulino_start..=patch.annulino_end {
+            let annulus = 91.0 - annulus_idx as f32;
+            let sin_term = ((PI * (2.0 * annulus - 1.0)) / (2.0 * n)).sin();
+            let common_w_part = common_w_factor * sin_term;
+
+            let weight_iso = steprad_iso * common_w_part;
+            let weight_aniso = steprad_aniso * common_w_part;
+
+            // Precompute directional anisotropic weights for this patch
+            let weight_e = if patch.azimuth >= 0.0 && patch.azimuth < 180.0 {
+                weight_aniso
+            } else {
+                0.0
+            };
+            let weight_s = if patch.azimuth >= 90.0 && patch.azimuth < 270.0 {
+                weight_aniso
+            } else {
+                0.0
+            };
+            let weight_w = if patch.azimuth >= 180.0 && patch.azimuth < 360.0 {
+                weight_aniso
+            } else {
+                0.0
+            };
+            let weight_n = if patch.azimuth >= 270.0 || patch.azimuth < 90.0 {
+                weight_aniso
+            } else {
+                0.0
+            };
+
+            // Accumulate building shadows (parallel, SIMD-friendly)
+            Zip::from(&shadow_result.bldg_sh)
+                .and(&mut inter.svf)
+                .and(&mut inter.svf_e)
+                .and(&mut inter.svf_s)
+                .and(&mut inter.svf_w)
+                .and(&mut inter.svf_n)
+                .par_for_each(|&b, svf, svf_e, svf_s, svf_w, svf_n| {
+                    *svf += weight_iso * b;
+                    *svf_e += weight_e * b;
+                    *svf_s += weight_s * b;
+                    *svf_w += weight_w * b;
+                    *svf_n += weight_n * b;
+                });
+
+            if usevegdem {
+                // Accumulate vegetation shadows
+                Zip::from(&shadow_result.veg_sh)
+                    .and(&mut inter.svf_veg)
+                    .and(&mut inter.svf_veg_e)
+                    .and(&mut inter.svf_veg_s)
+                    .and(&mut inter.svf_veg_w)
+                    .and(&mut inter.svf_veg_n)
+                    .par_for_each(|&veg, svf_v, svf_v_e, svf_v_s, svf_v_w, svf_v_n| {
+                        *svf_v += weight_iso * veg;
+                        *svf_v_e += weight_e * veg;
+                        *svf_v_s += weight_s * veg;
+                        *svf_v_w += weight_w * veg;
+                        *svf_v_n += weight_n * veg;
+                    });
+
+                // Accumulate veg-blocks-building shadows
+                Zip::from(&shadow_result.veg_blocks_bldg_sh)
+                    .and(&mut inter.svf_veg_blocks_bldg_sh)
+                    .and(&mut inter.svf_veg_blocks_bldg_sh_e)
+                    .and(&mut inter.svf_veg_blocks_bldg_sh_s)
+                    .and(&mut inter.svf_veg_blocks_bldg_sh_w)
+                    .and(&mut inter.svf_veg_blocks_bldg_sh_n)
+                    .par_for_each(
+                        |&veg_bldg, svf_v_b, svf_v_be, svf_v_bs, svf_v_bw, svf_v_bn| {
+                            *svf_v_b += weight_iso * veg_bldg;
+                            *svf_v_be += weight_e * veg_bldg;
+                            *svf_v_bs += weight_s * veg_bldg;
+                            *svf_v_bw += weight_w * veg_bldg;
+                            *svf_v_bn += weight_n * veg_bldg;
+                        },
+                    );
+            } // end if usevegdem
+        } // end annulus loop
+
+        // Update progress counter after this patch is fully processed
+        if let Some(ref counter) = progress_counter {
+            counter.fetch_add(1, Ordering::SeqCst);
+        }
+    } // end patch loop
+
+    // Finalize: apply last-annulus correction and clamp values, same semantics as the previous finalize
+    inter.svf_s += LAST_ANNULUS_CORRECTION;
+    inter.svf_w += LAST_ANNULUS_CORRECTION;
+
+    inter.svf.mapv_inplace(|x| x.min(1.0));
+    inter.svf_n.mapv_inplace(|x| x.min(1.0));
+    inter.svf_e.mapv_inplace(|x| x.min(1.0));
+    inter.svf_s.mapv_inplace(|x| x.min(1.0));
+    inter.svf_w.mapv_inplace(|x| x.min(1.0));
+
+    if usevegdem {
+        // Create correction array for veg components
+        let last_veg = Array2::from_shape_fn((num_rows, num_cols), |(row_idx, col_idx)| {
+            if vegdem2_f32[[row_idx, col_idx]] == 0.0 {
+                LAST_ANNULUS_CORRECTION
+            } else {
+                0.0
+            }
+        });
+
+        inter.svf_veg_s += &last_veg;
+        inter.svf_veg_w += &last_veg;
+        inter.svf_veg_blocks_bldg_sh_s += &last_veg;
+        inter.svf_veg_blocks_bldg_sh_w += &last_veg;
+
+        inter.svf_veg.mapv_inplace(|x| x.min(1.0));
+        inter.svf_veg_n.mapv_inplace(|x| x.min(1.0));
+        inter.svf_veg_e.mapv_inplace(|x| x.min(1.0));
+        inter.svf_veg_s.mapv_inplace(|x| x.min(1.0));
+        inter.svf_veg_w.mapv_inplace(|x| x.min(1.0));
+        inter.svf_veg_blocks_bldg_sh.mapv_inplace(|x| x.min(1.0));
+        inter.svf_veg_blocks_bldg_sh_n.mapv_inplace(|x| x.min(1.0));
+        inter.svf_veg_blocks_bldg_sh_e.mapv_inplace(|x| x.min(1.0));
+        inter.svf_veg_blocks_bldg_sh_s.mapv_inplace(|x| x.min(1.0));
+        inter.svf_veg_blocks_bldg_sh_w.mapv_inplace(|x| x.min(1.0));
+    }
+
+    Ok(inter)
 }
 
 // Convert SvfIntermediate into Python SvfResult under the GIL
@@ -558,7 +447,7 @@ pub fn calculate_svf(
             usevegdem,
             max_local_dsm_ht,
             patch_option,
-            Some(min_sun_elev_deg.unwrap_or(5.0_f32)),
+            min_sun_elev_deg,
             None,
         )
     })?;
@@ -612,7 +501,7 @@ impl SkyviewRunner {
                 usevegdem,
                 max_local_dsm_ht,
                 patch_option,
-                Some(min_sun_elev_deg.unwrap_or(5.0_f32)),
+                min_sun_elev_deg,
                 Some(self.progress.clone()),
             )
         })?;

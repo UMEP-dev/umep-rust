@@ -108,13 +108,13 @@ def generate_svf(
         while thread.is_alive():
             time.sleep(1)
             try:
-                current = runner.progress()
-                pbar.update(current - pbar.n)
+                pbar.n = runner.progress()
+                pbar.refresh()
             except Exception:
-                # ignore transient errors polling progress
                 pass
         # finish
-        pbar.update(total_patches - pbar.n)
+        pbar.n = total_patches
+        pbar.refresh()
     finally:
         pbar.close()
 
