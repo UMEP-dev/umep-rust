@@ -257,7 +257,6 @@ def Solweig_2025a_calc(
                 walls_scheme.astype(np.float32),
                 (dirwalls_scheme * np.pi / 180.0).astype(np.float32),
                 None,
-                None,
             )
             vegsh = result.veg_sh
             sh = result.bldg_sh
@@ -278,7 +277,6 @@ def Solweig_2025a_calc(
                 None,
                 walls.astype(np.float32),
                 (dirwalls * np.pi / 180.0).astype(np.float32),
-                None,
                 None,
                 None,
                 None,

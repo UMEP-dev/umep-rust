@@ -23,11 +23,7 @@ def annulus_weight(altitude, aziinterval):
     return weight
 
 
-def svfForProcessing153_rust_shdw(dsm, vegdem, vegdem2, scale, usevegdem):
-    # memory
-    dsm = dsm.astype(np.float32)
-    vegdem = vegdem.astype(np.float32)
-    vegdem2 = vegdem2.astype(np.float32)
+def svfForProcessing153_rust_shdw(dsm, vegdem, vegdem2, scale, usevegdem, amax):
     # setup
     rows = dsm.shape[0]
     cols = dsm.shape[1]
@@ -46,11 +42,6 @@ def svfForProcessing153_rust_shdw(dsm, vegdem, vegdem2, scale, usevegdem):
     svfSaveg = np.zeros((rows, cols), dtype=np.float32)
     svfWaveg = np.zeros((rows, cols), dtype=np.float32)
     svfNaveg = np.zeros((rows, cols), dtype=np.float32)
-
-    # % amaxvalue
-    vegmax = vegdem.max()
-    amaxvalue = dsm.max()  # cap outliers?
-    amaxvalue = np.maximum(amaxvalue, vegmax)
 
     # % Elevation vegdems if buildingDSM inclused ground heights
     # vegdem = vegdem + dsm
@@ -117,12 +108,11 @@ def svfForProcessing153_rust_shdw(dsm, vegdem, vegdem2, scale, usevegdem):
                     azimuth,
                     altitude,
                     scale,
-                    amaxvalue,
+                    amax,
                     dsm,
                     vegdem,
                     vegdem2,
                     bush,
-                    None,
                     None,
                     None,
                     None,

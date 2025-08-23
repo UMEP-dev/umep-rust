@@ -148,7 +148,6 @@ def daily_shading(
                     None,
                     None,
                     None,
-                    None,
                 )
                 sh = result.bldg_sh - (1 - result.veg_sh) * (1 - psi)
                 if onetime == 0:
@@ -171,7 +170,6 @@ def daily_shading(
                     bush,
                     np.zeros((dsm_height, dsm_width)),
                     np.zeros((dsm_height, dsm_width)),
-                    None,
                     None,
                     None,
                     None,

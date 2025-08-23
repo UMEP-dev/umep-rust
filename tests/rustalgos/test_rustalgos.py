@@ -62,7 +62,6 @@ def test_shadowing():
             None,
             None,
             None,
-            None,
         )
 
     py_timings = timeit.repeat(run_py, number=1, repeat=repeats)
@@ -122,16 +121,17 @@ def test_svf():
     # Test svfForProcessing153 vs skyview.calculate_svf_153 for speed
     repeats = 1
     dsm, vegdsm, vegdsm2, azi, alt, scale, amaxvalue, bush, wall_hts, wall_asp = make_test_arrays()
+    amax = np.max(dsm) - np.min(dsm)
 
     # --- Timing only (no memory profiling) ---
     def run_py():
-        return svfForProcessing153(dsm, vegdsm, vegdsm2, scale, 1)
+        return svfForProcessing153(dsm, vegdsm, vegdsm2, scale, 1, amax)
 
     def run_hybrid():
-        return svfForProcessing153_rust_shdw(dsm, vegdsm, vegdsm2, scale, 1)
+        return svfForProcessing153_rust_shdw(dsm, vegdsm, vegdsm2, scale, 1, amax)
 
     def run_rust():
-        return skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, 2, None, None, None)
+        return skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, amax, 2, None, None)
 
     times_py = timeit.repeat(run_py, number=1, repeat=repeats)
     print_timing_stats("svfForProcessing153 - (shadowingfunction_20)", times_py)
@@ -406,7 +406,6 @@ def test_solweig_sub_funcs():
         SWC.raster_data.bush.astype(np.float32),
         SWC.raster_data.wallheight.astype(np.float32),
         SWC.raster_data.wallaspect.astype(np.float32) * np.pi / 180.0,
-        None,
         None,
         None,
         None,
