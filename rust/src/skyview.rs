@@ -299,9 +299,9 @@ fn prepare_bushes(vegdem: ArrayView2<f32>, vegdem2: ArrayView2<f32>) -> Array2<f
 // Calculate SVF with 153 patches (equivalent to Python's svfForProcessing153)
 // Internal implementation that supports an optional progress counter
 fn calculate_svf_inner(
-    dsm_py: PyReadonlyArray2<f32>,
-    vegdem_py: PyReadonlyArray2<f32>,
-    vegdem2_py: PyReadonlyArray2<f32>,
+    dsm_owned: Array2<f32>,
+    vegdem_owned: Array2<f32>,
+    vegdem2_owned: Array2<f32>,
     scale: f32,
     usevegdem: bool,
     max_local_dsm_ht: f32,
@@ -309,10 +309,10 @@ fn calculate_svf_inner(
     min_sun_elev_deg: Option<f32>,
     progress_counter: Option<Arc<AtomicUsize>>,
 ) -> PyResult<SvfIntermediate> {
-    // Get array views from Python arrays
-    let dsm_f32 = dsm_py.as_array();
-    let vegdem_f32 = vegdem_py.as_array();
-    let vegdem2_f32 = vegdem2_py.as_array(); // Keep f32 version for finalize step
+    // Convert owned arrays to views for internal processing
+    let dsm_f32 = dsm_owned.view();
+    let vegdem_f32 = vegdem_owned.view();
+    let vegdem2_f32 = vegdem2_owned.view(); // Keep f32 version for finalize step
 
     let num_rows = dsm_f32.nrows();
     let num_cols = dsm_f32.ncols();
@@ -545,17 +545,23 @@ pub fn calculate_svf(
     _progress_callback: Option<PyObject>,
 ) -> PyResult<Py<SvfResult>> {
     let patch_option = patch_option.unwrap_or(2);
-    let inter = calculate_svf_inner(
-        dsm_py,
-        vegdem_py,
-        vegdem2_py,
-        scale,
-        usevegdem,
-        max_local_dsm_ht,
-        patch_option,
-        Some(min_sun_elev_deg.unwrap_or(5.0_f32)),
-        None,
-    )?;
+    // Copy Python arrays into owned Rust arrays so computation can run without the GIL
+    let dsm_owned = dsm_py.as_array().to_owned();
+    let vegdem_owned = vegdem_py.as_array().to_owned();
+    let vegdem2_owned = vegdem2_py.as_array().to_owned();
+    let inter = py.allow_threads(|| {
+        calculate_svf_inner(
+            dsm_owned,
+            vegdem_owned,
+            vegdem2_owned,
+            scale,
+            usevegdem,
+            max_local_dsm_ht,
+            patch_option,
+            Some(min_sun_elev_deg.unwrap_or(5.0_f32)),
+            None,
+        )
+    })?;
     svf_intermediate_to_py(py, inter)
 }
 
@@ -593,17 +599,23 @@ impl SkyviewRunner {
         let patch_option = patch_option.unwrap_or(2);
         // reset progress
         self.progress.store(0, Ordering::SeqCst);
-        let inter = calculate_svf_inner(
-            dsm_py,
-            vegdem_py,
-            vegdem2_py,
-            scale,
-            usevegdem,
-            max_local_dsm_ht,
-            patch_option,
-            Some(min_sun_elev_deg.unwrap_or(5.0_f32)),
-            Some(self.progress.clone()),
-        )?;
+        // Copy arrays to owned buffers and run without the GIL so progress can be polled
+        let dsm_owned = dsm_py.as_array().to_owned();
+        let vegdem_owned = vegdem_py.as_array().to_owned();
+        let vegdem2_owned = vegdem2_py.as_array().to_owned();
+        let inter = py.allow_threads(|| {
+            calculate_svf_inner(
+                dsm_owned,
+                vegdem_owned,
+                vegdem2_owned,
+                scale,
+                usevegdem,
+                max_local_dsm_ht,
+                patch_option,
+                Some(min_sun_elev_deg.unwrap_or(5.0_f32)),
+                Some(self.progress.clone()),
+            )
+        })?;
         svf_intermediate_to_py(py, inter)
     }
 }
