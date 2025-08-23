@@ -282,73 +282,6 @@ impl PatchContribution {
     }
 }
 
-// --- Helper Functions ---
-fn calculate_max_local_dsm_ht(dsm: ArrayView2<f32>, scale: f32) -> f32 {
-    // Sliding-window size in meters (assumption). Use 100m by default.
-    const LOCAL_WINDOW_M: f32 = 100.0;
-    if !(scale.is_finite()) || scale <= 0.0 {
-        return 0.0;
-    }
-    // Convert window radius from meters to pixels
-    let radius = ((LOCAL_WINDOW_M / scale).ceil() as usize).max(0);
-    if radius == 0 {
-        return 0.0;
-    }
-    let (num_rows, num_cols) = (dsm.nrows(), dsm.ncols());
-    // Parallel per-pixel implementation:
-    // - Iterate over the flattened pixel indices in parallel
-    // - Compute local min/max for each pixel's square window and return the range
-    let total_pixels = num_rows.saturating_mul(num_cols);
-    let ranges: Vec<f32> = (0..total_pixels)
-        .into_par_iter()
-        .map(|idx| {
-            let r = idx / num_cols;
-            let c = idx % num_cols;
-
-            let r0 = if r >= radius { r - radius } else { 0 };
-            let r1 = (r + radius).min(num_rows - 1);
-            let c0 = if c >= radius { c - radius } else { 0 };
-            let c1 = (c + radius).min(num_cols - 1);
-
-            let mut local_range = f32::NEG_INFINITY;
-            let val: f32 = dsm[[r, c]];
-            for rr in r0..=r1 {
-                for cc in c0..=c1 {
-                    let dv = dsm[[rr, cc]];
-                    let nv = if dv.is_finite() { dv } else { 0.0 };
-                    if val - nv > local_range {
-                        local_range = val - nv;
-                    }
-                }
-            }
-            if local_range.is_finite() {
-                (local_range).max(0.0)
-            } else {
-                0.0
-            }
-        })
-        .collect();
-
-    // Keep only finite values (should already be finite) to be safe
-    let mut finite_ranges: Vec<f32> = ranges.into_iter().filter(|v| v.is_finite()).collect();
-
-    let final_value = if finite_ranges.is_empty() {
-        0.0
-    } else {
-        let idx = (((finite_ranges.len() - 1) as f64) * 0.99).floor() as usize;
-        // Use comparator for f32 partial ordering
-        finite_ranges.select_nth_unstable_by(idx, |a, b| a.partial_cmp(b).unwrap());
-        finite_ranges[idx]
-    };
-
-    eprintln!(
-        "[umep-rust] percentile_of_local_ranges(99)={:.3}",
-        final_value
-    );
-
-    final_value
-}
-
 fn prepare_bushes(vegdem: ArrayView2<f32>, vegdem2: ArrayView2<f32>) -> Array2<f32> {
     // Allocate output array with same shape as input
     let mut bush_areas = Array2::<f32>::zeros(vegdem.raw_dim());
@@ -371,9 +304,9 @@ fn calculate_svf_inner(
     vegdem2_py: PyReadonlyArray2<f32>,
     scale: f32,
     usevegdem: bool,
+    max_local_dsm_ht: f32,
     patch_option: u8,
     min_sun_elev_deg: Option<f32>,
-    max_shadow_length: Option<f32>,
     progress_counter: Option<Arc<AtomicUsize>>,
 ) -> PyResult<SvfIntermediate> {
     // Get array views from Python arrays
@@ -383,9 +316,6 @@ fn calculate_svf_inner(
 
     let num_rows = dsm_f32.nrows();
     let num_cols = dsm_f32.ncols();
-
-    // Calculate maximum height for shadow calculations (local sliding-window)
-    let max_local_dsm_ht = calculate_max_local_dsm_ht(dsm_f32, scale);
 
     // Prepare bushes
     let bush_f32 = prepare_bushes(vegdem_f32.view(), vegdem2_f32.view());
@@ -427,7 +357,7 @@ fn calculate_svf_inner(
             } else {
                 (None, None, None)
             };
-
+            // Calculate shadows for this patch
             let shadow_result: ShadowingResultRust = calculate_shadows_rust(
                 patch.azimuth,
                 patch.altitude,
@@ -441,10 +371,8 @@ fn calculate_svf_inner(
                 None,
                 None,
                 None,
-                min_sun_elev_deg.unwrap_or(6.0_f32),
-                max_shadow_length.unwrap_or(1000.0_f32),
+                min_sun_elev_deg.unwrap_or(5.0_f32),
             );
-
             // --- Calculate SVF contribution for this patch ---
             let mut contribution = PatchContribution::zeros(num_rows, num_cols);
             let bldg_sh_view = shadow_result.bldg_sh.view();
@@ -564,7 +492,7 @@ fn calculate_svf_inner(
         .unwrap()
         .into_inner()
         .unwrap();
-
+    eprint!("E");
     // Finalize and return an intermediate result - pass the populated 3D arrays
     Ok(final_contribution.finalize_intermediate(
         usevegdem,
@@ -611,9 +539,9 @@ pub fn calculate_svf(
     vegdem2_py: PyReadonlyArray2<f32>,
     scale: f32,
     usevegdem: bool,
+    max_local_dsm_ht: f32,
     patch_option: Option<u8>, // New argument for patch option
     min_sun_elev_deg: Option<f32>,
-    max_shadow_length: Option<f32>,
     _progress_callback: Option<PyObject>,
 ) -> PyResult<Py<SvfResult>> {
     let patch_option = patch_option.unwrap_or(2);
@@ -623,9 +551,9 @@ pub fn calculate_svf(
         vegdem2_py,
         scale,
         usevegdem,
+        max_local_dsm_ht,
         patch_option,
-        Some(min_sun_elev_deg.unwrap_or(6.0_f32)),
-        Some(max_shadow_length.unwrap_or(1000.0_f32)),
+        Some(min_sun_elev_deg.unwrap_or(5.0_f32)),
         None,
     )?;
     svf_intermediate_to_py(py, inter)
@@ -658,9 +586,9 @@ impl SkyviewRunner {
         vegdem2_py: PyReadonlyArray2<f32>,
         scale: f32,
         usevegdem: bool,
+        max_local_dsm_ht: f32,
         patch_option: Option<u8>,
         min_sun_elev_deg: Option<f32>,
-        max_shadow_length: Option<f32>,
     ) -> PyResult<Py<SvfResult>> {
         let patch_option = patch_option.unwrap_or(2);
         // reset progress
@@ -671,9 +599,9 @@ impl SkyviewRunner {
             vegdem2_py,
             scale,
             usevegdem,
+            max_local_dsm_ht,
             patch_option,
-            Some(min_sun_elev_deg.unwrap_or(6.0_f32)),
-            Some(max_shadow_length.unwrap_or(1000.0_f32)),
+            Some(min_sun_elev_deg.unwrap_or(5.0_f32)),
             Some(self.progress.clone()),
         )?;
         svf_intermediate_to_py(py, inter)

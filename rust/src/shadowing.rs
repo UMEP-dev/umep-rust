@@ -65,7 +65,6 @@ pub(crate) fn calculate_shadows_rust(
     walls_scheme_view_opt: Option<ArrayView2<f32>>,
     aspect_scheme_view_opt: Option<ArrayView2<f32>>,
     min_sun_elev_deg: f32,
-    max_shadow_length: f32,
 ) -> ShadowingResultRust {
     let shape = dsm_view.shape();
     let num_rows = shape[0];
@@ -119,24 +118,13 @@ pub(crate) fn calculate_shadows_rust(
     let mut ds: f32;
     let mut index = 0.0;
 
-    // compute raster diagonal (meters) to avoid > dataset
-    let raster_diag_m =
-        ((num_rows as f32 * scale).powi(2) + (num_cols as f32 * scale).powi(2)).sqrt();
-    let max_allowed_m = max_shadow_length.min(raster_diag_m * 0.5);
+    // clamp elevation used for reach computation
+    let min_sun_elev_rad = min_sun_elev_deg.to_radians();
+    let max_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+    let max_radius_pixels = (max_reach_m / scale).ceil() as usize;
+    let max_index = max_radius_pixels as f32; // index uses f32
 
-    // avoid zero/near-zero tan: clamp elevation used for reach computation
-    let effective_elev_deg = altitude_deg.max(min_sun_elev_deg);
-    let effective_elev_rad = effective_elev_deg.to_radians();
-    let reach_m = if effective_elev_rad.tan().abs() > 1e-6 {
-        (max_local_dsm_ht / effective_elev_rad.tan()).min(max_allowed_m)
-    } else {
-        max_allowed_m // fallback
-    };
-
-    let radius_pixels = (reach_m / scale).ceil() as usize;
-    let max_index = radius_pixels as f32; // index uses f32 in your loop
-
-    // then update while condition:
+    // while condition:
     while index <= max_index
         && max_local_dsm_ht >= dz
         && dx.abs() < num_rows as f32
@@ -516,7 +504,6 @@ pub fn calculate_shadows_wall_ht_25(
     walls_scheme: Option<PyReadonlyArray2<f32>>,
     aspect_scheme: Option<PyReadonlyArray2<f32>>,
     min_sun_elev_deg: Option<f32>,
-    max_shadow_length: Option<f32>,
 ) -> PyResult<PyObject> {
     let dsm_view = dsm.as_array();
     let shape = dsm_view.shape();
@@ -614,8 +601,7 @@ pub fn calculate_shadows_wall_ht_25(
         aspect_view_opt,
         walls_scheme_view_opt,
         aspect_scheme_view_opt,
-        min_sun_elev_deg.unwrap_or(6.0_f32),
-        max_shadow_length.unwrap_or(1000.0_f32),
+        min_sun_elev_deg.unwrap_or(5.0_f32),
     );
 
     let py_result = ShadowingResult {

@@ -3,6 +3,7 @@ SVF wrapper for Python - calls full Rust SVF via skyview rust module.
 """
 
 # %%
+import logging
 import os
 import threading
 import time
@@ -12,9 +13,12 @@ from queue import Queue
 
 import numpy as np
 from tqdm import tqdm
-from umep import common
+from umep import class_configs, common
 
 from .rustalgos import skyview
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 # %%
@@ -22,57 +26,60 @@ def generate_svf(
     dsm_path: str,
     bbox: list[int, int, int, int],
     out_dir: str,
+    dem_path: str | None = None,
     cdsm_path: str | None = None,
     trans_veg_perc: float = 3,
     trunk_ratio_perc: float = 25,
+    amax_local_window_m: int = 100,
+    amax_local_perc: float = 99.9,
     min_sun_elev_deg: float | None = None,
-    max_shadow_length: float | None = None,
 ):
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     out_path_str = str(out_path)
 
     # Open the DSM file
-    dsm, dsm_transf, dsm_crs, _dsm_nd = common.load_raster(dsm_path, bbox)
-    dsm_scale = 1 / dsm_transf[1]
+    dsm, dsm_trf, dsm_crs, _dsm_nd = common.load_raster(dsm_path, bbox)
+    dsm_pix_size = dsm_trf[1]
+    dsm_scale = 1 / dsm_pix_size
+
+    dem = None
+    if dem_path is not None:
+        dem, dem_trf, dem_crs, _dem_nd = common.load_raster(dem_path, bbox)
+        assert dem.shape == dsm.shape, "Mismatching raster shapes for DSM and DEM."
+        assert np.allclose(dsm_trf, dem_trf), "Mismatching spatial transform for DSM and DEM."
+        assert dem_crs == dsm_crs, "Mismatching CRS for DSM and DEM."
+
+    use_cdsm = False
+    cdsm = None
+    if cdsm_path is not None:
+        use_cdsm = True
+        cdsm, cdsm_trf, cdsm_crs, _cdsm_nd = common.load_raster(cdsm_path, bbox)
+        assert cdsm.shape == dsm.shape, "Mismatching raster shapes for DSM and CDSM."
+        assert np.allclose(dsm_trf, cdsm_trf), "Mismatching spatial transform for DSM and CDSM."
+        assert cdsm_crs == dsm_crs, "Mismatching CRS for DSM and CDSM."
 
     # veg transmissivity as percentage
     if not (0 <= trans_veg_perc <= 100):
         raise ValueError("Vegetation transmissivity should be a number between 0 and 100")
-    trans_veg = trans_veg_perc / 100.0
 
-    # CDSM
-    rows, cols = dsm.shape
-    if cdsm_path is None:
-        use_cdsm = False
-        cdsm = np.zeros([rows, cols])
-        tdsm = np.zeros([rows, cols])
-    else:
-        use_cdsm = True
-        cdsm, cdsm_transf, cdsm_crs, _cdsm_nd = common.load_raster(cdsm_path, bbox)
-        if not cdsm.shape == dsm.shape:
-            raise ValueError("Mismatching raster shapes for DSM and CDSM.")
-        if cdsm_crs is not None and cdsm_crs != dsm_crs:
-            raise ValueError("Mismatching CRS for DSM and CDSM.")
-        if not np.allclose(dsm_transf, cdsm_transf):
-            raise ValueError("Mismatching spatial transform for DSM and CDSM.")
-        # TDSM
-        if not (0 <= trunk_ratio_perc <= 100):
-            raise ValueError("Vegetation trunk ratio should be a number between 0 and 100")
-        trunk_ratio = trunk_ratio_perc / 100.0
-        tdsm = cdsm * trunk_ratio
-        # Check if CDSM has DEM info
-        cdsm_zero_ratio = np.sum(cdsm <= 0) / (rows * cols)
-        if cdsm_zero_ratio > 0.05:
-            print("CDSM appears to have no DEM information: boosting CDSM to DSM heights.")
-            # Set vegetated pixels to DSM + CDSM otherwise zero
-            cdsm = np.where(cdsm > 0, dsm + cdsm, 0)
-            tdsm = np.where(tdsm > 0, dsm + tdsm, 0)
+    trans_veg = trans_veg_perc / 100.0
+    trunk_ratio = trunk_ratio_perc / 100.0
+
+    dsm, dem, cdsm, tdsm, amax = class_configs.raster_preprocessing(
+        dsm,
+        dem,
+        cdsm,
+        None,
+        trunk_ratio,
+        dsm_pix_size,
+        amax_local_window_m=amax_local_window_m,
+        amax_local_perc=amax_local_perc,
+    )
 
     # Run SVF in background and poll progress via SkyviewRunner.progress()
     # 2 = 153 patches
     runner = skyview.SkyviewRunner()
-
     result_queue: Queue = Queue()
 
     def _runner_thread(q: Queue):
@@ -83,9 +90,9 @@ def generate_svf(
                 tdsm.astype(np.float32),
                 dsm_scale,
                 use_cdsm,
+                amax,
                 2,
                 min_sun_elev_deg,
-                max_shadow_length,
             )
             q.put(res)
         except Exception as e:
