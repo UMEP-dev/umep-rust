@@ -1,3 +1,4 @@
+use core::f32;
 use ndarray::{Array, Array2, Array3, ArrayView2, Zip};
 use numpy::{IntoPyArray, PyArray2, PyArray3, PyReadonlyArray2};
 use pyo3::prelude::*;
@@ -309,22 +310,19 @@ fn calculate_max_local_dsm_ht(dsm: ArrayView2<f32>, scale: f32) -> f32 {
             let c0 = if c >= radius { c - radius } else { 0 };
             let c1 = (c + radius).min(num_cols - 1);
 
-            let mut local_min = f32::INFINITY;
-            let mut local_max = f32::NEG_INFINITY;
+            let mut local_range = f32::NEG_INFINITY;
+            let val: f32 = dsm[[r, c]];
             for rr in r0..=r1 {
                 for cc in c0..=c1 {
                     let dv = dsm[[rr, cc]];
-                    let v = if dv.is_finite() { dv } else { 0.0 };
-                    if v < local_min {
-                        local_min = v;
-                    }
-                    if v > local_max {
-                        local_max = v;
+                    let nv = if dv.is_finite() { dv } else { 0.0 };
+                    if val - nv > local_range {
+                        local_range = val - nv;
                     }
                 }
             }
-            if local_min.is_finite() && local_max.is_finite() {
-                (local_max - local_min).max(0.0)
+            if local_range.is_finite() {
+                (local_range).max(0.0)
             } else {
                 0.0
             }
@@ -337,14 +335,14 @@ fn calculate_max_local_dsm_ht(dsm: ArrayView2<f32>, scale: f32) -> f32 {
     let final_value = if finite_ranges.is_empty() {
         0.0
     } else {
-        let idx = (((finite_ranges.len() - 1) as f64) * 0.999).floor() as usize;
+        let idx = (((finite_ranges.len() - 1) as f64) * 0.99).floor() as usize;
         // Use comparator for f32 partial ordering
         finite_ranges.select_nth_unstable_by(idx, |a, b| a.partial_cmp(b).unwrap());
         finite_ranges[idx]
     };
 
     eprintln!(
-        "[umep-rust] percentile_of_local_ranges(99.9)={:.3}",
+        "[umep-rust] percentile_of_local_ranges(99)={:.3}",
         final_value
     );
 
