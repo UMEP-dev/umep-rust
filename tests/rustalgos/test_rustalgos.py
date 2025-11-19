@@ -134,9 +134,11 @@ def test_shadowing():
         if with_gpu:
             print("\n--- Running Rust shadowing with GPU enabled for output comparison ---")
             result_rust = run_rust_gpu()
+            append = " (GPU)"
         else:
             print("\n--- Running Rust shadowing with GPU disabled for output comparison ---")
             result_rust = run_rust_cpu()
+            append = " (CPU)"
         key_map = {
             "veg_sh": "veg_sh",
             "bldg_sh": "bldg_sh",
@@ -150,16 +152,16 @@ def test_shadowing():
         # Compare results
         compare_results(result_py, result_rust, key_map)
         # Plot visual residuals
-        plot_visual_residuals(bldg_sh, result_rust.bldg_sh, title_prefix="Building Shadows")
-        plot_visual_residuals(veg_sh, result_rust.veg_sh, title_prefix="Vegetation Shadows")
+        plot_visual_residuals(bldg_sh, result_rust.bldg_sh, title_prefix="Building Shadows " + append)
+        plot_visual_residuals(veg_sh, result_rust.veg_sh, title_prefix="Vegetation Shadows" + append)
         plot_visual_residuals(
-            veg_blocks_bldg_sh, result_rust.veg_blocks_bldg_sh, title_prefix="Veg Blocks Bldg Shadows"
+            veg_blocks_bldg_sh, result_rust.veg_blocks_bldg_sh, title_prefix="Veg Blocks Bldg Shadows" + append
         )
-        plot_visual_residuals(wall_sh, result_rust.wall_sh, title_prefix="Wall Shadows")
-        plot_visual_residuals(wall_sun, result_rust.wall_sun, title_prefix="Wall Sun")
-        plot_visual_residuals(wall_sh_veg, result_rust.wall_sh_veg, title_prefix="Wall Sh Veg")
-        plot_visual_residuals(face_sh, result_rust.face_sh, title_prefix="Face Sh")
-        plot_visual_residuals(face_sun, result_rust.face_sun, title_prefix="Face Sun")
+        plot_visual_residuals(wall_sh, result_rust.wall_sh, title_prefix="Wall Shadows" + append)
+        plot_visual_residuals(wall_sun, result_rust.wall_sun, title_prefix="Wall Sun" + append)
+        plot_visual_residuals(wall_sh_veg, result_rust.wall_sh_veg, title_prefix="Wall Sh Veg" + append)
+        plot_visual_residuals(face_sh, result_rust.face_sh, title_prefix="Face Sh" + append)
+        plot_visual_residuals(face_sun, result_rust.face_sun, title_prefix="Face Sun" + append)
 
 
 def test_svf():
@@ -169,10 +171,13 @@ def test_svf():
     amax = np.max(dsm) - np.min(dsm)
 
     # --- Timing only (no memory profiling) ---
-    def run_py():
+    def run_old_py():
+        # uses older shadowingfunction_20
         return svfForProcessing153(dsm, vegdsm, vegdsm2, scale, 1, amax)
 
     def run_hybrid():
+        # uses rust shadowing based on shadowingfunction_wallheight_23
+        shadowing.disable_gpu()
         return svfForProcessing153_rust_shdw(dsm, vegdsm, vegdsm2, scale, 1, amax)
 
     def run_rust_cpu():
@@ -183,15 +188,15 @@ def test_svf():
         shadowing.enable_gpu()
         return skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, amax, 2, None, None)
 
-    times_py = timeit.repeat(run_py, number=1, repeat=repeats)
-    print_timing_stats("svfForProcessing153 - (shadowingfunction_20)", times_py)
+    times_old_py = timeit.repeat(run_old_py, number=1, repeat=repeats)
+    print_timing_stats("svfForProcessing153 - (shadowingfunction_20)", times_old_py)
 
     times_hybrid = timeit.repeat(run_hybrid, number=1, repeat=repeats)
     print_timing_stats("svfForProcessing153 - hybrid w. rust shadows", times_hybrid)
 
     # Print relative speed as percentage
     print("\n--- Relative Speed shadowingfunction_20 - hybrid w. rust shadows vs. Python ---")
-    relative_speed(times_py, times_hybrid)
+    relative_speed(times_old_py, times_hybrid)
 
     print("\n--- SVF with GPU disabled (CPU only) ---")
     times_rust_cpu = timeit.repeat(run_rust_cpu, number=1, repeat=repeats)
@@ -199,7 +204,7 @@ def test_svf():
 
     # Print relative speed as percentage
     print("\n--- Relative Speed shadowingfunction_20 - rust CPU SVF vs. Python ---")
-    relative_speed(times_py, times_rust_cpu)
+    relative_speed(times_old_py, times_rust_cpu)
 
     print("\n--- SVF with GPU enabled ---")
     times_rust_gpu = timeit.repeat(run_rust_gpu, number=1, repeat=repeats)
@@ -207,11 +212,11 @@ def test_svf():
 
     # Print relative speed as percentage
     print("\n--- Relative Speed shadowingfunction_20 - rust GPU SVF vs. Python ---")
-    relative_speed(times_py, times_rust_gpu)
+    relative_speed(times_old_py, times_rust_gpu)
 
     # --- Memory profiling only (no timing) ---
-    py_memory = memory_usage(run_py, max_usage=True)
-    print(f"svfForProcessing153: max memory usage: {py_memory:.2f} MiB")
+    old_py_memory = memory_usage(run_old_py, max_usage=True)
+    print(f"svfForProcessing153: old py max memory usage: {old_py_memory:.2f} MiB")
 
     hybrid_memory = memory_usage(run_hybrid, max_usage=True)
     print(f"svfForProcessing153 - hybrid w. rust shadows: max memory usage: {hybrid_memory:.2f} MiB")
@@ -222,17 +227,78 @@ def test_svf():
     rust_memory = memory_usage(run_rust_gpu, max_usage=True)
     print(f"skyview.calculate_svf: max memory usage (GPU): {rust_memory:.2f} MiB")
 
+    # Errors
+    result_old_py = run_old_py()
+    result_hybrid = run_hybrid()
+
+    # Compare results
+    key_map = {
+        "svf": "svf",
+        "svfE": "svfE",
+        "svfS": "svfS",
+        "svfW": "svfW",
+        "svfN": "svfN",
+        "svfveg": "svfveg",
+        "svfEveg": "svfEveg",
+        "svfSveg": "svfSveg",
+        "svfWveg": "svfWveg",
+        "svfNveg": "svfNveg",
+        "svfaveg": "svfaveg",
+        "svfEaveg": "svfEaveg",
+        "svfSaveg": "svfSaveg",
+        "svfWaveg": "svfWaveg",
+        "svfNaveg": "svfNaveg",
+    }
+    compare_results(result_old_py, result_hybrid, key_map)
+
+    print("\nGenerating residual plots...")
+    plot_visual_residuals(result_old_py["svf"], result_hybrid["svf"], title_prefix="Svf old py vs hybrid")
+    plot_visual_residuals(result_old_py["svfE"], result_hybrid["svfE"], title_prefix="Svf East old py vs hybrid")
+    plot_visual_residuals(result_old_py["svfS"], result_hybrid["svfS"], title_prefix="Svf South old py vs hybrid")
+    plot_visual_residuals(result_old_py["svfW"], result_hybrid["svfW"], title_prefix="Svf West old py vs hybrid")
+    plot_visual_residuals(result_old_py["svfN"], result_hybrid["svfN"], title_prefix="Svf North old py vs hybrid")
+    plot_visual_residuals(result_old_py["svfveg"], result_hybrid["svfveg"], title_prefix="Svf Veg old py vs hybrid")
+    plot_visual_residuals(
+        result_old_py["svfEveg"], result_hybrid["svfEveg"], title_prefix="Svf East Veg old py vs hybrid"
+    )
+    plot_visual_residuals(
+        result_old_py["svfSveg"], result_hybrid["svfSveg"], title_prefix="Svf South Veg old py vs hybrid"
+    )
+    plot_visual_residuals(
+        result_old_py["svfWveg"], result_hybrid["svfWveg"], title_prefix="Svf West Veg old py vs hybrid"
+    )
+    plot_visual_residuals(
+        result_old_py["svfNveg"], result_hybrid["svfNveg"], title_prefix="Svf North Veg old py vs hybrid"
+    )
+    plot_visual_residuals(
+        result_old_py["svfaveg"], result_hybrid["svfaveg"], title_prefix="Svf vbssh Veg old py vs hybrid"
+    )
+    plot_visual_residuals(
+        result_old_py["svfEaveg"], result_hybrid["svfEaveg"], title_prefix="Svf East vbssh Veg old py vs hybrid"
+    )
+    plot_visual_residuals(
+        result_old_py["svfSaveg"], result_hybrid["svfSaveg"], title_prefix="Svf South vbssh Veg old py vs hybrid"
+    )
+    plot_visual_residuals(
+        result_old_py["svfWaveg"], result_hybrid["svfWaveg"], title_prefix="Svf West vbssh Veg old py vs hybrid"
+    )
+    plot_visual_residuals(
+        result_old_py["svfNaveg"], result_hybrid["svfNaveg"], title_prefix="Svf North vbssh Veg old py vs hybrid"
+    )
+
     # For testing outputs use hybrid version - shadowing is tested separately in above test
     # (otherwise testing against outputs from underlying shadowingfunction_20 gives different results)
     # Run Python version
-    result_py = run_hybrid()
     for with_gpu in [True, False]:
         if with_gpu:
             print("\n--- Running Rust SVF with GPU enabled for output comparison ---")
             result_rust = run_rust_gpu()
+            append = " (GPU)"
         else:
             print("\n--- Running Rust SVF with GPU disabled for output comparison ---")
             result_rust = run_rust_cpu()
+            append = " (CPU)"
+
         # Compare results
         key_map = {
             "svf": "svf",
@@ -251,32 +317,46 @@ def test_svf():
             "svfWaveg": "svf_veg_blocks_bldg_sh_west",
             "svfNaveg": "svf_veg_blocks_bldg_sh_north",
         }
-        compare_results(result_py, result_rust, key_map)
+        compare_results(result_hybrid, result_rust, key_map)
 
         # Plot visual residuals for all comparable SVF components explicitly
         print("\nGenerating residual plots...")
-        plot_visual_residuals(result_py["svf"], result_rust.svf, title_prefix="Svf")
-        plot_visual_residuals(result_py["svfE"], result_rust.svf_east, title_prefix="Svf East")
-        plot_visual_residuals(result_py["svfS"], result_rust.svf_south, title_prefix="Svf South")
-        plot_visual_residuals(result_py["svfW"], result_rust.svf_west, title_prefix="Svf West")
-        plot_visual_residuals(result_py["svfN"], result_rust.svf_north, title_prefix="Svf North")
-        plot_visual_residuals(result_py["svfveg"], result_rust.svf_veg, title_prefix="Svf Veg")
-        plot_visual_residuals(result_py["svfEveg"], result_rust.svf_veg_east, title_prefix="Svf East Veg")
-        plot_visual_residuals(result_py["svfSveg"], result_rust.svf_veg_south, title_prefix="Svf South Veg")
-        plot_visual_residuals(result_py["svfWveg"], result_rust.svf_veg_west, title_prefix="Svf West Veg")
-        plot_visual_residuals(result_py["svfNveg"], result_rust.svf_veg_north, title_prefix="Svf North Veg")
-        plot_visual_residuals(result_py["svfaveg"], result_rust.svf_veg_blocks_bldg_sh, title_prefix="Svf vbssh Veg")
+        plot_visual_residuals(result_hybrid["svf"], result_rust.svf, title_prefix="Svf " + append)
+        plot_visual_residuals(result_hybrid["svfE"], result_rust.svf_east, title_prefix="Svf East" + append)
+        plot_visual_residuals(result_hybrid["svfS"], result_rust.svf_south, title_prefix="Svf South" + append)
+        plot_visual_residuals(result_hybrid["svfW"], result_rust.svf_west, title_prefix="Svf West" + append)
+        plot_visual_residuals(result_hybrid["svfN"], result_rust.svf_north, title_prefix="Svf North" + append)
+        plot_visual_residuals(result_hybrid["svfveg"], result_rust.svf_veg, title_prefix="Svf Veg" + append)
+        plot_visual_residuals(result_hybrid["svfEveg"], result_rust.svf_veg_east, title_prefix="Svf East Veg" + append)
         plot_visual_residuals(
-            result_py["svfEaveg"], result_rust.svf_veg_blocks_bldg_sh_east, title_prefix="Svf East vbssh Veg"
+            result_hybrid["svfSveg"], result_rust.svf_veg_south, title_prefix="Svf South Veg" + append
+        )
+        plot_visual_residuals(result_hybrid["svfWveg"], result_rust.svf_veg_west, title_prefix="Svf West Veg" + append)
+        plot_visual_residuals(
+            result_hybrid["svfNveg"], result_rust.svf_veg_north, title_prefix="Svf North Veg" + append
         )
         plot_visual_residuals(
-            result_py["svfSaveg"], result_rust.svf_veg_blocks_bldg_sh_south, title_prefix="Svf South vbssh Veg"
+            result_hybrid["svfaveg"], result_rust.svf_veg_blocks_bldg_sh, title_prefix="Svf vbssh Veg" + append
         )
         plot_visual_residuals(
-            result_py["svfWaveg"], result_rust.svf_veg_blocks_bldg_sh_west, title_prefix="Svf West vbssh Veg"
+            result_hybrid["svfEaveg"],
+            result_rust.svf_veg_blocks_bldg_sh_east,
+            title_prefix="Svf East vbssh Veg" + append,
         )
         plot_visual_residuals(
-            result_py["svfNaveg"], result_rust.svf_veg_blocks_bldg_sh_north, title_prefix="Svf North vbssh Veg"
+            result_hybrid["svfSaveg"],
+            result_rust.svf_veg_blocks_bldg_sh_south,
+            title_prefix="Svf South vbssh Veg" + append,
+        )
+        plot_visual_residuals(
+            result_hybrid["svfWaveg"],
+            result_rust.svf_veg_blocks_bldg_sh_west,
+            title_prefix="Svf West vbssh Veg" + append,
+        )
+        plot_visual_residuals(
+            result_hybrid["svfNaveg"],
+            result_rust.svf_veg_blocks_bldg_sh_north,
+            title_prefix="Svf North vbssh Veg" + append,
         )
 
 
@@ -1150,16 +1230,19 @@ def pct(a, b, atol, rtol):
 
 def compare_results(result_py, result_rust, key_map, atol=0.001, rtol=0.001):
     print("\n--- Comparison ---")
-    for py_key, rust_attr in key_map.items():
+    for py_key, rust_key in key_map.items():
         py_val = result_py.get(py_key)
-        rust_val = getattr(result_rust, rust_attr, None)
+        if isinstance(result_rust, dict):
+            rust_val = result_rust.get(rust_key)
+        else:
+            rust_val = getattr(result_rust, rust_key, None)
         match_pct = pct(py_val, rust_val, atol=atol, rtol=rtol)
         mean_diff = (
             np.nanmean(np.abs(py_val - rust_val)) if py_val is not None and rust_val is not None else float("nan")
         )
         range_diff = np.nanmax(py_val) - np.nanmin(py_val) if py_val is not None else float("nan")
         print(
-            f"{py_key:<20} vs {rust_attr:<35} right: {match_pct:.2f} mean diff: {mean_diff:.3f} range: {range_diff:.2f}"
+            f"{py_key:<20} vs {rust_key:<35} right: {match_pct:.2f} mean diff: {mean_diff:.3f} range: {range_diff:.2f}"
         )
 
 

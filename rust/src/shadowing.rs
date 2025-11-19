@@ -381,16 +381,8 @@ pub(crate) fn calculate_shadows_rust(
                     *veg_sh_flag = f32::max(*veg_sh_flag, pergola_shadow);
                 });
 
-                let bldg_sh_dst_slice_ro = bldg_sh.slice(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
-                let mut veg_sh_dst_slice_rw =
-                    veg_sh.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
-
-                par_azip!((veg_sh_flag in &mut veg_sh_dst_slice_rw, &bldg_sh_flag in &bldg_sh_dst_slice_ro) {
-                    if *veg_sh_flag > 0.0 && bldg_sh_flag > 0.0 {
-                        *veg_sh_flag = 0.0;
-                    }
-                });
-
+                // First, accumulate veg_blocks_bldg_sh BEFORE clearing building shadow from veg_sh
+                // This matches GPU behavior where veg_blocks_bldg_count is incremented before clearing
                 let veg_sh_dst_slice_ro = veg_sh.slice(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
                 let mut veg_blocks_bldg_sh_dst_slice =
                     veg_blocks_bldg_sh.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
@@ -398,6 +390,17 @@ pub(crate) fn calculate_shadows_rust(
                 par_azip!((vbs_acc in &mut veg_blocks_bldg_sh_dst_slice, &veg_sh_flag in &veg_sh_dst_slice_ro) {
                     if veg_sh_flag > 0.0 {
                         *vbs_acc += veg_sh_flag;
+                    }
+                });
+
+                // Now clear building shadow from veg_sh (done AFTER accumulation)
+                let bldg_sh_dst_slice_ro = bldg_sh.slice(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
+                let mut veg_sh_dst_slice_rw =
+                    veg_sh.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
+
+                par_azip!((veg_sh_flag in &mut veg_sh_dst_slice_rw, &bldg_sh_flag in &bldg_sh_dst_slice_ro) {
+                    if *veg_sh_flag > 0.0 && bldg_sh_flag > 0.0 {
+                        *veg_sh_flag = 0.0;
                     }
                 });
             }
@@ -410,10 +413,18 @@ pub(crate) fn calculate_shadows_rust(
     bldg_sh.par_mapv_inplace(|v| 1.0 - v);
 
     if veg_inputs_present {
+        // Create veg_sh mask BEFORE modifying veg_sh (GPU uses veg_sh_value > 0.0 before inversion)
+        let veg_sh_mask = veg_sh.mapv(|v| if v > 0.0 { 1.0 } else { 0.0 });
+
+        // Process veg_blocks_bldg_sh: represents vegetation that blocks the sky but NOT already blocked by buildings
+        // 1. Binarize accumulated veg shadow
         veg_blocks_bldg_sh.par_mapv_inplace(|v| if v > 0.0 { 1.0 } else { 0.0 });
-        veg_blocks_bldg_sh =
-            &veg_blocks_bldg_sh - &veg_sh.mapv(|v| if v > 0.0 { 1.0 } else { 0.0 });
+        // 2. Subtract visible veg shadow (areas where veg is NOT blocked by buildings)
+        veg_blocks_bldg_sh = &veg_blocks_bldg_sh - &veg_sh_mask;
+        // 3. Clamp to [0, 1] and invert: 1 = no veg blocking, 0 = veg blocks view
         veg_blocks_bldg_sh.par_mapv_inplace(|v| 1.0 - v.max(0.0));
+
+        // Now process veg_sh: binarize and invert
         veg_sh.par_mapv_inplace(|v| if v > 0.0 { 1.0 } else { 0.0 });
         veg_sh.par_mapv_inplace(|v| 1.0 - v);
         let final_veg_sh_mask = veg_sh.mapv(|v| 1.0 - v);
