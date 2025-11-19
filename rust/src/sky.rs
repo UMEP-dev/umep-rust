@@ -487,8 +487,8 @@ pub fn anisotropic_sky(
         kside_i: kside_i.into_pyarray(py).unbind(),
         kside_d: kside_d.into_pyarray(py).unbind(),
         kside: kside.into_pyarray(py).unbind(),
-        steradians: steradians.mapv(|v| v as f32).into_pyarray(py).unbind(),
+        steradians: steradians.mapv(|v| v).into_pyarray(py).unbind(),
         skyalt: skyalt.into_pyarray(py).unbind(),
     };
-    Ok(Py::new(py, result)?)
+    Py::new(py, result)
 }

@@ -319,10 +319,10 @@ pub fn sun_on_surface(
         });
     let gvfLup = (&gvfLup1 * 0.5 + &gvfLup2 * 0.4) / 0.9 + &lup_final * &buildings_inv;
 
-    let gvfalb = (&gvfalb1 * 0.5 + &gvfalb2 * 0.4) / 0.9 + &alb_grid * &buildings_inv * &shadow;
+    let gvfalb = (&gvfalb1 * 0.5 + &gvfalb2 * 0.4) / 0.9 + &alb_grid * &buildings_inv * shadow;
 
     let gvfalbnosh =
-        ((&gvfalbnosh1 * 0.5 + &gvfalbnosh2 * 0.4) / 0.9) * &buildings + &alb_grid * &buildings_inv;
+        ((&gvfalbnosh1 * 0.5 + &gvfalbnosh2 * 0.4) / 0.9) * buildings + &alb_grid * &buildings_inv;
 
     (gvf, gvfLup, gvfalb, gvfalbnosh, gvf2)
 }

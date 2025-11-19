@@ -181,7 +181,7 @@ pub fn gvf_calc(
                 a.alb_w.zip_mut_with(&gvfalb_i, |x, &y| *x += y);
                 a.albnosh_w.zip_mut_with(&gvfalbnosh_i, |x, &y| *x += y);
             }
-            if azimuth >= 270.0 || azimuth < 90.0 {
+            if !(90.0..270.0).contains(&azimuth) {
                 a.lup_n.zip_mut_with(&gvf_lup_i, |x, &y| *x += y);
                 a.alb_n.zip_mut_with(&gvfalb_i, |x, &y| *x += y);
                 a.albnosh_n.zip_mut_with(&gvfalbnosh_i, |x, &y| *x += y);

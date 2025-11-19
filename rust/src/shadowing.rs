@@ -130,8 +130,8 @@ pub(crate) fn calculate_shadows_rust(
         && dx.abs() < num_rows as f32
         && dy.abs() < num_cols as f32
     {
-        if (PI_OVER_4 <= azimuth_rad && azimuth_rad < THREE_PI_OVER_4)
-            || (FIVE_PI_OVER_4 <= azimuth_rad && azimuth_rad < SEVEN_PI_OVER_4)
+        if (PI_OVER_4..THREE_PI_OVER_4).contains(&azimuth_rad)
+            || (FIVE_PI_OVER_4..SEVEN_PI_OVER_4).contains(&azimuth_rad)
         {
             dy = sign_sin_azimuth * index;
             dx = -1.0 * sign_cos_azimuth * (index / tan_azimuth).round().abs();
@@ -635,5 +635,4 @@ pub fn calculate_shadows_wall_ht_25(
     py_result
         .into_pyobject(py)
         .map(|bound| bound.unbind().into())
-        .map_err(|e| e.into())
 }

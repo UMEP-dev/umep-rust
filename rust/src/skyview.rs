@@ -60,7 +60,7 @@ fn create_patches(option: u8) -> Vec<PatchInfo> {
             // Calculate azimuth based on the start and interval
             // Use rem_euclid to ensure azimuth is within [0, 360)
             let azimuth =
-                (azi_starts[i] as f32 + j as f32 * azimuth_interval as f32).rem_euclid(360.0);
+                (azi_starts[i] as f32 + j as f32 * azimuth_interval).rem_euclid(360.0);
             patches.push(PatchInfo {
                 altitude: altitudes[i] as f32,
                 azimuth,
@@ -458,6 +458,12 @@ pub fn calculate_svf(
 #[pyclass]
 pub struct SkyviewRunner {
     progress: Arc<AtomicUsize>,
+}
+
+impl Default for SkyviewRunner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[pymethods]

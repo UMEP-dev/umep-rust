@@ -1,3 +1,7 @@
+"""
+First run demo for Athens and Goteborg to generate temp rasters used in tests
+"""
+
 import cProfile
 import pstats
 import timeit
