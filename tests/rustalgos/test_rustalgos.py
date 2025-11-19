@@ -9,7 +9,6 @@ import timeit
 import matplotlib.pyplot as plt
 import numpy as np
 from memory_profiler import memory_usage
-from umep import common
 from umep.functions.SOLWEIGpython import Solweig_run
 from umep.functions.SOLWEIGpython.anisotropic_sky import anisotropic_sky as ani_sky
 from umep.functions.SOLWEIGpython.cylindric_wedge import cylindric_wedge
@@ -31,23 +30,43 @@ from umepr.rustalgos import gvf, shadowing, sky, skyview, vegetation
 from umepr.solweig_runner_rust import SolweigRunRust
 
 
+def make_large_tile(arr: np.ndarray) -> np.ndarray:
+    """Create a larger tile by tiling the input array 2x2."""
+    return np.ascontiguousarray(
+        np.block([[arr, arr], [arr, arr]]),
+        dtype=np.float32,
+    )
+
+
 def test_shadowing():
     # Test shadowingfunction_wallheight_23 vs calculate_shadows_wall_ht_25 for speed and memory
     repeats = 3
-    dsm, vegdsm, vegdsm2, azi, alt, scale, amaxvalue, bush, wall_hts, wall_asp = make_test_arrays(large_tile=True)
+    azi = 45.0
+    alt = 30.0
+    SWC = SolweigRunCore(
+        config_path_str="tests/rustalgos/test_config_shadows.ini",
+        params_json_path="tests/rustalgos/test_params_solweig.json",
+    )
+
+    dsm = make_large_tile(SWC.raster_data.dsm)
+    cdsm = make_large_tile(SWC.raster_data.cdsm)
+    tdsm = make_large_tile(SWC.raster_data.tdsm)
+    bush = make_large_tile(SWC.raster_data.bush)
+    wall_ht = make_large_tile(SWC.raster_data.wallheight)
+    wall_asp = make_large_tile(SWC.raster_data.wallaspect)
 
     # --- Timing only (no memory profiling) ---
     def run_py():
         return shadowingfunction_wallheight_23(  # type: ignore
             dsm,
-            vegdsm,
-            vegdsm2,
+            cdsm,
+            tdsm,
             azi,
             alt,
-            scale,
-            amaxvalue,
+            SWC.raster_data.scale,
+            SWC.raster_data.amaxvalue,
             bush,
-            wall_hts,
+            wall_ht,
             wall_asp * np.pi / 180.0,
         )
 
@@ -56,13 +75,13 @@ def test_shadowing():
         return shadowing.calculate_shadows_wall_ht_25(  # type: ignore
             azi,
             alt,
-            scale,
-            amaxvalue,
+            SWC.raster_data.scale,
+            SWC.raster_data.amaxvalue,
             dsm,
-            vegdsm,
-            vegdsm2,
+            cdsm,
+            tdsm,
             bush,
-            wall_hts,
+            wall_ht,
             wall_asp * np.pi / 180.0,
             None,
             None,
@@ -74,13 +93,13 @@ def test_shadowing():
         return shadowing.calculate_shadows_wall_ht_25(  # type: ignore
             azi,
             alt,
-            scale,
-            amaxvalue,
+            SWC.raster_data.scale,
+            SWC.raster_data.amaxvalue,
             dsm,
-            vegdsm,
-            vegdsm2,
+            cdsm,
+            tdsm,
             bush,
-            wall_hts,
+            wall_ht,
             wall_asp * np.pi / 180.0,
             None,
             None,
@@ -167,26 +186,36 @@ def test_shadowing():
 def test_svf():
     # Test svfForProcessing153 vs skyview.calculate_svf_153 for speed
     repeats = 1
-    dsm, vegdsm, vegdsm2, azi, alt, scale, amaxvalue, bush, wall_hts, wall_asp = make_test_arrays(large_tile=False)
-    amax = np.max(dsm) - np.min(dsm)
+    SWC = SolweigRunCore(
+        config_path_str="tests/rustalgos/test_config_shadows.ini",
+        params_json_path="tests/rustalgos/test_params_solweig.json",
+    )
+
+    dsm = SWC.raster_data.dsm.astype(np.float32)
+    cdsm = SWC.raster_data.cdsm.astype(np.float32)
+    tdsm = SWC.raster_data.tdsm.astype(np.float32)
 
     # --- Timing only (no memory profiling) ---
     def run_old_py():
         # uses older shadowingfunction_20
-        return svfForProcessing153(dsm, vegdsm, vegdsm2, scale, 1, amax)
+        return svfForProcessing153(dsm, cdsm, tdsm, SWC.raster_data.scale, 1, SWC.raster_data.amaxvalue)
 
     def run_hybrid():
         # uses rust shadowing based on shadowingfunction_wallheight_23
         shadowing.disable_gpu()
-        return svfForProcessing153_rust_shdw(dsm, vegdsm, vegdsm2, scale, 1, amax)
+        return svfForProcessing153_rust_shdw(dsm, cdsm, tdsm, SWC.raster_data.scale, 1, SWC.raster_data.amaxvalue)
 
     def run_rust_cpu():
         shadowing.disable_gpu()
-        return skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, amax, 2, None, None)
+        return skyview.calculate_svf(
+            dsm, cdsm, tdsm, SWC.raster_data.scale, True, SWC.raster_data.amaxvalue, 2, None, None
+        )
 
     def run_rust_gpu():
         shadowing.enable_gpu()
-        return skyview.calculate_svf(dsm, vegdsm, vegdsm2, scale, True, amax, 2, None, None)
+        return skyview.calculate_svf(
+            dsm, cdsm, tdsm, SWC.raster_data.scale, True, SWC.raster_data.amaxvalue, 2, None, None
+        )
 
     times_old_py = timeit.repeat(run_old_py, number=1, repeat=repeats)
     print_timing_stats("svfForProcessing153 - (shadowingfunction_20)", times_old_py)
@@ -249,6 +278,7 @@ def test_svf():
         "svfWaveg": "svfWaveg",
         "svfNaveg": "svfNaveg",
     }
+    # Small diffs for N and E and totals
     compare_results(result_old_py, result_hybrid, key_map)
 
     print("\nGenerating residual plots...")
@@ -1178,44 +1208,6 @@ def test_solweig_sub_funcs():
     plot_visual_residuals(KsideI, result_ani_rust.kside_i, title_prefix="KsideI")
     plot_visual_residuals(KsideD, result_ani_rust.kside_d, title_prefix="KsideD")
     plot_visual_residuals(Kside, result_ani_rust.kside, title_prefix="Kside")
-
-
-def make_test_arrays(
-    dsm_path="demos/data/athens/DSM.tif",
-    veg_dsm_path="temp/athens/CDSM.tif",
-    wall_hts_path="temp/athens/walls/wall_hts.tif",
-    wall_aspect_path="temp/athens/walls/wall_aspects.tif",
-    large_tile=False,
-):
-    dsm, dsm_transf, _crs, _nd_val = common.load_raster(dsm_path, bbox=None)
-    vegdsm, _transf, _crs, _nd_val = common.load_raster(veg_dsm_path, bbox=None)
-    vegdsm2 = np.zeros(dsm.shape, dtype=np.float32)  # Ensure float32
-    azi = 45.0
-    alt = 30.0
-    scale = 1 / dsm_transf[1]
-    vegmax = vegdsm.max()
-    amaxvalue = dsm.max() - dsm.min()
-    amaxvalue = np.maximum(amaxvalue, vegmax)
-    bush = np.zeros(dsm.shape, dtype=np.float32)  # Ensure float32
-    wall_hts, _transf, _crs, _nd_val = common.load_raster(wall_hts_path, bbox=None)
-    wall_asp, _transf, _crs, _nd_val = common.load_raster(wall_aspect_path, bbox=None)
-
-    # Convert all loaded arrays to float32
-    dsm = dsm.astype(np.float32)
-    vegdsm = vegdsm.astype(np.float32)
-    wall_hts = wall_hts.astype(np.float32)
-    wall_asp = wall_asp.astype(np.float32)
-
-    # If large_tile is True, stitch four tiles together
-    if large_tile:
-        dsm = np.block([[dsm, dsm], [dsm, dsm]])
-        vegdsm = np.block([[vegdsm, vegdsm], [vegdsm, vegdsm]])
-        vegdsm2 = np.block([[vegdsm2, vegdsm2], [vegdsm2, vegdsm2]])
-        bush = np.block([[bush, bush], [bush, bush]])
-        wall_hts = np.block([[wall_hts, wall_hts], [wall_hts, wall_hts]])
-        wall_asp = np.block([[wall_asp, wall_asp], [wall_asp, wall_asp]])
-
-    return dsm, vegdsm, vegdsm2, azi, alt, scale, amaxvalue, bush, wall_hts, wall_asp
 
 
 # Calculate and print per-array right percentage

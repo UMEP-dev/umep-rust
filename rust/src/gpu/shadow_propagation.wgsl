@@ -190,9 +190,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
                     veg_sh_value = max(veg_sh_value, 1.0);
                 }
                 
-                // Accumulate veg_blocks_bldg_count whenever veg_sh_value is set (matches CPU behavior)
-                // This accounts for veg shadow from both current and previous iterations
-                if (veg_sh_value > 0.0) {
+                // Accumulate only when vegetation is not blocked by buildings at this iteration
+                if (veg_sh_value > 0.0 && is_bldg_shadowed == 0.0) {
                     veg_blocks_bldg_count += 1.0;
                 }
             }
@@ -208,9 +207,6 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     
     // Write vegetation shadow results (if enabled)
     if (params.has_veg != 0u) {
-        // Store the original veg shadow value before clearing for veg_blocks_bldg calculation
-        let veg_sh_value_before_clear = veg_sh_value;
-        
         // Remove vegetation shadow where building shadow exists
         if (veg_sh_value > 0.0 && is_bldg_shadowed > 0.0) {
             veg_sh_value = 0.0;
@@ -230,8 +226,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         // Use the FINAL veg_sh_value (after building shadow clearing)
         let veg_sh_mask = select(0.0, 1.0, veg_sh_value > 0.0);
         vbs_value = vbs_value - veg_sh_mask;
-        // 3. Clamp to [0,1] and invert: 1 = no veg blocking, 0 = veg blocks view
-        veg_blocks_bldg_shadow[target_idx] = 1.0 - max(vbs_value, 0.0);
+        // 3. Invert without clamping to mirror Python logic exactly
+        veg_blocks_bldg_shadow[target_idx] = 1.0 - vbs_value;
         
         // Calculate propagated vegetation height above DSM
         let final_veg_mask = 1.0 - veg_shadow[target_idx];
