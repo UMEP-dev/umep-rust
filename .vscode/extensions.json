@@ -12,6 +12,7 @@
     "ms-python.python",
     "ms-python.debugpy",
     "charliermarsh.ruff",
-    "mhutchie.git-graph"
+    "mhutchie.git-graph",
+    "polymeilex.wgsl"
   ]
 }

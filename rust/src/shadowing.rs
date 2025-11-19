@@ -2,6 +2,11 @@ use ndarray::{par_azip, s, Array2, ArrayView2, Zip};
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 
+#[cfg(feature = "gpu")]
+use crate::gpu::ShadowGpuContext;
+#[cfg(feature = "gpu")]
+use std::sync::OnceLock;
+
 // Constants
 const PI_OVER_4: f32 = std::f32::consts::FRAC_PI_4;
 const THREE_PI_OVER_4: f32 = 3.0 * PI_OVER_4;
@@ -9,6 +14,59 @@ const FIVE_PI_OVER_4: f32 = 5.0 * PI_OVER_4;
 const SEVEN_PI_OVER_4: f32 = 7.0 * PI_OVER_4;
 const TAU: f32 = std::f32::consts::TAU; // 2 * PI
 const EPSILON: f32 = 1e-8; // Small value for float comparisons
+
+#[cfg(feature = "gpu")]
+static GPU_CONTEXT: OnceLock<Option<ShadowGpuContext>> = OnceLock::new();
+
+#[cfg(feature = "gpu")]
+static GPU_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+#[cfg(feature = "gpu")]
+fn get_gpu_context() -> Option<&'static ShadowGpuContext> {
+    // Check if GPU is enabled
+    if !GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+
+    GPU_CONTEXT
+        .get_or_init(|| match crate::gpu::create_shadow_gpu_context() {
+            Ok(ctx) => {
+                eprintln!("[GPU] Shadow GPU context initialized successfully");
+                Some(ctx)
+            }
+            Err(e) => {
+                eprintln!(
+                    "[GPU] Failed to initialize GPU context: {}. Falling back to CPU.",
+                    e
+                );
+                None
+            }
+        })
+        .as_ref()
+}
+
+#[cfg(feature = "gpu")]
+#[pyfunction]
+/// Enable GPU acceleration for shadow calculations
+pub fn enable_gpu() {
+    GPU_ENABLED.store(true, std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[GPU] GPU acceleration enabled");
+}
+
+#[cfg(feature = "gpu")]
+#[pyfunction]
+/// Disable GPU acceleration for shadow calculations (use CPU only)
+pub fn disable_gpu() {
+    GPU_ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[GPU] GPU acceleration disabled - using CPU");
+}
+
+#[cfg(feature = "gpu")]
+#[pyfunction]
+/// Check if GPU acceleration is currently enabled
+pub fn is_gpu_enabled() -> bool {
+    GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// Rust-native result struct for internal shadow calculations.
 pub(crate) struct ShadowingResultRust {
@@ -70,6 +128,100 @@ pub(crate) fn calculate_shadows_rust(
     let num_rows = shape[0];
     let num_cols = shape[1];
     let dim = (num_rows, num_cols);
+
+    // GPU acceleration path: use GPU if available for all shadow types
+    #[cfg(feature = "gpu")]
+    {
+        if let Some(gpu_ctx) = get_gpu_context() {
+            // Convert ArrayView to owned Array for GPU
+            let dsm_owned = dsm_view.to_owned();
+            let veg_canopy_owned = veg_canopy_dsm_view_opt.map(|v| v.to_owned());
+            let veg_trunk_owned = veg_trunk_dsm_view_opt.map(|v| v.to_owned());
+            let bush_owned = bush_view_opt.map(|v| v.to_owned());
+            let walls_owned = walls_view_opt.map(|v| v.to_owned());
+            let aspect_owned = aspect_view_opt.map(|v| v.to_owned());
+
+            match gpu_ctx.compute_all_shadows(
+                &dsm_owned,
+                veg_canopy_owned.as_ref(),
+                veg_trunk_owned.as_ref(),
+                bush_owned.as_ref(),
+                walls_owned.as_ref(),
+                aspect_owned.as_ref(),
+                azimuth_deg,
+                altitude_deg,
+                scale,
+                max_local_dsm_ht,
+                min_sun_elev_deg,
+            ) {
+                Ok(gpu_result) => {
+                    // Handle sh_on_wall if wall scheme is present
+                    let sh_on_wall = if let (Some(walls_scheme_view), Some(aspect_scheme_view)) =
+                        (walls_scheme_view_opt, aspect_scheme_view_opt)
+                    {
+                        // Need to compute scheme-based wall shadows on CPU for now
+                        // since it requires a second set of walls/aspect inputs
+                        if let (Some(ref bldg_sh), Some(ref veg_sh)) =
+                            (&Some(gpu_result.bldg_sh.clone()), &gpu_result.veg_sh)
+                        {
+                            // Create propagated heights from GPU results
+                            let mut prop_bldg_h = Array2::<f32>::zeros(dim);
+                            prop_bldg_h.assign(&dsm_view);
+
+                            let prop_veg_h = gpu_result
+                                .propagated_veg_height
+                                .clone()
+                                .unwrap_or_else(|| Array2::<f32>::zeros(dim));
+
+                            let (scheme_wall_sh, _, scheme_wall_sh_veg, _, _) = shade_on_walls(
+                                azimuth_deg.to_radians(),
+                                aspect_scheme_view,
+                                walls_scheme_view,
+                                dsm_view,
+                                prop_bldg_h.view(),
+                                prop_veg_h.view(),
+                            );
+
+                            let mut sh_on_wall_combined =
+                                Array2::<f32>::zeros(scheme_wall_sh.dim());
+                            Zip::from(&mut sh_on_wall_combined)
+                                .and(&scheme_wall_sh)
+                                .and(&scheme_wall_sh_veg)
+                                .par_for_each(|sow, &wsh, &wsv| *sow = f32::max(wsh, wsv));
+                            Some(sh_on_wall_combined)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
+
+                    return ShadowingResultRust {
+                        bldg_sh: gpu_result.bldg_sh,
+                        veg_sh: gpu_result
+                            .veg_sh
+                            .unwrap_or_else(|| Array2::<f32>::ones(dim)),
+                        veg_blocks_bldg_sh: gpu_result
+                            .veg_blocks_bldg_sh
+                            .unwrap_or_else(|| Array2::<f32>::ones(dim)),
+                        wall_sh: gpu_result.wall_sh,
+                        wall_sun: gpu_result.wall_sun,
+                        wall_sh_veg: gpu_result.wall_sh_veg,
+                        face_sh: gpu_result.face_sh,
+                        face_sun: gpu_result.face_sun,
+                        sh_on_wall,
+                    };
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[GPU] GPU shadow calculation failed: {}. Falling back to CPU.",
+                        e
+                    );
+                    // Fall through to CPU path
+                }
+            }
+        }
+    }
 
     // Determine if all vegetation inputs are present
     let veg_inputs_present = veg_canopy_dsm_view_opt.is_some()

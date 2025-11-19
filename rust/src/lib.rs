@@ -1,6 +1,8 @@
 use pyo3::prelude::*;
 
 mod emissivity_models;
+#[cfg(feature = "gpu")]
+mod gpu;
 mod gvf;
 mod patch_radiation;
 mod shadowing;
@@ -22,6 +24,13 @@ fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_gvf_module(py_module)?;
     register_sky_module(py_module)?;
     register_vegetation_module(py_module)?;
+
+    // Add GPU feature flag
+    #[cfg(feature = "gpu")]
+    py_module.add("GPU_ENABLED", true)?;
+    #[cfg(not(feature = "gpu"))]
+    py_module.add("GPU_ENABLED", false)?;
+
     py_module.add("__doc__", "UMEP algorithms implemented in Rust.")?;
 
     Ok(())
@@ -34,6 +43,15 @@ fn register_shadowing_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
         shadowing::calculate_shadows_wall_ht_25,
         &submodule
     )?)?;
+
+    // Add GPU control functions if GPU feature is enabled
+    #[cfg(feature = "gpu")]
+    {
+        submodule.add_function(wrap_pyfunction!(shadowing::enable_gpu, &submodule)?)?;
+        submodule.add_function(wrap_pyfunction!(shadowing::disable_gpu, &submodule)?)?;
+        submodule.add_function(wrap_pyfunction!(shadowing::is_gpu_enabled, &submodule)?)?;
+    }
+
     py_module.add_submodule(&submodule)?;
     Ok(())
 }
