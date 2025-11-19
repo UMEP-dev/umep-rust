@@ -279,6 +279,7 @@ def test_svf():
         "svfNaveg": "svfNaveg",
     }
     # Small diffs for N and E and totals
+    print("Small differences expected for N and E and totals due to different shadowing implementations")
     compare_results(result_old_py, result_hybrid, key_map)
 
     print("\nGenerating residual plots...")
