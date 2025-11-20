@@ -61,9 +61,23 @@ svf.generate_svf(
 )
 
 # %%
+# skyview factor for SOLWEIG - Tiled
+svf.generate_svf(
+    dsm_path=input_path_str + "/DSM.tif",
+    bbox=total_extents,
+    out_dir=output_folder_path_str + "/svf_tiled",
+    cdsm_path=output_folder_path_str + "/CDSM.tif",
+    trans_veg_perc=3,
+    use_tiled_loading=True,
+    tile_size=200,
+)
+
+# %%
 SRR = solweig_runner_rust.SolweigRunRust(
     "demos/data/athens/configsolweig.ini",
     "demos/data/athens/parametersforsolweig.json",
+    use_tiled_loading=True,
+    tile_size=200,
 )
 SRR.run()
 """
@@ -74,6 +88,8 @@ Running SOLWEIG: 100%|| 72/72 [00:57<00:00,  1.63step/s]
 SRC = solweig_runner_core.SolweigRunCore(
     "demos/data/athens/configsolweig.ini",
     "demos/data/athens/parametersforsolweig.json",
+    use_tiled_loading=True,
+    tile_size=200,
 )
 SRC.run()
 """
