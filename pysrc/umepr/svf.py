@@ -186,24 +186,29 @@ def generate_svf(
             )
 
             # Write outputs (core only)
-            # Extract core slice indices once and bind to local vars
-            core_slice = tile.core_slice()
+            # Get the starting position from tile.write_window
+            # tile.write_window is a tuple of (row_slice, col_slice) indicating output position
+            write_row_out, write_col_out = tile.write_window
+            row_start = write_row_out.start if hasattr(write_row_out, "start") else write_row_out[0]
+            col_start = write_col_out.start if hasattr(write_col_out, "start") else write_col_out[0]
+            row_end = write_row_out.stop if hasattr(write_row_out, "stop") else write_row_out[1]
+            col_end = write_col_out.stop if hasattr(write_col_out, "stop") else write_col_out[1]
 
-            # Get core dimensions from the actual data
-            # core_slice is (row_slice, col_slice) where each is a slice object
+            # Calculate actual core dimensions from the write window (clamped to raster size)
+            core_height = row_end - row_start
+            core_width = col_end - col_start
+
+            # Reconstruct core_slice to match the clamped dimensions
+            # This ensures we don't try to write more than the raster size
+            core_slice = (
+                slice(tile.overlap_top, tile.overlap_top + core_height),
+                slice(tile.overlap_left, tile.overlap_left + core_width),
+            )
             row_slice, col_slice = core_slice
 
-            # tile.write_window is already a tuple of (row_slice, col_slice) for output position
-            # but we need to adjust the size to match the actual core dimensions
-            write_row_out, write_col_out = tile.write_window
-
-            # Calculate actual core dimensions
-            core_height = row_slice.stop - row_slice.start
-            core_width = col_slice.stop - col_slice.start
-
             # Create output window slices with correct dimensions
-            write_row_slice = slice(write_row_out.start, write_row_out.start + core_height)
-            write_col_slice = slice(write_col_out.start, write_col_out.start + core_width)
+            write_row_slice = slice(row_start, row_start + core_height)
+            write_col_slice = slice(col_start, col_start + core_width)
             write_win = (write_row_slice, write_col_slice)
 
             # Helper to write core - bind loop vars with default args
