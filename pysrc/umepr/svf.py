@@ -193,13 +193,17 @@ def generate_svf(
             # core_slice is (row_slice, col_slice) where each is a slice object
             row_slice, col_slice = core_slice
 
-            # Calculate the window for writing: (row_start, col_start, height, width)
+            # Calculate the window for writing as slice objects
             # Use tile.write_window for position, but calculate size from core_slice
             write_row_start = tile.write_window[0]
             write_col_start = tile.write_window[1]
             core_height = row_slice.stop - row_slice.start
             core_width = col_slice.stop - col_slice.start
-            write_win = (write_row_start, write_col_start, core_height, core_width)
+
+            # Create slice objects for the output window
+            write_row_slice = slice(write_row_start, write_row_start + core_height)
+            write_col_slice = slice(write_col_start, write_col_start + core_width)
+            write_win = (write_row_slice, write_col_slice)
 
             # Helper to write core - bind loop vars with default args
             def write_core(fname, data, cs=core_slice, ww=write_win):
