@@ -193,16 +193,17 @@ def generate_svf(
             # core_slice is (row_slice, col_slice) where each is a slice object
             row_slice, col_slice = core_slice
 
-            # Calculate the window for writing as slice objects
-            # Use tile.write_window for position, but calculate size from core_slice
-            write_row_start = tile.write_window[0]
-            write_col_start = tile.write_window[1]
+            # tile.write_window is already a tuple of (row_slice, col_slice) for output position
+            # but we need to adjust the size to match the actual core dimensions
+            write_row_out, write_col_out = tile.write_window
+
+            # Calculate actual core dimensions
             core_height = row_slice.stop - row_slice.start
             core_width = col_slice.stop - col_slice.start
 
-            # Create slice objects for the output window
-            write_row_slice = slice(write_row_start, write_row_start + core_height)
-            write_col_slice = slice(write_col_start, write_col_start + core_width)
+            # Create output window slices with correct dimensions
+            write_row_slice = slice(write_row_out.start, write_row_out.start + core_height)
+            write_col_slice = slice(write_col_out.start, write_col_out.start + core_width)
             write_win = (write_row_slice, write_col_slice)
 
             # Helper to write core - bind loop vars with default args
@@ -244,11 +245,8 @@ def generate_svf(
             core_slice_3d = (row_slice, col_slice, slice(None))
 
             # Calculate destination slice in memmap using actual core dimensions
-            row_start_out = write_row_start
-            row_end_out = write_row_start + core_height
-            col_start_out = write_col_start
-            col_end_out = write_col_start + core_width
-            write_slice_3d = (slice(row_start_out, row_end_out), slice(col_start_out, col_end_out), slice(None))
+            # Use the same row/col slices we created for write_win
+            write_slice_3d = (write_row_slice, write_col_slice, slice(None))
 
             shmat_mem[write_slice_3d] = ret.bldg_sh_matrix[core_slice_3d]
             vegshmat_mem[write_slice_3d] = ret.veg_sh_matrix[core_slice_3d]
