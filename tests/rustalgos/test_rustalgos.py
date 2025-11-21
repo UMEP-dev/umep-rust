@@ -9,6 +9,7 @@ import timeit
 import matplotlib.pyplot as plt
 import numpy as np
 from memory_profiler import memory_usage
+from umep.class_configs import ShadowMatrices, SvfData, TgMaps, WallsData
 from umep.functions.SOLWEIGpython import Solweig_run
 from umep.functions.SOLWEIGpython.anisotropic_sky import anisotropic_sky as ani_sky
 from umep.functions.SOLWEIGpython.cylindric_wedge import cylindric_wedge
@@ -561,6 +562,8 @@ def test_solweig_sub_funcs():
     dectime = SWC.environ_data.dectime[idx]
     altmax = SWC.environ_data.altmax[idx]
     Ta = SWC.environ_data.Ta[idx]
+    # tg_maps normally created in SolweigRunCore.run(), create here for testing
+    SWC.tg_maps = TgMaps(SWC.config.use_landcover, SWC.params, SWC.raster_data)
     Tgamp = SWC.tg_maps.TgK * altmax + SWC.tg_maps.Tstart  # Fixed 2021
     # Tgampwall = (TgK_wall * altmax - (Tstart_wall)) + (Tstart_wall) # Old
     Tgampwall = SWC.tg_maps.TgK_wall * altmax + SWC.tg_maps.Tstart_wall
@@ -573,6 +576,18 @@ def test_solweig_sub_funcs():
     if Tgwall < 0:  # temporary for removing low Tg during morning 20130205
         # Tg = 0
         Tgwall = 0
+    # shadow_mats normally created in SolweigRunCore.run(), create here for testing
+    svf_data = SvfData(SWC.config)
+    SWC.shadow_mats = ShadowMatrices(SWC.config, SWC.params, svf_data)
+    # walls_data normally created in SolweigRunCore.run(), create here for testing
+    SWC.walls_data = WallsData(
+        SWC.config,
+        SWC.params,
+        SWC.raster_data,
+        SWC.environ_data,
+        SWC.tg_maps,
+    )
+
     sh_results = shadowing.calculate_shadows_wall_ht_25(
         SWC.environ_data.azimuth[idx],
         SWC.environ_data.altitude[idx],

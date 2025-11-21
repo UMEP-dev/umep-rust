@@ -88,10 +88,9 @@ Running SOLWEIG: 100%|| 72/72 [00:57<00:00,  1.63step/s]
 SRC = solweig_runner_core.SolweigRunCore(
     "demos/data/athens/configsolweig.ini",
     "demos/data/athens/parametersforsolweig.json",
-    use_tiled_loading=True,
-    tile_size=200,
+    use_tiled_loading=False,
 )
-SRC.run()
+# SRC.run()
 """
 Running SOLWEIG: 100%|| 72/72 [04:49<00:00,  4.02s/step]
 """
