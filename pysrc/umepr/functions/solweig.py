@@ -189,6 +189,120 @@ def Solweig_2025a_calc(
     # diffsh, ani = Used in anisotrpic models (Wallenberg et al. 2019, 2022)
 
     # # # Core program start # # #
+
+    # Optimization: Crop to valid region to avoid needless computation on NaN boundaries
+    valid_mask = ~(np.isnan(dsm) | np.isnan(svf))
+
+    if not np.any(valid_mask):
+        # Return all NaN arrays if no valid pixels
+        nan_array = np.full((rows, cols), np.nan)
+        return (
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            np.nan,
+            np.nan,
+            0,
+            CI,
+            nan_array.copy(),
+            firstdaytime,
+            timestepdec,
+            timeadd,
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            TgOut1,
+            nan_array.copy(),
+            radI,
+            radD,
+            nan_array.copy(),
+            None,
+            CI,
+            CI,
+            nan_array.copy(),
+            nan_array.copy(),
+            nan_array.copy(),
+            steradians,
+            voxelTable,
+        )
+
+    rows_valid = np.any(valid_mask, axis=1)
+    cols_valid = np.any(valid_mask, axis=0)
+    rmin, rmax = np.where(rows_valid)[0][[0, -1]]
+    cmin, cmax = np.where(cols_valid)[0][[0, -1]]
+    rmax += 1
+    cmax += 1
+
+    orig_rows, orig_cols = rows, cols
+    is_cropped = (rmin > 0) or (rmax < rows) or (cmin > 0) or (cmax < cols)
+
+    if is_cropped:
+        sl = (slice(rmin, rmax), slice(cmin, cmax))
+        rows = rmax - rmin
+        cols = cmax - cmin
+
+        # Crop inputs
+        dsm = dsm[sl]
+        svf = svf[sl]
+        svfN = svfN[sl]
+        svfW = svfW[sl]
+        svfE = svfE[sl]
+        svfS = svfS[sl]
+        svfveg = svfveg[sl]
+        svfNveg = svfNveg[sl]
+        svfEveg = svfEveg[sl]
+        svfSveg = svfSveg[sl]
+        svfWveg = svfWveg[sl]
+        svfaveg = svfaveg[sl]
+        svfEaveg = svfEaveg[sl]
+        svfSaveg = svfSaveg[sl]
+        svfWaveg = svfWaveg[sl]
+        svfNaveg = svfNaveg[sl]
+        vegdem = vegdem[sl]
+        vegdem2 = vegdem2[sl]
+        buildings = buildings[sl]
+        if lc_grid is not None:
+            lc_grid = lc_grid[sl]
+        dirwalls = dirwalls[sl]
+        walls = walls[sl]
+        bush = bush[sl]
+        alb_grid = alb_grid[sl]
+        emis_grid = emis_grid[sl]
+        svfalfa = svfalfa[sl]
+        svfbuveg = svfbuveg[sl]
+        Tgmap1 = Tgmap1[sl]
+        Tgmap1E = Tgmap1E[sl]
+        Tgmap1S = Tgmap1S[sl]
+        Tgmap1W = Tgmap1W[sl]
+        Tgmap1N = Tgmap1N[sl]
+        if np.ndim(TgOut1) >= 2:
+            TgOut1 = TgOut1[sl]
+        if diffsh is not None:
+            diffsh = diffsh[sl]
+        if shmat is not None:
+            shmat = shmat[sl]
+        if vegshmat is not None:
+            vegshmat = vegshmat[sl]
+        if vbshvegshmat is not None:
+            vbshvegshmat = vbshvegshmat[sl]
+        asvf = asvf[sl]
+        if voxelMaps is not None:
+            voxelMaps = voxelMaps[sl]
+        if voxelTable is not None:
+            voxelTable = voxelTable[sl]
+        walls_scheme = walls_scheme[sl]
+        dirwalls_scheme = dirwalls_scheme[sl]
+
     # Instrument offset in degrees
     t = 0.0
 
@@ -667,6 +781,54 @@ def Solweig_2025a_calc(
         Lwest += Lwest_
         Lnorth += Lnorth_
         Lsouth += Lsouth_
+
+    if is_cropped:
+
+        def uncrop(arr):
+            if arr is None:
+                return None
+            if np.isscalar(arr):
+                return arr
+            arr = np.asarray(arr)
+            if arr.ndim < 2:
+                return arr
+            # Check if it matches the cropped shape (rows, cols)
+            if arr.shape[0] != rows or arr.shape[1] != cols:
+                return arr
+
+            new_shape = (orig_rows, orig_cols) + arr.shape[2:]
+            full = np.full(new_shape, np.nan, dtype=arr.dtype)
+            full[sl] = arr
+            return full
+
+        Tmrt = uncrop(Tmrt)
+        Kdown = uncrop(Kdown)
+        Kup = uncrop(Kup)
+        Ldown = uncrop(Ldown)
+        Lup = uncrop(Lup)
+        Tg = uncrop(Tg)
+        shadow = uncrop(shadow)
+        Tgmap1 = uncrop(Tgmap1)
+        Tgmap1E = uncrop(Tgmap1E)
+        Tgmap1S = uncrop(Tgmap1S)
+        Tgmap1W = uncrop(Tgmap1W)
+        Tgmap1N = uncrop(Tgmap1N)
+        Keast = uncrop(Keast)
+        Ksouth = uncrop(Ksouth)
+        Kwest = uncrop(Kwest)
+        Knorth = uncrop(Knorth)
+        Least = uncrop(Least)
+        Lsouth = uncrop(Lsouth)
+        Lwest = uncrop(Lwest)
+        Lnorth = uncrop(Lnorth)
+        KsideI = uncrop(KsideI)
+        TgOut1 = uncrop(TgOut1)
+        TgOut = uncrop(TgOut)
+        Lside = uncrop(Lside)
+        KsideD = uncrop(KsideD)
+        dRad = uncrop(dRad)
+        Kside = uncrop(Kside)
+        voxelTable = uncrop(voxelTable)
 
     return (
         Tmrt,
