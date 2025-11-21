@@ -1,6 +1,6 @@
 [project]
 name = "umepr"
-version = "0.0.1b49"
+version = "0.0.1b50"
 description = "rust implementation of urban multi-scale environmental predictor"
 readme = "README.md"
 requires-python = ">=3.9, <3.14"
