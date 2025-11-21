@@ -111,7 +111,7 @@ def generate_svf(
             )
 
         for fname in output_files:
-            common.create_empty_raster(out_path_str + "/" + fname, cols, rows, dsm_trf, dsm_crs, nodata=-9999.0)
+            common.create_empty_raster(out_path_str + "/" + fname, rows, cols, dsm_trf, dsm_crs, nodata=-9999.0)
 
         # Initialize memory-mapped arrays for shadow matrices
         # 153 patches is standard for this algorithm
