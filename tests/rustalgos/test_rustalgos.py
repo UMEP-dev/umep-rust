@@ -34,7 +34,7 @@ from umepr.solweig_runner_rust import SolweigRunRust
 def make_large_tile(arr: np.ndarray) -> np.ndarray:
     """Create a larger tile by tiling the input array 2x2."""
     return np.ascontiguousarray(
-        np.block([[arr, arr], [arr, arr]]),
+        np.block([[arr, arr, arr, arr], [arr, arr, arr, arr], [arr, arr, arr, arr], [arr, arr, arr, arr]]),
         dtype=np.float32,
     )
 
