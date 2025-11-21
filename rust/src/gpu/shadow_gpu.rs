@@ -1,4 +1,4 @@
-use ndarray::Array2;
+use ndarray::{Array2, ArrayView2};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
@@ -283,16 +283,16 @@ impl ShadowGpuContext {
         })
     }
 
-    /// Compute all shadows (building, vegetation, walls) on GPU
+    /// Optimized version accepting ArrayView to avoid unnecessary copies
     #[allow(clippy::too_many_arguments)]
-    pub fn compute_all_shadows(
+    pub fn compute_all_shadows_view(
         &self,
-        dsm: &Array2<f32>,
-        veg_canopy_dsm_opt: Option<&Array2<f32>>,
-        veg_trunk_dsm_opt: Option<&Array2<f32>>,
-        bush_opt: Option<&Array2<f32>>,
-        walls_opt: Option<&Array2<f32>>,
-        aspect_opt: Option<&Array2<f32>>,
+        dsm: ArrayView2<f32>,
+        veg_canopy_dsm_opt: Option<ArrayView2<f32>>,
+        veg_trunk_dsm_opt: Option<ArrayView2<f32>>,
+        bush_opt: Option<ArrayView2<f32>>,
+        walls_opt: Option<ArrayView2<f32>>,
+        aspect_opt: Option<ArrayView2<f32>>,
         azimuth_deg: f32,
         altitude_deg: f32,
         scale: f32,
@@ -307,64 +307,32 @@ impl ShadowGpuContext {
             veg_canopy_dsm_opt.is_some() && veg_trunk_dsm_opt.is_some() && bush_opt.is_some();
         let has_walls = walls_opt.is_some() && aspect_opt.is_some();
 
-        // Convert DSM to contiguous f32 slice
-        let dsm_data: Vec<f32> = if dsm.is_standard_layout() {
-            dsm.as_slice().unwrap().to_vec()
-        } else {
-            dsm.iter().copied().collect()
+        // Helper to get contiguous slice or allocate temp buffer
+        let get_slice = |view: ArrayView2<f32>| -> Vec<f32> {
+            if view.is_standard_layout() {
+                view.as_slice().unwrap().to_vec()
+            } else {
+                view.iter().copied().collect()
+            }
         };
 
-        // Prepare vegetation data or create dummy buffers
-        let veg_canopy_data: Vec<f32> = if let Some(veg_canopy) = veg_canopy_dsm_opt {
-            if veg_canopy.is_standard_layout() {
-                veg_canopy.as_slice().unwrap().to_vec()
-            } else {
-                veg_canopy.iter().copied().collect()
-            }
-        } else {
-            vec![0.0; total_pixels]
-        };
-
-        let veg_trunk_data: Vec<f32> = if let Some(veg_trunk) = veg_trunk_dsm_opt {
-            if veg_trunk.is_standard_layout() {
-                veg_trunk.as_slice().unwrap().to_vec()
-            } else {
-                veg_trunk.iter().copied().collect()
-            }
-        } else {
-            vec![0.0; total_pixels]
-        };
-
-        let bush_data: Vec<f32> = if let Some(bush) = bush_opt {
-            if bush.is_standard_layout() {
-                bush.as_slice().unwrap().to_vec()
-            } else {
-                bush.iter().copied().collect()
-            }
-        } else {
-            vec![0.0; total_pixels]
-        };
-
-        // Prepare wall data or create dummy buffers
-        let walls_data: Vec<f32> = if let Some(walls) = walls_opt {
-            if walls.is_standard_layout() {
-                walls.as_slice().unwrap().to_vec()
-            } else {
-                walls.iter().copied().collect()
-            }
-        } else {
-            vec![0.0; total_pixels]
-        };
-
-        let aspect_data: Vec<f32> = if let Some(aspect) = aspect_opt {
-            if aspect.is_standard_layout() {
-                aspect.as_slice().unwrap().to_vec()
-            } else {
-                aspect.iter().copied().collect()
-            }
-        } else {
-            vec![0.0; total_pixels]
-        };
+        // Use slice directly when contiguous, otherwise allocate
+        let dsm_data = get_slice(dsm);
+        let veg_canopy_data = veg_canopy_dsm_opt
+            .map(get_slice)
+            .unwrap_or_else(|| vec![0.0; total_pixels]);
+        let veg_trunk_data = veg_trunk_dsm_opt
+            .map(get_slice)
+            .unwrap_or_else(|| vec![0.0; total_pixels]);
+        let bush_data = bush_opt
+            .map(get_slice)
+            .unwrap_or_else(|| vec![0.0; total_pixels]);
+        let walls_data = walls_opt
+            .map(get_slice)
+            .unwrap_or_else(|| vec![0.0; total_pixels]);
+        let aspect_data = aspect_opt
+            .map(get_slice)
+            .unwrap_or_else(|| vec![0.0; total_pixels]);
 
         // Precompute trigonometric values
         let azimuth_rad = azimuth_deg.to_radians();
@@ -651,8 +619,8 @@ impl ShadowGpuContext {
                 label: Some("Shadow Compute Encoder"),
             });
 
-        let workgroup_size_x = 8;
-        let workgroup_size_y = 8;
+        let workgroup_size_x = 16;
+        let workgroup_size_y = 16;
         let num_workgroups_x = (cols as u32 + workgroup_size_x - 1) / workgroup_size_x;
         let num_workgroups_y = (rows as u32 + workgroup_size_y - 1) / workgroup_size_y;
 

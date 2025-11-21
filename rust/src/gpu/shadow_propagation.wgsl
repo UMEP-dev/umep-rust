@@ -50,7 +50,7 @@ fn in_bounds(row: i32, col: i32) -> bool {
     return row >= 0 && row < i32(params.rows) && col >= 0 && col < i32(params.cols);
 }
 
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let target_row = i32(global_id.y);
     let target_col = i32(global_id.x);
@@ -236,7 +236,7 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 }
 
 // Wall shadow computation - runs as a separate pass after main shadow computation
-@compute @workgroup_size(8, 8, 1)
+@compute @workgroup_size(16, 16, 1)
 fn compute_wall_shadows(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let row = i32(global_id.y);
     let col = i32(global_id.x);

@@ -133,21 +133,14 @@ pub(crate) fn calculate_shadows_rust(
     #[cfg(feature = "gpu")]
     {
         if let Some(gpu_ctx) = get_gpu_context() {
-            // Convert ArrayView to owned Array for GPU
-            let dsm_owned = dsm_view.to_owned();
-            let veg_canopy_owned = veg_canopy_dsm_view_opt.map(|v| v.to_owned());
-            let veg_trunk_owned = veg_trunk_dsm_view_opt.map(|v| v.to_owned());
-            let bush_owned = bush_view_opt.map(|v| v.to_owned());
-            let walls_owned = walls_view_opt.map(|v| v.to_owned());
-            let aspect_owned = aspect_view_opt.map(|v| v.to_owned());
-
-            match gpu_ctx.compute_all_shadows(
-                &dsm_owned,
-                veg_canopy_owned.as_ref(),
-                veg_trunk_owned.as_ref(),
-                bush_owned.as_ref(),
-                walls_owned.as_ref(),
-                aspect_owned.as_ref(),
+            // Pass ArrayView directly - GPU will handle conversion efficiently
+            match gpu_ctx.compute_all_shadows_view(
+                dsm_view,
+                veg_canopy_dsm_view_opt,
+                veg_trunk_dsm_view_opt,
+                bush_view_opt,
+                walls_view_opt,
+                aspect_view_opt,
                 azimuth_deg,
                 altitude_deg,
                 scale,
@@ -161,7 +154,7 @@ pub(crate) fn calculate_shadows_rust(
                     {
                         // Need to compute scheme-based wall shadows on CPU for now
                         // since it requires a second set of walls/aspect inputs
-                        if let (Some(ref bldg_sh), Some(ref veg_sh)) =
+                        if let (Some(ref _bldg_sh), Some(ref _veg_sh)) =
                             (&Some(gpu_result.bldg_sh.clone()), &gpu_result.veg_sh)
                         {
                             // Create propagated heights from GPU results
