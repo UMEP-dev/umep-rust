@@ -7,15 +7,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 try:
-    from rustalgos import GPU_ENABLED
-    from rustalgos.shadowing import disable_gpu, enable_gpu, is_gpu_enabled
+    from .rustalgos import GPU_ENABLED, shadowing
 
     # Export GPU functions at package level
-    __all__ = ["GPU_ENABLED", "enable_gpu", "disable_gpu", "is_gpu_enabled"]
+    __all__ = ["GPU_ENABLED", "shadowing"]
 
     # Enable GPU by default if available
     if GPU_ENABLED:
-        enable_gpu()
+        shadowing.enable_gpu()
         logger.info("GPU acceleration enabled by default")
     else:
         logger.info("GPU support not compiled in this build")
