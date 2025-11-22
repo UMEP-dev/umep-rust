@@ -59,8 +59,7 @@ fn create_patches(option: u8) -> Vec<PatchInfo> {
         for j in 0..azimuth_patches[i] as usize {
             // Calculate azimuth based on the start and interval
             // Use rem_euclid to ensure azimuth is within [0, 360)
-            let azimuth =
-                (azi_starts[i] as f32 + j as f32 * azimuth_interval).rem_euclid(360.0);
+            let azimuth = (azi_starts[i] as f32 + j as f32 * azimuth_interval).rem_euclid(360.0);
             patches.push(PatchInfo {
                 altitude: altitudes[i] as f32,
                 azimuth,
@@ -362,6 +361,23 @@ fn calculate_svf_inner(
     inter.svf_s.mapv_inplace(|x| x.min(1.0));
     inter.svf_w.mapv_inplace(|x| x.min(1.0));
 
+    // Set NaN in outputs for NaN pixels in DSM
+    Zip::from(&mut inter.svf)
+        .and(&mut inter.svf_n)
+        .and(&mut inter.svf_e)
+        .and(&mut inter.svf_s)
+        .and(&mut inter.svf_w)
+        .and(&dsm_f32)
+        .for_each(|svf, svf_n, svf_e, svf_s, svf_w, &dsm_val| {
+            if dsm_val.is_nan() {
+                *svf = f32::NAN;
+                *svf_n = f32::NAN;
+                *svf_e = f32::NAN;
+                *svf_s = f32::NAN;
+                *svf_w = f32::NAN;
+            }
+        });
+
     if usevegdem {
         // Create correction array for veg components
         let last_veg = Array2::from_shape_fn((num_rows, num_cols), |(row_idx, col_idx)| {
@@ -387,6 +403,54 @@ fn calculate_svf_inner(
         inter.svf_veg_blocks_bldg_sh_e.mapv_inplace(|x| x.min(1.0));
         inter.svf_veg_blocks_bldg_sh_s.mapv_inplace(|x| x.min(1.0));
         inter.svf_veg_blocks_bldg_sh_w.mapv_inplace(|x| x.min(1.0));
+
+        // Set NaN in veg outputs for NaN pixels in DSM (split into two operations due to Zip limit)
+        Zip::from(&mut inter.svf_veg)
+            .and(&mut inter.svf_veg_n)
+            .and(&mut inter.svf_veg_e)
+            .and(&mut inter.svf_veg_s)
+            .and(&mut inter.svf_veg_w)
+            .and(&dsm_f32)
+            .for_each(|svf_veg, svf_veg_n, svf_veg_e, svf_veg_s, svf_veg_w, &dsm_val| {
+                if dsm_val.is_nan() {
+                    *svf_veg = f32::NAN;
+                    *svf_veg_n = f32::NAN;
+                    *svf_veg_e = f32::NAN;
+                    *svf_veg_s = f32::NAN;
+                    *svf_veg_w = f32::NAN;
+                }
+            });
+
+        Zip::from(&mut inter.svf_veg_blocks_bldg_sh)
+            .and(&mut inter.svf_veg_blocks_bldg_sh_n)
+            .and(&mut inter.svf_veg_blocks_bldg_sh_e)
+            .and(&mut inter.svf_veg_blocks_bldg_sh_s)
+            .and(&mut inter.svf_veg_blocks_bldg_sh_w)
+            .and(&dsm_f32)
+            .for_each(|svf_vb, svf_vb_n, svf_vb_e, svf_vb_s, svf_vb_w, &dsm_val| {
+                if dsm_val.is_nan() {
+                    *svf_vb = f32::NAN;
+                    *svf_vb_n = f32::NAN;
+                    *svf_vb_e = f32::NAN;
+                    *svf_vb_s = f32::NAN;
+                    *svf_vb_w = f32::NAN;
+                }
+            });
+    }
+
+    // Set NaN in shadow matrices for NaN pixels in DSM
+    for row in 0..num_rows {
+        for col in 0..num_cols {
+            if dsm_f32[[row, col]].is_nan() {
+                for patch_idx in 0..total_patches {
+                    inter.bldg_sh_matrix[[row, col, patch_idx]] = f32::NAN;
+                    if usevegdem {
+                        inter.veg_sh_matrix[[row, col, patch_idx]] = f32::NAN;
+                        inter.veg_blocks_bldg_sh_matrix[[row, col, patch_idx]] = f32::NAN;
+                    }
+                }
+            }
+        }
     }
 
     Ok(inter)

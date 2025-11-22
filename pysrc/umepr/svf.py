@@ -33,7 +33,16 @@ def generate_svf(
     amax_local_perc: float = 99.9,
     use_tiled_loading: bool = False,
     tile_size: int = 1000,
+    save_shadowmats: bool = True,
 ):
+    """
+    Generate Sky View Factor outputs.
+
+    Args:
+        save_shadowmats: Save shadow matrices (required for SOLWEIG anisotropic sky).
+                        Saved as uint8 (75% smaller than float32). Set to False only
+                        if you don't need SOLWEIG's anisotropic modeling.
+    """
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     out_path_str = str(out_path)
@@ -113,32 +122,34 @@ def generate_svf(
         for fname in output_files:
             common.create_empty_raster(out_path_str + "/" + fname, rows, cols, dsm_trf, dsm_crs, nodata=-9999.0)
 
-        # Initialize memory-mapped arrays for shadow matrices
-        # 153 patches is standard for this algorithm
-        patches = 153
-        shmat_shape = (rows, cols, patches)
+        # Initialize memory-mapped arrays for shadow matrices (only if needed)
+        if save_shadowmats:
+            # 153 patches is standard for this algorithm
+            patches = 153
+            shmat_shape = (rows, cols, patches)
 
-        # Create temp file paths
-        temp_dir = tempfile.mkdtemp(dir=out_path_str)
-        shmat_path = os.path.join(temp_dir, "shmat.dat")
-        vegshmat_path = os.path.join(temp_dir, "vegshmat.dat")
-        vbshvegshmat_path = os.path.join(temp_dir, "vbshvegshmat.dat")
+            # Create temp file paths
+            temp_dir = tempfile.mkdtemp(dir=out_path_str)
+            shmat_path = os.path.join(temp_dir, "shmat.dat")
+            vegshmat_path = os.path.join(temp_dir, "vegshmat.dat")
+            vbshvegshmat_path = os.path.join(temp_dir, "vbshvegshmat.dat")
 
-        # Calculate memory requirements
-        memmap_size_mb = (shmat_shape[0] * shmat_shape[1] * shmat_shape[2] * 4) / (1024 * 1024)
-        logger.info(f"Creating memory-mapped arrays: {memmap_size_mb * 3:.1f} MB total (3 arrays)")
+            # Use uint8 instead of float32 for 75% space savings (shadow mats are binary 0/1)
+            # Calculate memory requirements
+            memmap_size_mb = (shmat_shape[0] * shmat_shape[1] * shmat_shape[2] * 1) / (1024 * 1024)
+            logger.info(f"Creating memory-mapped arrays: {memmap_size_mb * 3:.1f} MB total (3 arrays, uint8)")
 
-        # Create memmapped arrays with error handling
-        try:
-            shmat_mem = np.memmap(shmat_path, dtype="float32", mode="w+", shape=shmat_shape)
-            vegshmat_mem = np.memmap(vegshmat_path, dtype="float32", mode="w+", shape=shmat_shape)
-            vbshvegshmat_mem = np.memmap(vbshvegshmat_path, dtype="float32", mode="w+", shape=shmat_shape)
-        except OSError as e:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            raise OSError(
-                f"Failed to create memory-mapped arrays ({memmap_size_mb * 3:.1f} MB). "
-                f"Check disk space and permissions in {out_path_str}. Error: {e}"
-            ) from e
+            # Create memmapped arrays with error handling
+            try:
+                shmat_mem = np.memmap(shmat_path, dtype="uint8", mode="w+", shape=shmat_shape)
+                vegshmat_mem = np.memmap(vegshmat_path, dtype="uint8", mode="w+", shape=shmat_shape)
+                vbshvegshmat_mem = np.memmap(vbshvegshmat_path, dtype="uint8", mode="w+", shape=shmat_shape)
+            except OSError as e:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                raise OSError(
+                    f"Failed to create memory-mapped arrays ({memmap_size_mb * 3:.1f} MB). "
+                    f"Check disk space and permissions in {out_path_str}. Error: {e}"
+                ) from e
 
         trans_veg = trans_veg_perc / 100.0
         trunk_ratio = trunk_ratio_perc / 100.0
@@ -223,43 +234,50 @@ def generate_svf(
                 svftotal_tile = ret.svf - (1 - ret.svf_veg) * (1 - trans_veg)
                 write_core("svf_total.tif", svftotal_tile)
 
-            # Write shadow matrices to memmap
-            # Extract core for 3D arrays - use core_slice with added dimension
-            core_slice_3d = core_slice + (slice(None),)
+            # Write shadow matrices to memmap (if saving)
+            if save_shadowmats:
+                # Extract core for 3D arrays - use core_slice with added dimension
+                core_slice_3d = core_slice + (slice(None),)
 
-            # Destination slice in memmap - use write_window directly
-            write_slice_3d = tile.write_window.to_slices() + (slice(None),)
+                # Destination slice in memmap - use write_window directly
+                write_slice_3d = tile.write_window.to_slices() + (slice(None),)
 
-            shmat_mem[write_slice_3d] = ret.bldg_sh_matrix[core_slice_3d]
-            vegshmat_mem[write_slice_3d] = ret.veg_sh_matrix[core_slice_3d]
-            vbshvegshmat_mem[write_slice_3d] = ret.veg_blocks_bldg_sh_matrix[core_slice_3d]
+                # Convert to uint8 (shadow matrices are binary 0/1)
+                shmat_mem[write_slice_3d] = (ret.bldg_sh_matrix[core_slice_3d] * 255).astype(np.uint8)
+                vegshmat_mem[write_slice_3d] = (ret.veg_sh_matrix[core_slice_3d] * 255).astype(np.uint8)
+                vbshvegshmat_mem[write_slice_3d] = (ret.veg_blocks_bldg_sh_matrix[core_slice_3d] * 255).astype(np.uint8)
 
-            # Flush memmaps periodically
-            if i % 10 == 0:
-                shmat_mem.flush()
-                vegshmat_mem.flush()
-                vbshvegshmat_mem.flush()
+                # Flush memmaps periodically?
+                if i % 10 == 0:
+                    shmat_mem.flush()
+                    vegshmat_mem.flush()
+                    vbshvegshmat_mem.flush()
 
-        # Flush final
-        shmat_mem.flush()
-        vegshmat_mem.flush()
-        vbshvegshmat_mem.flush()
+        # Save shadow matrices (if requested)
+        if save_shadowmats:
+            # Flush final
+            shmat_mem.flush()
+            vegshmat_mem.flush()
+            vbshvegshmat_mem.flush()
 
-        # Save shadow matrices as compressed npz
-        # We read from the memmapped files
-        logger.info("Saving shadow matrices to npz...")
-        np.savez_compressed(
-            out_path_str + "/" + "shadowmats.npz",
-            shadowmat=shmat_mem,
-            vegshadowmat=vegshmat_mem,
-            vbshmat=vbshvegshmat_mem,
-        )
+            # Save shadow matrices as compressed npz (uint8 format)
+            # We read from the memmapped files
+            logger.info("Saving shadow matrices to npz (uint8 format, 75% smaller)...")
+            np.savez_compressed(
+                out_path_str + "/" + "shadowmats.npz",
+                shadowmat=shmat_mem,
+                vegshadowmat=vegshmat_mem,
+                vbshmat=vbshvegshmat_mem,
+                dtype="uint8",  # Store metadata about dtype
+            )
 
-        # Cleanup temp
-        del shmat_mem
-        del vegshmat_mem
-        del vbshvegshmat_mem
-        shutil.rmtree(temp_dir)
+            # Cleanup temp
+            del shmat_mem
+            del vegshmat_mem
+            del vbshvegshmat_mem
+            shutil.rmtree(temp_dir)
+        else:
+            logger.info("Skipping shadow matrix save (not needed for this workflow)")
 
         # Zip SVF files (same as standard)
         zip_filepath = out_path_str + "/" + "svfs.zip"
@@ -489,14 +507,20 @@ def generate_svf(
     # Save the final svftotal raster
     common.save_raster(out_path_str + "/" + "svf_total.tif", svftotal, dsm_trf, dsm_crs, coerce_f64_to_f32=True)
 
-    # Save shadow matrices as compressed npz
-    shmat = ret.bldg_sh_matrix
-    vegshmat = ret.veg_sh_matrix
-    vbshvegshmat = ret.veg_blocks_bldg_sh_matrix
+    # Save shadow matrices as compressed npz (only if requested)
+    if save_shadowmats:
+        shmat = ret.bldg_sh_matrix
+        vegshmat = ret.veg_sh_matrix
+        vbshvegshmat = ret.veg_blocks_bldg_sh_matrix
 
-    np.savez_compressed(
-        out_path_str + "/" + "shadowmats.npz",
-        shadowmat=shmat,
-        vegshadowmat=vegshmat,
-        vbshmat=vbshvegshmat,
-    )
+        # Convert to uint8 for 75% space savings (shadow matrices are binary 0/1)
+        logger.info("Saving shadow matrices to npz (uint8 format, 75% smaller)...")
+        np.savez_compressed(
+            out_path_str + "/" + "shadowmats.npz",
+            shadowmat=(shmat * 255).astype(np.uint8),
+            vegshadowmat=(vegshmat * 255).astype(np.uint8),
+            vbshmat=(vbshvegshmat * 255).astype(np.uint8),
+            dtype="uint8",  # Store metadata about dtype
+        )
+    else:
+        logger.info("Skipping shadow matrix save (not needed for this workflow)")
