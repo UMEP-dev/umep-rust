@@ -79,6 +79,67 @@ pub fn gvf_calc(
     let lc_grid_arr = lc_grid.as_ref().map(|arr| arr.as_array());
 
     let (rows, cols) = (buildings.shape()[0], buildings.shape()[1]);
+
+    // Validate that all input arrays have the same shape
+    let expected_shape = [rows, cols];
+    if wallsun.shape() != expected_shape {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "wallsun shape {:?} does not match buildings shape {:?}",
+            wallsun.shape(),
+            expected_shape
+        )));
+    }
+    if walls.shape() != expected_shape {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "walls shape {:?} does not match buildings shape {:?}",
+            walls.shape(),
+            expected_shape
+        )));
+    }
+    if shadow.shape() != expected_shape {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "shadow shape {:?} does not match buildings shape {:?}",
+            shadow.shape(),
+            expected_shape
+        )));
+    }
+    if dirwalls.shape() != expected_shape {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "dirwalls shape {:?} does not match buildings shape {:?}",
+            dirwalls.shape(),
+            expected_shape
+        )));
+    }
+    if tg.shape() != expected_shape {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "tg shape {:?} does not match buildings shape {:?}",
+            tg.shape(),
+            expected_shape
+        )));
+    }
+    if emis_grid.shape() != expected_shape {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "emis_grid shape {:?} does not match buildings shape {:?}",
+            emis_grid.shape(),
+            expected_shape
+        )));
+    }
+    if alb_grid.shape() != expected_shape {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "alb_grid shape {:?} does not match buildings shape {:?}",
+            alb_grid.shape(),
+            expected_shape
+        )));
+    }
+    if let Some(lc) = lc_grid_arr.as_ref() {
+        if lc.shape() != expected_shape {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "lc_grid shape {:?} does not match buildings shape {:?}",
+                lc.shape(),
+                expected_shape
+            )));
+        }
+    }
     let azimuth_a: Array1<f32> = Array1::range(5.0, 359.0, 20.0);
     let num_azimuths = azimuth_a.len() as f32;
     let num_azimuths_half = num_azimuths / 2.0;

@@ -242,8 +242,18 @@ def Solweig_2025a_calc(
 
     rows_valid = np.any(valid_mask, axis=1)
     cols_valid = np.any(valid_mask, axis=0)
-    rmin, rmax = np.where(rows_valid)[0][[0, -1]]
-    cmin, cmax = np.where(cols_valid)[0][[0, -1]]
+
+    # Check if we have any valid rows/cols after masking
+    rows_valid_indices = np.where(rows_valid)[0]
+    cols_valid_indices = np.where(cols_valid)[0]
+
+    if len(rows_valid_indices) == 0 or len(cols_valid_indices) == 0:
+        # No valid pixels - should have been caught by early return but handle it here too
+        rmin, rmax, cmin, cmax = 0, rows, 0, cols
+    else:
+        rmin, rmax = rows_valid_indices[[0, -1]]
+        cmin, cmax = cols_valid_indices[[0, -1]]
+
     rmax += 1
     cmax += 1
 
