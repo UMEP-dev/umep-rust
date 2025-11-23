@@ -242,18 +242,8 @@ def Solweig_2025a_calc(
 
     rows_valid = np.any(valid_mask, axis=1)
     cols_valid = np.any(valid_mask, axis=0)
-
-    # Check if we have any valid rows/cols after masking
-    rows_valid_indices = np.where(rows_valid)[0]
-    cols_valid_indices = np.where(cols_valid)[0]
-
-    if len(rows_valid_indices) == 0 or len(cols_valid_indices) == 0:
-        # No valid pixels - should have been caught by early return but handle it here too
-        rmin, rmax, cmin, cmax = 0, rows, 0, cols
-    else:
-        rmin, rmax = rows_valid_indices[[0, -1]]
-        cmin, cmax = cols_valid_indices[[0, -1]]
-
+    rmin, rmax = np.where(rows_valid)[0][[0, -1]]
+    cmin, cmax = np.where(cols_valid)[0][[0, -1]]
     rmax += 1
     cmax += 1
 
@@ -292,6 +282,12 @@ def Solweig_2025a_calc(
         bush = bush[sl]
         alb_grid = alb_grid[sl]
         emis_grid = emis_grid[sl]
+        TgK = TgK[sl]
+        Tstart = Tstart[sl]
+        TgK_wall = TgK_wall[sl]
+        Tstart_wall = Tstart_wall[sl]
+        TmaxLST = TmaxLST[sl]
+        TmaxLST_wall = TmaxLST_wall[sl]
         svfalfa = svfalfa[sl]
         svfbuveg = svfbuveg[sl]
         Tgmap1 = Tgmap1[sl]

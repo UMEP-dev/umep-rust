@@ -408,6 +408,8 @@ def test_solweig():
         params_json_path="tests/rustalgos/test_params_solweig.json",
     )
     SWC.config.output_dir = "temp/goteborg/test_py/"
+    # Set corner to NaN
+    SWC.raster_data.dsm[0:100, 0:100] = np.nan
 
     def run_py():
         SWC.run()
