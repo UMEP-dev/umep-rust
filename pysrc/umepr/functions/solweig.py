@@ -284,10 +284,8 @@ def Solweig_2025a_calc(
         emis_grid = emis_grid[sl]
         TgK = TgK[sl]
         Tstart = Tstart[sl]
-        TgK_wall = TgK_wall[sl]
-        Tstart_wall = Tstart_wall[sl]
         TmaxLST = TmaxLST[sl]
-        TmaxLST_wall = TmaxLST_wall[sl]
+        # Note: TgK_wall, Tstart_wall, TmaxLST_wall are scalars, not arrays
         svfalfa = svfalfa[sl]
         svfbuveg = svfbuveg[sl]
         Tgmap1 = Tgmap1[sl]
