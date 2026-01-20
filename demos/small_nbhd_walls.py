@@ -1,13 +1,12 @@
 # %%
-from importlib import reload
+"""
+Demo: Small neighbourhood wall height/aspect generation
+
+This demo shows how to use the solweig package for wall processing.
+"""
 from pathlib import Path
 
-from umep import (
-    solweig_algorithm,
-    wall_heightaspect_algorithm,
-)
-
-reload(solweig_algorithm)
+import solweig
 
 #
 bbox = [789700, 784130, 790100, 784470]
@@ -21,8 +20,7 @@ working_path_str = str(working_path)
 
 # %%
 dsm_path = Path("demos/data/small_nbhd/dsm_clipped.tif").absolute()
-# if not Path.exists(working_path / "walls"):
-wall_heightaspect_algorithm.generate_wall_hts(
+solweig.walls.generate_wall_hts(
     dsm_path=str(dsm_path),
     bbox=bbox,
     out_dir=working_path_str + "/walls",

@@ -8,8 +8,8 @@ from builtins import range
 
 import numpy as np
 from tqdm import tqdm
-from umep import common
-from umep.util.SEBESOLWEIGCommonFiles import sun_position as sp
+from .. import io as common
+from ..algorithms import sun_position as sp
 
 from ..rustalgos import shadowing
 

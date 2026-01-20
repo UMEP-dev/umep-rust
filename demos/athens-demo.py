@@ -1,14 +1,19 @@
 # %%
+"""
+Demo: Athens SOLWEIG preprocessing and run
+
+This demo shows how to use the solweig package for:
+1. Rasterizing tree data to CDSM
+2. Wall height and aspect generation
+3. Sky View Factor (SVF) calculation
+4. Full SOLWEIG model run
+"""
+
 from pathlib import Path
 
 import geopandas as gpd
+import solweig
 from pyproj import CRS
-from umep import (
-    common,
-    wall_heightaspect_algorithm,
-)
-from umep.functions.SOLWEIGpython import solweig_runner_core
-from umepr import solweig_runner_rust, svf
 
 # working folder
 input_folder = "demos/data/athens"
@@ -28,7 +33,7 @@ total_extents = [476800, 4205850, 477200, 4206250]
 working_crs = 2100
 trees_gdf = gpd.read_file(input_folder + "/trees.gpkg")
 trees_gdf = trees_gdf.to_crs(working_crs)
-cdsm_rast, cdsm_transf = common.rasterise_gdf(
+cdsm_rast, cdsm_transf = solweig.io.rasterise_gdf(
     trees_gdf,
     "geometry",
     "height",
@@ -36,7 +41,7 @@ cdsm_rast, cdsm_transf = common.rasterise_gdf(
     pixel_size=1.0,
 )
 # add to DEM then set
-common.save_raster(
+solweig.io.save_raster(
     str(output_folder_path / "CDSM.tif"),
     cdsm_rast,
     cdsm_transf.to_gdal(),
@@ -44,7 +49,7 @@ common.save_raster(
 )
 # %%
 # wall info for SOLWEIG
-wall_heightaspect_algorithm.generate_wall_hts(
+solweig.walls.generate_wall_hts(
     dsm_path=input_path_str + "/DSM.tif",
     bbox=total_extents,
     out_dir=output_folder_path_str + "/walls",
@@ -52,7 +57,7 @@ wall_heightaspect_algorithm.generate_wall_hts(
 
 # %%
 # skyview factor for SOLWEIG
-svf.generate_svf(
+solweig.svf.generate_svf(
     dsm_path=input_path_str + "/DSM.tif",
     bbox=total_extents,
     out_dir=output_folder_path_str + "/svf",
@@ -62,21 +67,23 @@ svf.generate_svf(
 
 # %%
 # skyview factor for SOLWEIG - Tiled
-svf.generate_svf(
+solweig.svf.generate_svf(
     dsm_path=input_path_str + "/DSM.tif",
     bbox=total_extents,
     out_dir=output_folder_path_str + "/svf_tiled",
     cdsm_path=output_folder_path_str + "/CDSM.tif",
     trans_veg_perc=3,
-    use_tiled_loading=True,
-    tile_size=200,
+    use_tiled_loading=False,
+    tile_size=500,
 )
 
 # %%
-SRR = solweig_runner_rust.SolweigRunRust(
+# Full SOLWEIG run
+# Rust-optimized runner
+SRR = solweig.SolweigRunRust(
     "demos/data/athens/configsolweig.ini",
     "demos/data/athens/parametersforsolweig.json",
-    use_tiled_loading=True,
+    use_tiled_loading=False,
     tile_size=200,
 )
 SRR.run()
@@ -85,7 +92,8 @@ Running SOLWEIG: 100%|| 72/72 [00:57<00:00,  1.63step/s]
 """
 
 # %%
-SRC = solweig_runner_core.SolweigRunCore(
+# Pure Python runner (for comparison)
+SRC = solweig.SolweigRunCore(
     "demos/data/athens/configsolweig.ini",
     "demos/data/athens/parametersforsolweig.json",
     use_tiled_loading=False,
@@ -94,3 +102,5 @@ SRC = solweig_runner_core.SolweigRunCore(
 """
 Running SOLWEIG: 100%|| 72/72 [04:49<00:00,  4.02s/step]
 """
+
+# %%

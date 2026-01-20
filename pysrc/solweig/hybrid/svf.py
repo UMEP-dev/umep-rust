@@ -7,8 +7,9 @@ There is a full Rust implementation which should be used instead.
 
 import numpy as np
 from tqdm import tqdm
-from umep.util import shadowingfunctions as shadow
-from umep.util.SEBESOLWEIGCommonFiles.create_patches import create_patches
+# TODO: shadowingfunctions not yet copied - this file is for testing only
+# from ..algorithms import shadowingfunctions as shadow
+from ..algorithms.create_patches import create_patches
 
 from ..rustalgos import shadowing
 

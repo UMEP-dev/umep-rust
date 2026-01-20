@@ -5,11 +5,13 @@ mod emissivity_models;
 mod gpu;
 mod gvf;
 mod patch_radiation;
+mod pet;
 mod shadowing;
 mod sky;
 mod skyview;
 mod sun;
 mod sunlit_shaded_patches;
+mod utci;
 mod vegetation;
 
 #[pymodule]
@@ -24,6 +26,8 @@ fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_gvf_module(py_module)?;
     register_sky_module(py_module)?;
     register_vegetation_module(py_module)?;
+    register_utci_module(py_module)?;
+    register_pet_module(py_module)?;
 
     // Add GPU feature flag
     #[cfg(feature = "gpu")]
@@ -31,7 +35,7 @@ fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(not(feature = "gpu"))]
     py_module.add("GPU_ENABLED", false)?;
 
-    py_module.add("__doc__", "UMEP algorithms implemented in Rust.")?;
+    py_module.add("__doc__", "SOLWEIG urban microclimate algorithms implemented in Rust.")?;
 
     Ok(())
 }
@@ -89,6 +93,24 @@ fn register_vegetation_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     submodule.add_class::<vegetation::KsideVegResult>()?;
     submodule.add_function(wrap_pyfunction!(vegetation::lside_veg, &submodule)?)?;
     submodule.add_function(wrap_pyfunction!(vegetation::kside_veg, &submodule)?)?;
+    py_module.add_submodule(&submodule)?;
+    Ok(())
+}
+
+fn register_utci_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let submodule = PyModule::new(py_module.py(), "utci")?;
+    submodule.add("__doc__", "UTCI (Universal Thermal Climate Index) calculations.")?;
+    submodule.add_function(wrap_pyfunction!(utci::utci_single, &submodule)?)?;
+    submodule.add_function(wrap_pyfunction!(utci::utci_grid, &submodule)?)?;
+    py_module.add_submodule(&submodule)?;
+    Ok(())
+}
+
+fn register_pet_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let submodule = PyModule::new(py_module.py(), "pet")?;
+    submodule.add("__doc__", "PET (Physiological Equivalent Temperature) calculations.")?;
+    submodule.add_function(wrap_pyfunction!(pet::pet_calculate, &submodule)?)?;
+    submodule.add_function(wrap_pyfunction!(pet::pet_grid, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }

@@ -1,15 +1,18 @@
 """
-Subclasses SolweigRunCore - swaps in solweig function which calls Rust implementations of shadowing and GVF calculations
+Subclasses SolweigRunCore - swaps in solweig function which calls Rust implementations
+of shadowing and GVF calculations.
+
+This module uses the standalone SolweigRunCore from the solweig package,
+with Rust-optimized calculation functions.
 """
 
 from typing import Any
 
-from umep.functions.SOLWEIGpython.solweig_runner_core import SolweigRunCore
-
+from .runner import SolweigRunCore
 from .functions.solweig import Solweig_2025a_calc as Solweig_2025a_calc_hybrid
 
 
-class SolweigRunRust(SolweigRunCore):
+class SolweigRunRust(SolweigRunCore):  # type: ignore
     """Class to run the SOLWEIG algorithm with Rust optimisations."""
 
     def calc_solweig(

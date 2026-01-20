@@ -11,8 +11,9 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
-from umep import class_configs, common
-from umep.tile_manager import TileManager
+from . import configs as class_configs
+from . import io as common
+from .tiles import TileManager
 
 from .rustalgos import skyview
 
@@ -57,13 +58,7 @@ def generate_svf(
         rows = dsm_meta["rows"]
         cols = dsm_meta["cols"]
 
-        # Handle rasterio vs GDAL transform
-        if "res" in dsm_meta:
-            # Convert Rasterio Affine to GDAL transform
-            # Affine: (a, b, c, d, e, f) -> GDAL: (c, a, b, f, d, e)
-            t = dsm_trf
-            dsm_trf = [t.c, t.a, t.b, t.f, t.d, t.e]
-
+        # get_raster_metadata already returns transform as GDAL-style list [c, a, b, f, d, e]
         dsm_pix_size = dsm_trf[1]
         dsm_scale = 1 / dsm_pix_size
 

@@ -1,7 +1,7 @@
 [project]
-name = "umepr"
-version = "0.0.1b61"
-description = "rust implementation of urban multi-scale environmental predictor"
+name = "solweig"
+version = "0.0.1a1"
+description = "High-performance SOLWEIG urban microclimate model (Rust + Python)"
 readme = "README.md"
 requires-python = ">=3.9, <3.14"
 license = { text = "AGPL-3.0" }
@@ -47,7 +47,6 @@ dependencies = [
     "scipy>=1.13.1",
     "shapely>=2.0.7",
     "tqdm>=4.67.1",
-    "umep==0.0.1a18",
     "xarray>=2024.7.0",
 ]
 
@@ -58,11 +57,11 @@ build-backend = "maturin"
 [tool.maturin]
 manifest-path = "rust/Cargo.toml"
 python-source = "pysrc"
-module-name = 'umepr.rustalgos'
+module-name = 'solweig.rustalgos'
 features = ["pyo3/extension-module", "gpu"]
 
 [tool.setuptools]
-packages = ["umepr"]
+packages = ["solweig"]
 
 [dependency-groups]
 dev = [
@@ -76,12 +75,13 @@ dev = [
     "ruff>=0.5.1",
     "poethepoet>=0.29.0",
     "pyright>=1.1.398",
+    "umep>=0.0.1a18",  # For cross-checking tests against reference implementation
 ]
 
 [project.urls]
-homepage = "https://github.com/UMEP-dev/umep-rust"
-documentation = "https://github.com/UMEP-dev/umep-rust"
-repository = "https://github.com/UMEP-dev/umep-rust"
+homepage = "https://github.com/UMEP-dev/solweig"
+documentation = "https://github.com/UMEP-dev/solweig"
+repository = "https://github.com/UMEP-dev/solweig"
 
 [tool.poe.tasks]
 verify_project = { shell = "ruff format && ruff check && pyright . && pytest ./tests" }
@@ -117,7 +117,7 @@ docstring-code-line-length = "dynamic"
 
 [tool.pyright]
 pythonVersion = "3.11"
-include = ["umepr"]
+include = ["solweig"]
 exclude = [
     "**/__pycache__",
     "**/__pypackages__",

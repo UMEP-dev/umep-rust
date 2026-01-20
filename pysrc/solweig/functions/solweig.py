@@ -9,20 +9,20 @@ This version is a copy except for the changes made to call the Rust functions di
 from copy import deepcopy
 
 import numpy as np
-from umep.functions.SOLWEIGpython.cylindric_wedge import cylindric_wedge
-from umep.functions.SOLWEIGpython.daylen import daylen
-from umep.functions.SOLWEIGpython.Kup_veg_2015a import Kup_veg_2015a
+from ..algorithms.cylindric_wedge import cylindric_wedge
+from ..algorithms.daylen import daylen
+from ..algorithms.Kup_veg_2015a import Kup_veg_2015a
 
 # Anisotropic longwave
-from umep.functions.SOLWEIGpython.patch_radiation import patch_steradians
-from umep.functions.SOLWEIGpython.TsWaveDelay_2015a import TsWaveDelay_2015a
+from ..algorithms.patch_radiation import patch_steradians
+from ..algorithms.TsWaveDelay_2015a import TsWaveDelay_2015a
 
 # Wall surface temperature scheme
-from umep.functions.SOLWEIGpython.wall_surface_temperature import wall_surface_temperature
-from umep.util.SEBESOLWEIGCommonFiles.clearnessindex_2013b import clearnessindex_2013b
-from umep.util.SEBESOLWEIGCommonFiles.create_patches import create_patches
-from umep.util.SEBESOLWEIGCommonFiles.diffusefraction import diffusefraction
-from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
+from ..algorithms.wall_surface_temperature import wall_surface_temperature
+from ..algorithms.clearnessindex_2013b import clearnessindex_2013b
+from ..algorithms.create_patches import create_patches
+from ..algorithms.diffusefraction import diffusefraction
+from ..algorithms.Perez_v3 import Perez_v3
 
 from ..rustalgos import gvf, shadowing, sky, vegetation
 
