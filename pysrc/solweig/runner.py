@@ -37,13 +37,6 @@ from .algorithms import UTCI_calculations as utci
 # Import the Solweig calculation function
 from .functions.solweig import Solweig_2025a_calc as Solweig_2025a_calc_default
 
-try:
-    from matplotlib import pyplot as plt
-    PLT = True
-except ImportError:
-    PLT = False
-
-
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 

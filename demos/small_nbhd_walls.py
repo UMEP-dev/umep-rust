@@ -4,6 +4,7 @@ Demo: Small neighbourhood wall height/aspect generation
 
 This demo shows how to use the solweig package for wall processing.
 """
+
 from pathlib import Path
 
 import solweig
