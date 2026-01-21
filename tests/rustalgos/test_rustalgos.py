@@ -9,6 +9,9 @@ import timeit
 import matplotlib.pyplot as plt
 import numpy as np
 from memory_profiler import memory_usage
+from solweig.hybrid.svf import svfForProcessing153_rust_shdw
+from solweig.rustalgos import gvf, shadowing, sky, skyview, vegetation
+from solweig.solweig_runner_rust import SolweigRunRust
 from umep.class_configs import ShadowMatrices, SvfData, TgMaps, WallsData
 from umep.functions.SOLWEIGpython import Solweig_run
 from umep.functions.SOLWEIGpython.anisotropic_sky import anisotropic_sky as ani_sky
@@ -26,9 +29,6 @@ from umep.util.SEBESOLWEIGCommonFiles.clearnessindex_2013b import clearnessindex
 from umep.util.SEBESOLWEIGCommonFiles.create_patches import create_patches
 from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
 from umep.util.SEBESOLWEIGCommonFiles.shadowingfunction_wallheight_23 import shadowingfunction_wallheight_23
-from umepr.hybrid.svf import svfForProcessing153_rust_shdw
-from umepr.rustalgos import gvf, shadowing, sky, skyview, vegetation
-from umepr.solweig_runner_rust import SolweigRunRust
 
 
 def make_large_tile(arr: np.ndarray) -> np.ndarray:

@@ -26,11 +26,15 @@ keywords = [
 authors = [{ name = "UMEP Developers" }]
 maintainers = [{ name = "UMEP Developers" }]
 classifiers = [
+    "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: Atmospheric Science",
+    "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
     "geopandas>=1.0.1",
@@ -109,27 +113,6 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 docstring-code-format = true
 docstring-code-line-length = "dynamic"
-
-[tool.pyright]
-pythonVersion = "3.11"
-include = ["solweig"]
-exclude = [
-    "**/__pycache__",
-    "**/__pypackages__",
-    "build",
-    "docs",
-    "**/temp/",
-    "tests/",
-    "dist",
-    ".venv",
-]
-typeCheckingMode = "strict"
-useLibraryCodeForTypes = true
-reportUntypedFunctionDecorator = false
-reportUntypedClassDecorator = false
-reportUnknownMemberType = false
-reportMissingTypeStubs = false
-reportUnnecessaryIsInstance = false
 
 [tool.pytest.ini_options]
 console_output_style = "count"
