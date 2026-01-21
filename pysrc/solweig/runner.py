@@ -21,6 +21,8 @@ from rasterio.transform import Affine, rowcol
 from tqdm import tqdm
 
 from . import io as common
+from .algorithms import PET_calculations
+from .algorithms import UTCI_calculations as utci
 from .configs import (
     EnvironData,
     RasterData,
@@ -30,12 +32,10 @@ from .configs import (
     TgMaps,
     WallsData,
 )
-from .tiles import TileManager
-from .algorithms import PET_calculations
-from .algorithms import UTCI_calculations as utci
 
 # Import the Solweig calculation function
 from .functions.solweig import Solweig_2025a_calc as Solweig_2025a_calc_default
+from .tiles import TileManager
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -799,6 +799,24 @@ class SolweigRunCore:
                     self.raster_data.nd_val,
                     coerce_f64_to_f32=True,
                 )
+            if self.config.output_ldown:
+                common.save_raster(
+                    self.config.output_dir + "/Ldown_" + time_code + ".tif",
+                    Ldown,
+                    self.raster_data.trf_arr,
+                    self.raster_data.crs_wkt,
+                    self.raster_data.nd_val,
+                    coerce_f64_to_f32=True,
+                )
+            if self.config.output_lup:
+                common.save_raster(
+                    self.config.output_dir + "/Lup_" + time_code + ".tif",
+                    Lup,
+                    self.raster_data.trf_arr,
+                    self.raster_data.crs_wkt,
+                    self.raster_data.nd_val,
+                    coerce_f64_to_f32=True,
+                )
 
         # Abort if loop was broken
         if not self.proceed:
@@ -996,16 +1014,56 @@ class SolweigRunCore:
 
                 # Run calculation
                 (
-                    Tmrt, Kdown, Kup, Ldown, Lup, Tg, ea, esky, I0, CI, shadow,
-                    res_firstdaytime, res_timestepdec, res_timeadd,
-                    Tgmap1_new, Tgmap1E_new, Tgmap1S_new, Tgmap1W_new, Tgmap1N_new,
-                    Keast, Ksouth, Kwest, Knorth, Least, Lsouth, Lwest, Lnorth,
-                    KsideI, TgOut1_new, TgOut, radIout, radDout, Lside,
-                    Lsky_patch_characteristics, CI_Tg, CI_TgG, KsideD, dRad, Kside,
-                    steradians_new, voxelTable,
+                    Tmrt,
+                    Kdown,
+                    Kup,
+                    Ldown,
+                    Lup,
+                    Tg,
+                    ea,
+                    esky,
+                    I0,
+                    CI,
+                    shadow,
+                    res_firstdaytime,
+                    res_timestepdec,
+                    res_timeadd,
+                    Tgmap1_new,
+                    Tgmap1E_new,
+                    Tgmap1S_new,
+                    Tgmap1W_new,
+                    Tgmap1N_new,
+                    Keast,
+                    Ksouth,
+                    Kwest,
+                    Knorth,
+                    Least,
+                    Lsouth,
+                    Lwest,
+                    Lnorth,
+                    KsideI,
+                    TgOut1_new,
+                    TgOut,
+                    radIout,
+                    radDout,
+                    Lside,
+                    Lsky_patch_characteristics,
+                    CI_Tg,
+                    CI_TgG,
+                    KsideD,
+                    dRad,
+                    Kside,
+                    steradians_new,
+                    voxelTable,
                 ) = self.calc_solweig(
-                    i, elvis, first, second,
-                    current_firstdaytime, current_timeadd, current_timestepdec, posture,
+                    i,
+                    elvis,
+                    first,
+                    second,
+                    current_firstdaytime,
+                    current_timeadd,
+                    current_timestepdec,
+                    posture,
                 )
 
                 # Update tile state with new thermal arrays

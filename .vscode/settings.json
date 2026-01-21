@@ -1,30 +1,75 @@
 {
-    "editor.wordWrap": "on",
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EDITOR
+  // ═══════════════════════════════════════════════════════════════════════════
+  "editor.wordWrap": "on",
+  "editor.rulers": [120],
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "explicit",
+    "source.organizeImports": "explicit"
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PYTHON
+  // ═══════════════════════════════════════════════════════════════════════════
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": {
-      "source.fixAll.eslint": "explicit",
-      "source.fixAll.stylelint": "explicit"
-    },
-    "notebook.lineNumbers": "on",
-    "notebook.diff.ignoreMetadata": true,
-    "notebook.diff.ignoreOutputs": true,
-    "notebook.formatOnSave.enabled": true,
-    "notebook.codeActionsOnSave": {
-      "notebook.source.fixAll": "explicit",
-      "notebook.source.organizeImports": "explicit"
-    },
-    "[python]": {
-      "editor.formatOnSave": true,
-      "editor.codeActionsOnSave": {
-        "source.fixAll": "explicit",
-        "source.organizeImports": "explicit"
-      },
-      "editor.defaultFormatter": "charliermarsh.ruff"
-    },
-    "jupyter.notebookFileRoot": "${workspaceFolder}",
-    "python.testing.pytestArgs": [
-      "tests"
-    ],
-    "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true
+      "source.fixAll": "explicit",
+      "source.organizeImports": "explicit"
+    }
+  },
+  "python.testing.pytestArgs": ["tests"],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true,
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  // Disable Pylance/Pyright - using Ruff + ty instead
+  "python.languageServer": "None",
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RUST
+  // ═══════════════════════════════════════════════════════════════════════════
+  "[rust]": {
+    "editor.defaultFormatter": "rust-lang.rust-analyzer",
+    "editor.formatOnSave": true
+  },
+  "rust-analyzer.linkedProjects": ["${workspaceFolder}/rust/Cargo.toml"],
+  "rust-analyzer.check.command": "clippy",
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // JUPYTER & NOTEBOOKS
+  // ═══════════════════════════════════════════════════════════════════════════
+  "jupyter.notebookFileRoot": "${workspaceFolder}",
+  "notebook.lineNumbers": "on",
+  "notebook.diff.ignoreMetadata": true,
+  "notebook.diff.ignoreOutputs": true,
+  "notebook.formatOnSave.enabled": true,
+  "notebook.codeActionsOnSave": {
+    "notebook.source.fixAll": "explicit",
+    "notebook.source.organizeImports": "explicit"
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SEARCH & FILE EXCLUDES (Performance)
+  // ═══════════════════════════════════════════════════════════════════════════
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/*.pyc": true,
+    ".pytest_cache": true
+  },
+  "search.exclude": {
+    "**/.venv": true,
+    "**/rust/target": true,
+    "**/__pycache__": true,
+    "**/node_modules": true,
+    "**/*.pyc": true
+  },
+  "files.watcherExclude": {
+    "**/.venv/**": true,
+    "**/rust/target/**": true,
+    "**/__pycache__/**": true,
+    "**/.git/objects/**": true
   }
+}

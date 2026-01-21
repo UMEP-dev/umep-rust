@@ -8,8 +8,8 @@ with Rust-optimized calculation functions.
 
 from typing import Any
 
-from .runner import SolweigRunCore
 from .functions.solweig import Solweig_2025a_calc as Solweig_2025a_calc_hybrid
+from .runner import SolweigRunCore
 
 
 class SolweigRunRust(SolweigRunCore):  # type: ignore
