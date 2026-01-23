@@ -1,0 +1,121 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+      - dev
+
+# Cancel in-progress runs for the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run ruff check
+        run: uv run ruff check
+
+      - name: Run ruff format check
+        run: uv run ruff format --check
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run pyright
+        run: uv run pyright .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Build Rust extension
+        run: uv run maturin develop
+
+      - name: Run fast tests (spec tests only)
+        run: uv run python -m pytest tests/spec/ -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+  test-qgis-compat:
+    name: Test QGIS compatibility (NumPy 1.26)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies (QGIS compat - NumPy 1.26)
+        run: uv sync --group qgis-compat
+
+      - name: Build Rust extension
+        run: uv run maturin develop
+
+      - name: Verify NumPy version
+        run: uv run python -c "import numpy; assert numpy.__version__.startswith('1.26'), f'Expected NumPy 1.26.x, got {numpy.__version__}'"
+
+      - name: Verify GDAL backend is used
+        run: uv run python -c "from solweig import io; assert io.GDAL_ENV, 'Expected GDAL backend'"
+        env:
+          UMEP_USE_GDAL: "1"
+
+      - name: Run fast tests (spec tests only) with GDAL backend
+        run: uv run python -m pytest tests/spec/ -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          UMEP_USE_GDAL: "1"

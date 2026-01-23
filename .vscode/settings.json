@@ -71,5 +71,6 @@
     "**/rust/target/**": true,
     "**/__pycache__/**": true,
     "**/.git/objects/**": true
-  }
+  },
+  "python-envs.pythonProjects": []
 }

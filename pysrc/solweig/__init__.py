@@ -4,7 +4,7 @@ SOLWEIG - High-performance urban microclimate model.
 A Python package with Rust-accelerated algorithms for computing mean radiant
 temperature (Tmrt) and other urban climate parameters.
 
-## Simplified API (Recommended)
+## Modern API
 
     import solweig
     from datetime import datetime
@@ -19,18 +19,18 @@ temperature (Tmrt) and other urban climate parameters.
     )
     print(f"Tmrt: {result.tmrt.mean():.1f}°C")
 
-## Low-level API
+## Time Series
 
-    import solweig
+    results = solweig.calculate_timeseries(
+        surface=surface,
+        weather_series=[weather1, weather2, weather3],
+        location=location,
+    )
+
+## Utilities
 
     # Load raster data
     dsm, transform, crs, nodata = solweig.io.load_raster("dsm.tif")
-
-    # Calculate sky view factor
-    solweig.svf.generate_svf(dsm_path, bbox, out_dir)
-
-    # Generate shadows
-    solweig.shadows.generate_shadows(dsm_path, date, wall_ht, wall_aspect, bbox, out_dir)
 
     # Generate wall heights and aspects
     solweig.walls.generate_wall_hts(dsm_path, bbox, out_dir)
@@ -56,6 +56,8 @@ from .api import (
     calculate_timeseries,
     calculate_tiled,
     load_params,
+    load_physics,
+    load_materials,
     # Tiled processing helpers
     calculate_buffer_distance,
     TileSpec,
@@ -65,25 +67,30 @@ from .api import (
     compute_pet,
     compute_utci_grid,
     compute_pet_grid,
+    # Run metadata/provenance
+    create_run_metadata,
+    save_run_metadata,
+    load_run_metadata,
 )
 
-# Import I/O module
+# Import data bundles (Phase 5 refactoring)
+from .bundles import (
+    DirectionalArrays,
+    SvfBundle,
+    ShadowBundle,
+    GroundBundle,
+    GvfBundle,
+    LupBundle,
+    RadiationBundle,
+    WallBundle,
+    VegetationBundle,
+)
+
+# Import utility modules
 from . import io
-from . import configs
 from . import tiles
-from . import svf
-from . import shadows
 from . import walls
 from . import progress
-
-# Import runner classes (after configs to avoid circular imports)
-try:
-    from .runner import SolweigRunCore
-    from .solweig_runner_rust import SolweigRunRust
-except ImportError as e:
-    logger.debug(f"Runner imports deferred: {e}")
-    SolweigRunCore = None
-    SolweigRunRust = None
 
 # Try to import Rust algorithms
 try:
@@ -156,6 +163,8 @@ __all__ = [
     "calculate_timeseries",
     "calculate_tiled",
     "load_params",
+    "load_physics",
+    "load_materials",
     # Tiled processing helpers
     "calculate_buffer_distance",
     "TileSpec",
@@ -165,17 +174,25 @@ __all__ = [
     "compute_pet",
     "compute_utci_grid",
     "compute_pet_grid",
-    # Modules
+    # Run metadata/provenance
+    "create_run_metadata",
+    "save_run_metadata",
+    "load_run_metadata",
+    # Data bundles (Phase 5 refactoring)
+    "DirectionalArrays",
+    "SvfBundle",
+    "ShadowBundle",
+    "GroundBundle",
+    "GvfBundle",
+    "LupBundle",
+    "RadiationBundle",
+    "WallBundle",
+    "VegetationBundle",
+    # Utility modules
     "io",
-    "configs",
     "tiles",
-    "svf",
-    "shadows",
     "walls",
     "progress",
-    # Runner classes
-    "SolweigRunCore",
-    "SolweigRunRust",
     # GPU utilities
     "is_gpu_available",
     "get_compute_backend",

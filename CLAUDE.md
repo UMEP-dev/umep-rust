@@ -5,6 +5,44 @@
 SOLWEIG is a high-performance urban microclimate model (Rust + Python via maturin).
 It calculates Mean Radiant Temperature (Tmrt), UTCI, and PET for urban thermal comfort analysis.
 
+## Working Preferences
+
+**IMPORTANT: Always work in bite-sized chunks and get approval before major changes.**
+
+### Workflow Guidelines
+
+1. **Bite-sized chunks**: Break work into small, reviewable pieces
+   - Make one logical change at a time
+   - Commit frequently with clear messages
+   - Don't bundle multiple unrelated changes
+
+2. **Review before implementing**: For API changes or important decisions:
+   - Present a proposal with options
+   - Explain trade-offs clearly
+   - Wait for user approval before proceeding
+   - Don't assume what the user wants
+
+3. **What requires review**:
+   - API changes (method names, parameters, return types)
+   - Breaking changes to existing code
+   - Architectural decisions
+   - Performance trade-offs
+   - Adding new dependencies
+
+4. **What doesn't require review**:
+   - Bug fixes with clear solutions
+   - Adding tests
+   - Documentation improvements
+   - Formatting/linting fixes
+   - Internal refactoring that preserves API
+
+### Communication Style
+
+- Ask questions early when uncertain
+- Present options rather than making assumptions
+- Be explicit about trade-offs
+- Keep proposals concise but complete
+
 ## Directory Structure
 
 ```

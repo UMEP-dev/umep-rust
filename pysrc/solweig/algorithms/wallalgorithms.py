@@ -7,7 +7,8 @@ import math
 
 import numpy as np
 import scipy.ndimage.interpolation as sc
-from tqdm import tqdm
+
+from ..progress import progress
 
 
 def findwalls(a, walllimit):
@@ -23,7 +24,7 @@ def findwalls(a, walllimit):
     walls = np.zeros((col, row))
     domain = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
     index = 0
-    for i in tqdm(np.arange(1, row - 1)):
+    for i in progress(np.arange(1, row - 1), desc="Finding walls"):
         for j in np.arange(1, col - 1):
             dom = a[j - 1 : j + 2, i - 1 : i + 2]
             walls[j, i] = np.max(dom[np.where(domain == 1)])  # new 20171006
@@ -83,7 +84,7 @@ def filter1Goodwin_as_aspect_v3(walls, scale, a):
     x = np.zeros((row, col))  # building side
     walls[walls > 0.5] = 1
 
-    for h in tqdm(range(0, 180)):  # =0:1:180 #%increased resolution to 1 deg 20140911
+    for h in progress(range(0, 180), desc="Computing wall aspects"):  # =0:1:180 #%increased resolution to 1 deg 20140911
         filtmatrix1temp = sc.rotate(filtmatrix, h, order=1, reshape=False, mode="nearest")  # bilinear
         filtmatrix1 = np.round(filtmatrix1temp)
         # filtmatrix1temp = sc.imrotate(filtmatrix, h, 'bilinear')

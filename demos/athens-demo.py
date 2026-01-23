@@ -74,12 +74,17 @@ weather_list = solweig.Weather.from_epw(
 )
 
 # %%
-# Step 3: Calculate and auto-save results
+# Step 3: Calculate Tmrt with all defaults
 # Location is auto-extracted from surface CRS metadata
+# All parameters use bundled defaults:
+#  - Human: abs_k=0.7, abs_l=0.95, standing, 75kg, 180cm, 35yo, 80W activity
+#  - Physics: Tree transmissivity=0.03, seasonal dates, posture geometry
+#  - No materials needed (no landcover grid)
 results = solweig.calculate_timeseries(
     surface=surface,
     weather_series=weather_list,
     use_anisotropic_sky=True,  # Uses SVF (computed automatically if needed)
+    conifer=False,  # Use seasonal leaf on/off (set True for evergreen trees)
     output_dir=str(output_dir),
     outputs=["tmrt", "shadow"],
 )
@@ -88,6 +93,70 @@ print(f"\n✓ Simplified API complete! Processed {len(results)} timesteps.")
 print(f"  Mean Tmrt: {results[0].tmrt.mean():.1f}°C")
 print(f"\nNote: Preprocessing cached in {output_folder_path / 'working'}")
 print("      Use force_recompute=True to regenerate walls/SVF.")
+print(f"      Run metadata saved to {output_dir / 'run_metadata.json'}")
+
+# %%
+# Optional: Load and inspect run metadata
+# This metadata captures all parameters used in the calculation for reproducibility
+metadata = solweig.load_run_metadata(output_dir / "run_metadata.json")
+print("\nRun metadata loaded:")
+print(f"  Timestamp: {metadata['run_timestamp']}")
+print(f"  SOLWEIG version: {metadata['solweig_version']}")
+print(f"  Location: {metadata['location']['latitude']:.2f}°N, {metadata['location']['longitude']:.2f}°E")
+print(f"  Human posture: {metadata.get('human', {}).get('posture', 'default (standing)')}")
+print(f"  Anisotropic sky: {metadata['parameters']['use_anisotropic_sky']}")
+print(f"  Weather timesteps: {metadata['timeseries']['timesteps']}")
+print(f"  Date range: {metadata['timeseries']['start']} to {metadata['timeseries']['end']}")
+
+# %%
+# Optional parameter customization examples:
+
+# Example 1: Custom human parameters (common use case)
+# results = solweig.calculate_timeseries(
+#     surface=surface,
+#     weather_series=weather_list,
+#     human=solweig.HumanParams(
+#         abs_k=0.65,       # Lower shortwave absorption
+#         abs_l=0.97,       # Higher longwave absorption
+#         weight=70,        # 70 kg
+#         height=1.65,      # 165 cm
+#         posture="sitting",
+#     ),
+#     output_dir=str(output_dir),
+# )
+
+# Example 2: Custom physics (e.g., different tree transmissivity)
+# Create custom_trees.json with:
+# {
+#   "Tree_settings": {"Value": {"Transmissivity": 0.05, ...}},
+#   "Posture": {"Standing": {...}, "Sitting": {...}}
+# }
+# physics = solweig.load_physics("custom_trees.json")
+# results = solweig.calculate_timeseries(
+#     surface=surface,
+#     weather_series=weather_list,
+#     physics=physics,
+#     output_dir=str(output_dir),
+# )
+
+# Example 3: Custom materials (requires landcover grid)
+# surface_with_lc = solweig.SurfaceData.prepare(
+#     dsm="dsm.tif",
+#     land_cover="landcover.tif",  # Grid with class IDs (0-7, 99-102)
+#     working_dir="cache/",
+# )
+# materials = solweig.load_materials("site_materials.json")  # Albedo, emissivity per class
+# results = solweig.calculate_timeseries(
+#     surface=surface_with_lc,
+#     weather_series=weather_list,
+#     materials=materials,
+#     output_dir=str(output_dir),
+# )
+
+# Legacy: Old unified params file (still supported for backwards compatibility)
+# params = solweig.load_params("parametersforsolweig.json")
+# Contains human + physics + materials in one file
+# Note: Prefer the new three-parameter model for clarity!
 
 # %%
 # Step 4: Post-process thermal comfort indices (UTCI/PET)
@@ -118,46 +187,20 @@ print(f"\n✓ UTCI post-processing complete! Processed {n_utci} timesteps.")
 
 # %%
 # =============================================================================
-# LEGACY API (for backwards compatibility)
+# NOTE: Legacy API (SolweigRunRust, SolweigRunCore, configs.py) removed in Phase 5.6
 # =============================================================================
-# This is the original API using config files. Maintained for:
-# - Backwards compatibility with existing workflows
-# - Comparison with simplified API
-
-# Pre-generate walls and SVF (required for legacy API)
-solweig.walls.generate_wall_hts(
-    dsm_path=str(input_path / "DSM.tif"),
-    bbox=EXTENTS_BBOX,
-    out_dir=str(output_folder_path / "walls"),
-)
-
-solweig.svf.generate_svf(
-    dsm_path=str(input_path / "DSM.tif"),
-    bbox=EXTENTS_BBOX,
-    out_dir=str(output_folder_path / "svf"),
-    cdsm_path=str(output_folder_path / "CDSM.tif"),
-    trans_veg_perc=3,
-)
-
-# Uncomment to run with legacy API:
-
-# Rust-optimized runner (fast)
-SRR = solweig.SolweigRunRust(
-    "demos/data/athens/configsolweig.ini",
-    "demos/data/athens/parametersforsolweig.json",
-    use_tiled_loading=False,
-    tile_size=200,
-)
-SRR.run()
-# # Performance: ~1.63 steps/s on Athens demo (400x400 grid, 72 timesteps)
-
-# Pure Python runner (for debugging or environments without Rust)
-# SRC = solweig.SolweigRunCore(
-#     "demos/data/athens/configsolweig.ini",
-#     "demos/data/athens/parametersforsolweig.json",
-#     use_tiled_loading=False,
+# The legacy config-file-driven API has been removed. Use the modern simplified API above.
+# For tiled processing of large rasters, use:
+#
+# results = solweig.calculate_tiled(
+#     surface=surface,
+#     location=location,
+#     weather=weather,
+#     tile_size=256,  # Tile size in pixels
+#     overlap=50,     # Overlap in pixels for shadow continuity
+#     output_dir=str(output_dir),
 # )
-# SRC.run()
-# # Performance: ~4.02 s/step on Athens demo (slower than Rust)
+#
+# Performance: The modern API with Rust algorithms is comparable to the old runner.
 
 # %%

@@ -1,0 +1,446 @@
+"""
+Radiation calculation component.
+
+Computes complete radiation budget:
+- Shortwave: direct beam, diffuse sky, ground reflection, wall reflection
+- Longwave: sky emission, ground emission, wall emission
+- Directional components (N, E, S, W) for human body sides
+
+Supports both isotropic and anisotropic (Perez et al. 1993) diffuse sky models.
+
+Reference:
+- Lindberg et al. (2008, 2016) - SOLWEIG radiation model
+- Perez et al. (1993) - Anisotropic sky luminance distribution
+- Jonsson et al. (2006) - Longwave radiation formulas
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from ..algorithms.cylindric_wedge import cylindric_wedge
+from ..algorithms.Kup_veg_2015a import Kup_veg_2015a
+from ..algorithms.patch_radiation import patch_steradians
+from ..algorithms.Perez_v3 import Perez_v3
+from ..bundles import DirectionalArrays, RadiationBundle
+
+if TYPE_CHECKING:
+    from ..api import HumanParams, PrecomputedData, SvfBundle, Weather
+    from ..bundles import GvfBundle, LupBundle, ShadowBundle
+
+# Stefan-Boltzmann constant (W/m²/K⁴)
+SBC = 5.67e-8
+
+
+def compute_radiation(
+    weather: Weather,
+    svf_bundle: SvfBundle,
+    shadow_bundle: ShadowBundle,
+    gvf_bundle: GvfBundle,
+    lup_bundle: LupBundle,
+    human: HumanParams,
+    use_anisotropic_sky: bool,
+    precomputed: PrecomputedData | None,
+    albedo_wall: float = 0.20,
+    emis_wall: float = 0.90,
+    tg_wall: float = 0.0,
+) -> RadiationBundle:
+    """
+    Compute radiation budget for Tmrt calculation.
+
+    Computes complete shortwave and longwave radiation fluxes from all directions,
+    accounting for sky, ground, walls, and vegetation effects.
+
+    Args:
+        weather: Weather data (temperature, humidity, radiation, sun position)
+        svf_bundle: Sky view factors with directional components
+        shadow_bundle: Shadow fractions and vegetation transmissivity
+        gvf_bundle: Ground view factors and albedo components
+        lup_bundle: Upwelling longwave after thermal delay
+        human: Human parameters (height, posture, absorptivities)
+        use_anisotropic_sky: Use anisotropic (Perez) diffuse model if shadow matrices available
+        precomputed: Optional pre-computed shadow matrices for anisotropic model
+        albedo_wall: Wall albedo (default 0.20 for cobblestone)
+        emis_wall: Wall emissivity (default 0.90 for brick/concrete)
+        tg_wall: Wall temperature deviation from air temperature (K)
+
+    Returns:
+        RadiationBundle containing:
+            - kdown: Downwelling shortwave (W/m²)
+            - kup: Upwelling shortwave (reflected from ground)
+            - ldown: Downwelling longwave (sky + wall emission)
+            - lup: Upwelling longwave (from lup_bundle after thermal delay)
+            - kside: Directional shortwave components (N, E, S, W)
+            - lside: Directional longwave components (N, E, S, W)
+            - kside_direct: Direct beam on vertical surface (for anisotropic)
+            - drad: Diffuse radiation term (anisotropic or isotropic)
+
+    Reference:
+        - Lindberg et al. (2008) - SOLWEIG radiation model equations
+        - Perez et al. (1993) - Anisotropic sky model
+        - Jonsson et al. (2006) - Longwave radiation formulation
+    """
+    # Import here to avoid circular dependency
+    from ..rustalgos import sky, vegetation
+
+    # Sky emissivity (Jonsson et al. 2006)
+    ta_k = weather.ta + 273.15
+    ea = 6.107 * 10 ** ((7.5 * weather.ta) / (237.3 + weather.ta)) * (weather.rh / 100.0)
+    msteg = 46.5 * (ea / ta_k)
+    esky = 1 - (1 + msteg) * np.exp(-np.sqrt(1.2 + 3.0 * msteg))
+
+    # View factors (from SOLWEIG parameters - depends on posture)
+    cyl = human.posture == "standing"
+    if cyl:
+        f_up = 0.06
+        f_side = 0.22
+        # f_cyl = 0.28  # Cylindrical projection factor for direct beam (not used here)
+    else:
+        f_up = 0.166666
+        f_side = 0.166666
+        # f_cyl = 0.2
+
+    # Shortwave radiation components
+    sin_alt = np.sin(np.radians(weather.sun_altitude))
+    rad_i = weather.direct_rad
+    rad_d = weather.diffuse_rad
+    rad_g = weather.global_rad
+
+    # Extract SVF components
+    svf = svf_bundle.svf
+    svf_directional = svf_bundle.svf_directional
+    svf_veg = svf_bundle.svf_veg
+    svf_veg_directional = svf_bundle.svf_veg_directional
+    svf_aveg = svf_bundle.svf_aveg
+    svf_aveg_directional = svf_bundle.svf_aveg_directional
+    svfbuveg = svf_bundle.svfbuveg
+    svfalfa = svf_bundle.svfalfa
+
+    # Extract shadow components
+    shadow = shadow_bundle.shadow
+    psi = shadow_bundle.psi
+
+    # Check if anisotropic sky model should be used
+    has_shadow_matrices = precomputed is not None and precomputed.shadow_matrices is not None
+    use_aniso = use_anisotropic_sky and has_shadow_matrices
+
+    # Compute F_sh (fraction shadow on building walls based on sun altitude and SVF)
+    zen = weather.sun_zenith * (np.pi / 180.0)  # Convert to radians for cylindric_wedge
+    rows, cols = svf.shape
+    f_sh = cylindric_wedge(zen, svfalfa, rows, cols)
+    f_sh = np.nan_to_num(f_sh, nan=0.5)
+
+    # Compute Kup (ground-reflected shortwave) using full directional model
+    kup, kup_e, kup_s, kup_w, kup_n = Kup_veg_2015a(
+        rad_i,
+        rad_d,
+        rad_g,
+        weather.sun_altitude,
+        svfbuveg,
+        albedo_wall,
+        f_sh,
+        gvf_bundle.gvfalb,
+        gvf_bundle.gvfalb_e,
+        gvf_bundle.gvfalb_s,
+        gvf_bundle.gvfalb_w,
+        gvf_bundle.gvfalb_n,
+        gvf_bundle.gvfalbnosh,
+        gvf_bundle.gvfalbnosh_e,
+        gvf_bundle.gvfalbnosh_s,
+        gvf_bundle.gvfalbnosh_w,
+        gvf_bundle.gvfalbnosh_n,
+    )
+
+    # Compute diffuse radiation and directional shortwave
+    if use_aniso:
+        # Anisotropic Diffuse Radiation after Perez et al. 1993
+        shadow_mats = precomputed.shadow_matrices
+        patch_option = shadow_mats.patch_option
+        jday = weather.datetime.timetuple().tm_yday
+
+        # Get Perez luminance distribution
+        lv, _, _ = Perez_v3(
+            weather.sun_zenith,
+            weather.sun_azimuth,
+            rad_d,
+            rad_i,
+            jday,
+            patchchoice=1,
+            patch_option=patch_option,
+        )
+
+        # Get diffuse shadow matrix (accounts for vegetation transmissivity)
+        diffsh = shadow_mats.diffsh(psi, use_veg=psi < 0.5)
+
+        # Total relative luminance from sky patches into each cell
+        ani_lum = np.zeros((rows, cols), dtype=np.float32)
+        for idx in range(lv.shape[0]):
+            ani_lum += diffsh[:, :, idx] * lv[idx, 2]
+
+        drad = ani_lum * rad_d
+
+        # Compute asvf (angle from SVF) for anisotropic calculations
+        asvf = np.arccos(np.sqrt(np.clip(svf, 0.0, 1.0)))
+
+        # Get raw shadow matrices for Rust functions
+        shmat = shadow_mats.shmat.astype(np.float32)
+        vegshmat = shadow_mats.vegshmat.astype(np.float32)
+        vbshmat = shadow_mats.vbshmat.astype(np.float32)
+
+        # Compute base Ldown first (needed for lside_veg)
+        ldown_base = (
+            (svf + svf_veg - 1) * esky * SBC * (ta_k**4)
+            + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
+            + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
+            + (2 - svf - svf_veg) * (1 - emis_wall) * esky * SBC * (ta_k**4)
+        )
+
+        # CI correction for non-clear conditions
+        ci = weather.clearness_index
+        if ci < 0.95:
+            c = 1.0 - ci
+            ldown_cloudy = (
+                (svf + svf_veg - 1) * SBC * (ta_k**4)
+                + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
+                + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
+                + (2 - svf - svf_veg) * (1 - emis_wall) * SBC * (ta_k**4)
+            )
+            ldown_base = ldown_base * (1 - c) + ldown_cloudy * c
+
+        # Call lside_veg for base directional longwave (Least, Lsouth, Lwest, Lnorth)
+        lside_veg_result = vegetation.lside_veg(
+            svf_directional.south.astype(np.float32),
+            svf_directional.west.astype(np.float32),
+            svf_directional.north.astype(np.float32),
+            svf_directional.east.astype(np.float32),
+            svf_veg_directional.east.astype(np.float32),
+            svf_veg_directional.south.astype(np.float32),
+            svf_veg_directional.west.astype(np.float32),
+            svf_veg_directional.north.astype(np.float32),
+            svf_aveg_directional.east.astype(np.float32),
+            svf_aveg_directional.south.astype(np.float32),
+            svf_aveg_directional.west.astype(np.float32),
+            svf_aveg_directional.north.astype(np.float32),
+            weather.sun_azimuth,
+            weather.sun_altitude,
+            weather.ta,
+            tg_wall,
+            SBC,
+            emis_wall,
+            ldown_base.astype(np.float32),
+            esky,
+            0.0,  # t (instrument offset, matching reference)
+            f_sh.astype(np.float32),
+            weather.clearness_index,
+            lup_bundle.lup_e.astype(np.float32),  # TsWaveDelay-processed values
+            lup_bundle.lup_s.astype(np.float32),
+            lup_bundle.lup_w.astype(np.float32),
+            lup_bundle.lup_n.astype(np.float32),
+            True,  # anisotropic_sky flag
+        )
+        # Extract base directional longwave
+        lside_e_base = np.array(lside_veg_result.least)
+        lside_s_base = np.array(lside_veg_result.lsouth)
+        lside_w_base = np.array(lside_veg_result.lwest)
+        lside_n_base = np.array(lside_veg_result.lnorth)
+
+        # Compute steradians for patches
+        steradians, _, _ = patch_steradians(lv)
+
+        # Create L_patches array for anisotropic sky (altitude, azimuth, luminance)
+        l_patches = lv.astype(np.float32)
+
+        # Adjust sky emissivity for cloudy conditions (CI < 0.95)
+        # This matches the reference implementation: esky = CI * esky + (1 - CI) * 1.0
+        esky_aniso = esky
+        ci = weather.clearness_index
+        if ci < 0.95:
+            esky_aniso = ci * esky + (1 - ci) * 1.0
+
+        # Call full Rust anisotropic sky function
+        ani_sky_result = sky.anisotropic_sky(
+            shmat,
+            vegshmat,
+            vbshmat,
+            weather.sun_altitude,
+            weather.sun_azimuth,
+            asvf.astype(np.float32),
+            bool(cyl),
+            esky_aniso,
+            l_patches,
+            False,  # wallScheme
+            None,  # voxelTable
+            None,  # voxelMaps
+            steradians.astype(np.float32),
+            weather.ta,
+            tg_wall,
+            emis_wall,
+            lup_bundle.lup.astype(np.float32),  # TsWaveDelay-processed value
+            rad_i,
+            rad_d,
+            rad_g,
+            lv.astype(np.float32),
+            albedo_wall,
+            False,  # debug
+            diffsh.astype(np.float32),
+            shadow.astype(np.float32),
+            kup_e.astype(np.float32),
+            kup_s.astype(np.float32),
+            kup_w.astype(np.float32),
+            kup_n.astype(np.float32),
+            0,  # iteration index
+        )
+
+        # Extract results from anisotropic sky
+        ldown = np.array(ani_sky_result.ldown)
+        # For directional longwave, use lside_veg_result (base) values
+        # ani_sky_result provides anisotropic additions, but for cyl=1, aniso=1
+        # the Sstr formula uses base directional longwave from lside_veg
+        lside_e = lside_e_base
+        lside_s = lside_s_base
+        lside_w = lside_w_base
+        lside_n = lside_n_base
+        # Shortwave from anisotropic sky result
+        kside_e = np.array(ani_sky_result.keast)
+        kside_s = np.array(ani_sky_result.ksouth)
+        kside_w = np.array(ani_sky_result.kwest)
+        kside_n = np.array(ani_sky_result.knorth)
+        kside_i = np.array(ani_sky_result.kside_i)
+        # Total radiation on vertical surfaces (for Tmrt f_cyl term)
+        kside_total = np.array(ani_sky_result.kside)
+        lside_total = np.array(ani_sky_result.lside)
+
+    else:
+        # Isotropic model - use Rust functions for kside and lside
+
+        # Isotropic diffuse radiation
+        drad = rad_d * svfbuveg  # Diffuse weighted by combined SVF
+
+        # Compute asvf for Rust functions (needed even for isotropic)
+        asvf = np.arccos(np.sqrt(np.clip(svf, 0.0, 1.0)))
+
+        # Use Rust kside_veg for directional shortwave (isotropic mode: no lv, no shadow matrices)
+        kside_result = vegetation.kside_veg(
+            rad_i,
+            rad_d,
+            rad_g,
+            shadow.astype(np.float32),
+            svf_directional.south.astype(np.float32),
+            svf_directional.west.astype(np.float32),
+            svf_directional.north.astype(np.float32),
+            svf_directional.east.astype(np.float32),
+            svf_veg_directional.east.astype(np.float32),
+            svf_veg_directional.south.astype(np.float32),
+            svf_veg_directional.west.astype(np.float32),
+            svf_veg_directional.north.astype(np.float32),
+            weather.sun_azimuth,
+            weather.sun_altitude,
+            psi,
+            0.0,  # t (instrument offset)
+            albedo_wall,
+            f_sh.astype(np.float32),
+            kup_e.astype(np.float32),
+            kup_s.astype(np.float32),
+            kup_w.astype(np.float32),
+            kup_n.astype(np.float32),
+            bool(cyl),
+            None,  # lv (None for isotropic)
+            False,  # anisotropic_sky
+            None,  # diffsh (None for isotropic)
+            asvf.astype(np.float32),
+            None,  # shmat (None for isotropic)
+            None,  # vegshmat (None for isotropic)
+            None,  # vbshvegshmat (None for isotropic)
+        )
+        kside_e = np.array(kside_result.keast)
+        kside_s = np.array(kside_result.ksouth)
+        kside_w = np.array(kside_result.kwest)
+        kside_n = np.array(kside_result.knorth)
+        kside_i = np.array(kside_result.kside_i)
+        # Total radiation on vertical surfaces (for Tmrt f_cyl term)
+        kside_total = kside_i  # Isotropic uses direct beam only
+        lside_total = np.zeros_like(kside_i)  # Not used in isotropic Tmrt formula
+
+        # Longwave: Ldown (from Jonsson et al. 2006)
+        ldown = (
+            (svf + svf_veg - 1) * esky * SBC * (ta_k**4)
+            + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
+            + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
+            + (2 - svf - svf_veg) * (1 - emis_wall) * esky * SBC * (ta_k**4)
+        )
+
+        # CI correction for non-clear conditions (reference: if CI < 0.95)
+        # Under cloudy skies, effective sky emissivity approaches 1.0
+        ci = weather.clearness_index
+        if ci < 0.95:
+            c = 1.0 - ci
+            ldown_cloudy = (
+                (svf + svf_veg - 1) * SBC * (ta_k**4)  # No esky for cloudy
+                + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
+                + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
+                + (2 - svf - svf_veg) * (1 - emis_wall) * SBC * (ta_k**4)  # No esky
+            )
+            ldown = ldown * (1 - c) + ldown_cloudy * c
+
+        # Use Rust lside_veg for directional longwave
+        lside_veg_result = vegetation.lside_veg(
+            svf_directional.south.astype(np.float32),
+            svf_directional.west.astype(np.float32),
+            svf_directional.north.astype(np.float32),
+            svf_directional.east.astype(np.float32),
+            svf_veg_directional.east.astype(np.float32),
+            svf_veg_directional.south.astype(np.float32),
+            svf_veg_directional.west.astype(np.float32),
+            svf_veg_directional.north.astype(np.float32),
+            svf_aveg_directional.east.astype(np.float32),
+            svf_aveg_directional.south.astype(np.float32),
+            svf_aveg_directional.west.astype(np.float32),
+            svf_aveg_directional.north.astype(np.float32),
+            weather.sun_azimuth,
+            weather.sun_altitude,
+            weather.ta,
+            tg_wall,
+            SBC,
+            emis_wall,
+            ldown.astype(np.float32),
+            esky,
+            0.0,  # t (instrument offset, matching reference)
+            f_sh.astype(np.float32),
+            weather.clearness_index,
+            lup_bundle.lup_e.astype(np.float32),  # TsWaveDelay-processed values
+            lup_bundle.lup_s.astype(np.float32),
+            lup_bundle.lup_w.astype(np.float32),
+            lup_bundle.lup_n.astype(np.float32),
+            False,  # anisotropic_sky
+        )
+        lside_e = np.array(lside_veg_result.least)
+        lside_s = np.array(lside_veg_result.lsouth)
+        lside_w = np.array(lside_veg_result.lwest)
+        lside_n = np.array(lside_veg_result.lnorth)
+
+    # Kdown (downwelling shortwave = direct on horizontal + diffuse sky + wall reflected)
+    kdown = rad_i * shadow * sin_alt + drad + albedo_wall * (1 - svfbuveg) * (rad_g * (1 - f_sh) + rad_d * f_sh)
+
+    return RadiationBundle(
+        kdown=kdown.astype(np.float32),
+        kup=kup.astype(np.float32),
+        ldown=ldown.astype(np.float32),
+        lup=lup_bundle.lup,  # Already float32 from LupBundle
+        kside=DirectionalArrays(
+            north=kside_n.astype(np.float32),
+            east=kside_e.astype(np.float32),
+            south=kside_s.astype(np.float32),
+            west=kside_w.astype(np.float32),
+        ),
+        lside=DirectionalArrays(
+            north=lside_n.astype(np.float32),
+            east=lside_e.astype(np.float32),
+            south=lside_s.astype(np.float32),
+            west=lside_w.astype(np.float32),
+        ),
+        kside_total=kside_total.astype(np.float32),
+        lside_total=lside_total.astype(np.float32),
+        drad=drad.astype(np.float32),
+    )

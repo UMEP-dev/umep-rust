@@ -272,6 +272,50 @@ def check_path(path_str: str | Path, make_dir: bool = False) -> Path:
     return path
 
 
+def _generate_preview_png(data_arr: np.ndarray, out_path: Path, max_size: int = 512) -> None:
+    """
+    Generate a grayscale PNG preview image from raster data.
+
+    Normalizes float data to 0-255 uint8 for OS thumbnail compatibility.
+    """
+    try:
+        from PIL import Image
+
+        # Handle NaN values
+        valid_mask = ~np.isnan(data_arr)
+        if not np.any(valid_mask):
+            return  # All NaN, skip preview
+
+        # Get valid data range
+        valid_data = data_arr[valid_mask]
+        vmin, vmax = np.nanpercentile(valid_data, [2, 98])  # Use percentiles to avoid outliers
+
+        if vmax <= vmin:
+            vmax = vmin + 1  # Avoid division by zero
+
+        # Normalize to 0-255
+        normalized = np.clip((data_arr - vmin) / (vmax - vmin) * 255, 0, 255)
+        normalized = np.nan_to_num(normalized, nan=0).astype(np.uint8)
+
+        # Create image and resize if needed
+        img = Image.fromarray(normalized, mode="L")
+
+        # Resize to max_size while maintaining aspect ratio
+        if max(img.size) > max_size:
+            ratio = max_size / max(img.size)
+            new_size = (int(img.width * ratio), int(img.height * ratio))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+
+        # Save preview
+        preview_path = out_path.with_suffix(".preview.png")
+        img.save(preview_path, "PNG")
+        logger.debug(f"Saved preview: {preview_path}")
+    except ImportError:
+        logger.debug("PIL not available, skipping preview generation")
+    except Exception as e:
+        logger.warning(f"Failed to generate preview: {e}")
+
+
 def save_raster(
     out_path_str: str,
     data_arr: np.ndarray,
@@ -279,9 +323,11 @@ def save_raster(
     crs_wkt: str,
     no_data_val: float = -9999,
     coerce_f64_to_f32: bool = True,
+    use_cog: bool = True,
+    generate_preview: bool = True,
 ):
     """
-    Save raster to GeoTIFF.
+    Save raster to GeoTIFF (Cloud-Optimized by default).
 
     Args:
         out_path_str: Output file path
@@ -291,6 +337,10 @@ def save_raster(
         no_data_val: No-data value to use
         coerce_f64_to_f32: If True, convert float64 arrays to float32 before saving
                            (default: True for memory efficiency)
+        use_cog: If True, save as Cloud-Optimized GeoTIFF with built-in overviews
+                 (default: True for better OS thumbnail support)
+        generate_preview: If True, generate a sidecar .preview.png file for OS thumbnails
+                         (default: True for float data that can't be previewed directly)
     """
     # Only convert float64 to float32, leave ints/bools unchanged
     if coerce_f64_to_f32 and data_arr.dtype == np.float64:
@@ -300,37 +350,120 @@ def save_raster(
     while attempts > 0:
         attempts -= 1
         try:
-            # Save raster using GDAL or rasterio
             out_path = check_path(out_path_str, make_dir=True)
             height, width = data_arr.shape
+
             if GDAL_ENV is False:
                 trf = Affine.from_gdal(*trf_arr)
                 crs = None
                 if crs_wkt:
                     crs = pyproj.CRS(crs_wkt)
-                with rasterio.open(
-                    out_path,
-                    "w",
-                    driver="GTiff",
-                    height=height,
-                    width=width,
-                    count=1,
-                    dtype=data_arr.dtype,
-                    crs=crs,
-                    transform=trf,
-                    nodata=no_data_val,
-                ) as dst:
-                    dst.write(data_arr, 1)
+
+                if use_cog:
+                    # Write as Cloud-Optimized GeoTIFF
+                    # COG driver creates overviews automatically
+                    from rasterio.io import MemoryFile
+
+                    # Create in memory first, then write as COG
+                    memfile = MemoryFile()
+                    with memfile.open(
+                        driver="GTiff",
+                        height=height,
+                        width=width,
+                        count=1,
+                        dtype=data_arr.dtype,
+                        crs=crs,
+                        transform=trf,
+                        nodata=no_data_val,
+                    ) as mem:
+                        mem.write(data_arr, 1)
+
+                    # Now copy to COG format
+                    from rasterio.shutil import copy
+
+                    copy(
+                        memfile.open(),
+                        out_path,
+                        driver="COG",
+                        overview_resampling="average",
+                    )
+                    memfile.close()
+                    logger.debug(f"Saved COG: {out_path}")
+                else:
+                    # Standard GeoTIFF
+                    with rasterio.open(
+                        out_path,
+                        "w",
+                        driver="GTiff",
+                        height=height,
+                        width=width,
+                        count=1,
+                        dtype=data_arr.dtype,
+                        crs=crs,
+                        transform=trf,
+                        nodata=no_data_val,
+                    ) as dst:
+                        dst.write(data_arr, 1)
             else:
-                driver = gdal.GetDriverByName("GTiff")
-                ds = driver.Create(str(out_path), width, height, 1, gdal.GDT_Float32)
-                ds.SetGeoTransform(trf_arr)
-                if crs_wkt:
-                    ds.SetProjection(crs_wkt)
-                band = ds.GetRasterBand(1)
-                band.SetNoDataValue(no_data_val)
-                band.WriteArray(data_arr)
-                ds = None
+                # GDAL backend
+                if use_cog:
+                    # Use COG driver (GDAL 3.1+)
+                    driver = gdal.GetDriverByName("COG")
+                    if driver is None:
+                        # Fallback to GTiff with overviews if COG driver not available
+                        logger.warning("COG driver not available, using GTiff with overviews")
+                        driver = gdal.GetDriverByName("GTiff")
+                        options = ["TILED=YES"]
+                        ds = driver.Create(str(out_path), width, height, 1, gdal.GDT_Float32, options)
+                        ds.SetGeoTransform(trf_arr)
+                        if crs_wkt:
+                            ds.SetProjection(crs_wkt)
+                        band = ds.GetRasterBand(1)
+                        band.SetNoDataValue(no_data_val)
+                        band.WriteArray(data_arr)
+                        # Build overviews
+                        if min(height, width) > 256:
+                            overview_levels = []
+                            size = min(height, width)
+                            level = 2
+                            while size // level > 128:
+                                overview_levels.append(level)
+                                level *= 2
+                            if overview_levels:
+                                ds.BuildOverviews("AVERAGE", overview_levels)
+                        ds = None
+                    else:
+                        # COG driver requires creating via CreateCopy from memory dataset
+                        mem_driver = gdal.GetDriverByName("MEM")
+                        mem_ds = mem_driver.Create("", width, height, 1, gdal.GDT_Float32)
+                        mem_ds.SetGeoTransform(trf_arr)
+                        if crs_wkt:
+                            mem_ds.SetProjection(crs_wkt)
+                        band = mem_ds.GetRasterBand(1)
+                        band.SetNoDataValue(no_data_val)
+                        band.WriteArray(data_arr)
+
+                        # Copy to COG
+                        cog_options = ["OVERVIEW_RESAMPLING=AVERAGE"]
+                        driver.CreateCopy(str(out_path), mem_ds, options=cog_options)
+                        mem_ds = None
+                        logger.debug(f"Saved COG: {out_path}")
+                else:
+                    # Standard GeoTIFF
+                    driver = gdal.GetDriverByName("GTiff")
+                    ds = driver.Create(str(out_path), width, height, 1, gdal.GDT_Float32)
+                    ds.SetGeoTransform(trf_arr)
+                    if crs_wkt:
+                        ds.SetProjection(crs_wkt)
+                    band = ds.GetRasterBand(1)
+                    band.SetNoDataValue(no_data_val)
+                    band.WriteArray(data_arr)
+                    ds = None
+
+            # Generate sidecar preview PNG for float data (OS can't render float GeoTIFFs)
+            if generate_preview and np.issubdtype(data_arr.dtype, np.floating):
+                _generate_preview_png(data_arr, out_path)
+
             return
         except Exception as e:
             if attempts == 0:
@@ -655,3 +788,164 @@ def write_raster_window(path_str: str | Path, data: np.ndarray, window: tuple[sl
 
         ds.GetRasterBand(band).WriteArray(data, xoff, yoff)
         ds = None
+
+
+def read_epw(path: str | Path) -> tuple:
+    """
+    Read EnergyPlus Weather (EPW) file and return weather data with metadata.
+
+    EPW files have 8 header lines followed by hourly weather data.
+    This is a standalone parser that doesn't require pvlib.
+
+    Args:
+        path: Path to EPW file (string or Path)
+
+    Returns:
+        Tuple of (dataframe, metadata_dict):
+        - dataframe: pandas DataFrame with datetime index and weather columns:
+            - temp_air: Dry bulb temperature (°C)
+            - relative_humidity: Relative humidity (%)
+            - atmospheric_pressure: Atmospheric pressure (Pa)
+            - ghi: Global horizontal irradiance (W/m²)
+            - dni: Direct normal irradiance (W/m²)
+            - dhi: Diffuse horizontal irradiance (W/m²)
+            - wind_speed: Wind speed (m/s)
+            - wind_direction: Wind direction (degrees)
+        - metadata_dict: Dictionary with keys:
+            - city: Location city name
+            - latitude: Latitude (degrees)
+            - longitude: Longitude (degrees)
+            - elevation: Elevation (m)
+            - tz_offset: Timezone offset (hours)
+
+    Raises:
+        FileNotFoundError: If EPW file doesn't exist
+        ValueError: If EPW file is malformed
+    """
+    import pandas as pd
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"EPW file not found: {path}")
+
+    # Parse header to extract metadata
+    metadata = {}
+    with open(path, encoding="utf-8") as f:
+        # Line 1: LOCATION
+        location_line = f.readline().strip()
+        if not location_line.startswith("LOCATION"):
+            raise ValueError("Invalid EPW file: first line must start with 'LOCATION'")
+
+        # Parse location: LOCATION,City,State,Country,Source,WMO,Lat,Lon,TZ,Elev
+        location_parts = location_line.split(",")
+        if len(location_parts) < 10:
+            raise ValueError(f"Invalid LOCATION line: expected at least 10 fields, got {len(location_parts)}")
+
+        metadata["city"] = location_parts[1].strip()
+        metadata["state"] = location_parts[2].strip()
+        metadata["country"] = location_parts[3].strip()
+        metadata["latitude"] = float(location_parts[6])
+        metadata["longitude"] = float(location_parts[7])
+        metadata["tz_offset"] = float(location_parts[8])  # Timezone offset (hours)
+        metadata["elevation"] = float(location_parts[9])
+
+        # Skip remaining header lines (lines 2-8)
+        for _ in range(7):
+            f.readline()
+
+    # Define EPW data column mapping
+    # EPW format has 35 fields per line
+    # Fields we need (0-indexed):
+    #  0: Year
+    #  1: Month
+    #  2: Day
+    #  3: Hour (1-24)
+    #  4: Minute
+    #  6: Dry Bulb Temperature (C)
+    #  7: Dew Point Temperature (C)
+    #  8: Relative Humidity (%)
+    #  9: Atmospheric Station Pressure (Pa)
+    # 13: Global Horizontal Radiation (Wh/m2)
+    # 14: Direct Normal Radiation (Wh/m2)
+    # 15: Diffuse Horizontal Radiation (Wh/m2)
+    # 21: Wind Direction (degrees)
+    # 22: Wind Speed (m/s)
+
+    epw_columns = [
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "data_source",
+        "temp_air",
+        "dew_point",
+        "relative_humidity",
+        "atmospheric_pressure",
+        "extraterrestrial_horizontal_radiation",
+        "extraterrestrial_direct_normal_radiation",
+        "horizontal_infrared_radiation",
+        "ghi",
+        "dni",
+        "dhi",
+        "global_horizontal_illuminance",
+        "direct_normal_illuminance",
+        "diffuse_horizontal_illuminance",
+        "zenith_luminance",
+        "wind_direction",
+        "wind_speed",
+        "total_sky_cover",
+        "opaque_sky_cover",
+        "visibility",
+        "ceiling_height",
+        "present_weather_observation",
+        "present_weather_codes",
+        "precipitable_water",
+        "aerosol_optical_depth",
+        "snow_depth",
+        "days_since_last_snowfall",
+        "albedo",
+        "liquid_precipitation_depth",
+        "liquid_precipitation_quantity",
+    ]
+
+    # Read data lines (skip 8 header lines)
+    df = pd.read_csv(
+        path,
+        skiprows=8,
+        header=None,
+        names=epw_columns,
+        na_values=["99", "999", "9999", "99999", "999999999"],
+    )
+
+    # Create datetime index
+    # EPW uses 1-24 hour format where hour N represents the period ending at hour N
+    # Keep as-is for pandas (hour 24 will automatically roll to next day at 00:00)
+    df["datetime"] = pd.to_datetime(
+        df[["year", "month", "day", "hour", "minute"]], errors="coerce"
+    )
+    df = df.set_index("datetime")
+
+    # Keep only essential columns
+    columns_to_keep = [
+        "temp_air",
+        "relative_humidity",
+        "atmospheric_pressure",
+        "ghi",
+        "dni",
+        "dhi",
+        "wind_speed",
+        "wind_direction",
+    ]
+    df = df[columns_to_keep]
+
+    # Validate data
+    if df.empty:
+        raise ValueError("EPW file contains no valid data rows")
+
+    logger.info(
+        f"Loaded EPW file: {metadata['city']}, "
+        f"{len(df)} timesteps from {df.index.min()} to {df.index.max()}"
+    )
+
+    return df, metadata

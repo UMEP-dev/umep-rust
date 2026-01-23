@@ -16,6 +16,10 @@ from solweig.api import (
     SolweigResult,
     SurfaceData,
     Weather,
+    calculate,
+    calculate_tiled,
+    calculate_buffer_distance,
+    generate_tiles,
 )
 
 
@@ -309,7 +313,6 @@ class TestCalculateIntegration:
 
     def test_basic_calculation(self):
         """calculate() returns valid Tmrt for simple DSM."""
-        from solweig.api import calculate
 
         # Simple flat DSM with one building
         dsm = np.zeros((30, 30), dtype=np.float32)
@@ -329,8 +332,9 @@ class TestCalculateIntegration:
         # Check output structure
         assert result.tmrt.shape == (30, 30)
         assert result.shadow.shape == (30, 30)
-        assert result.utci is not None
-        assert result.utci.shape == (30, 30)
+        # UTCI/PET are not auto-computed - use post-processing functions
+        assert result.utci is None
+        assert result.pet is None
 
         # Check Tmrt is in reasonable range (use nanmin/nanmax to handle NaN)
         # -50 is used as a sentinel for invalid/building pixels
@@ -339,8 +343,6 @@ class TestCalculateIntegration:
 
     def test_nighttime_calculation(self):
         """calculate() handles nighttime (sun below horizon)."""
-        from solweig.api import calculate
-
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0)
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
@@ -362,9 +364,7 @@ class TestCalculateIntegration:
 
     def test_shadows_exist(self):
         """Shadows are cast by buildings during daytime."""
-        from solweig.api import calculate
-
-        # Tall building that should cast shadows
+# Tall building that should cast shadows
         dsm = np.zeros((40, 40), dtype=np.float32)
         dsm[15:25, 15:25] = 20.0  # 20m building
 
@@ -383,10 +383,8 @@ class TestCalculateIntegration:
         shadow_fraction = result.shadow.sum() / result.shadow.size
         assert 0.1 < shadow_fraction < 0.9, "Expected partial shadowing"
 
-    def test_utci_disabled(self):
-        """UTCI can be disabled."""
-        from solweig.api import calculate
-
+    def test_utci_postprocessing(self):
+        """UTCI is computed via post-processing, not by default."""
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0)
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
@@ -397,15 +395,14 @@ class TestCalculateIntegration:
             global_rad=800.0,
         )
 
-        result = calculate(surface, location, weather, compute_utci=False)
+        # Calculate Tmrt (UTCI not computed by default)
+        result = calculate(surface, location, weather)
 
         assert result.tmrt is not None
-        assert result.utci is None
+        assert result.utci is None  # Not auto-computed - use compute_utci_grid()
 
     def test_with_custom_human_params(self):
         """Custom human parameters affect calculation."""
-        from solweig.api import calculate
-
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0)
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
@@ -434,9 +431,7 @@ class TestTiledProcessing:
 
     def test_calculate_buffer_distance_basic(self):
         """Buffer distance scales with building height."""
-        from solweig.api import calculate_buffer_distance
-
-        # 10m building at 3° sun elevation: buffer = 10 / tan(3°) ≈ 191m
+# 10m building at 3° sun elevation: buffer = 10 / tan(3°) ≈ 191m
         buffer = calculate_buffer_distance(10.0)
         assert 180 < buffer < 200
 
@@ -446,15 +441,11 @@ class TestTiledProcessing:
 
     def test_calculate_buffer_distance_zero_height(self):
         """Zero height returns zero buffer."""
-        from solweig.api import calculate_buffer_distance
-
         assert calculate_buffer_distance(0.0) == 0.0
         assert calculate_buffer_distance(-5.0) == 0.0
 
     def test_calculate_buffer_distance_custom_sun_elevation(self):
         """Buffer distance changes with sun elevation."""
-        from solweig.api import calculate_buffer_distance
-
         # Higher sun = shorter shadows
         buffer_3deg = calculate_buffer_distance(10.0, min_sun_elev_deg=3.0)
         buffer_10deg = calculate_buffer_distance(10.0, min_sun_elev_deg=10.0)
@@ -463,9 +454,7 @@ class TestTiledProcessing:
 
     def test_generate_tiles_basic(self):
         """generate_tiles creates correct tile specs."""
-        from solweig.api import generate_tiles
-
-        # generate_tiles takes rows, cols, tile_size, overlap
+# generate_tiles takes rows, cols, tile_size, overlap
         tiles = generate_tiles(rows=100, cols=100, tile_size=50, overlap=10)
 
         # 100x100 with tile_size=50 should give 4 tiles (2x2 grid)
@@ -479,8 +468,6 @@ class TestTiledProcessing:
 
     def test_generate_tiles_overlap(self):
         """Tiles have correct overlap at edges."""
-        from solweig.api import generate_tiles
-
         tiles = generate_tiles(rows=100, cols=100, tile_size=50, overlap=10)
 
         # First tile (top-left corner) has no top/left overlap
@@ -499,9 +486,7 @@ class TestTiledProcessing:
 
     def test_generate_tiles_single_tile(self):
         """Small raster generates single tile."""
-        from solweig.api import generate_tiles
-
-        # 30x30 raster smaller than tile_size should give 1 tile
+# 30x30 raster smaller than tile_size should give 1 tile
         tiles = generate_tiles(rows=30, cols=30, tile_size=256, overlap=10)
 
         assert len(tiles) == 1
@@ -509,9 +494,7 @@ class TestTiledProcessing:
 
     def test_tiled_vs_nontiled_parity(self):
         """Tiled calculation produces same results as non-tiled."""
-        from solweig.api import calculate, calculate_tiled
-
-        # Create a test DSM with a building
+# Create a test DSM with a building
         dsm = np.zeros((60, 60), dtype=np.float32)
         dsm[20:40, 20:40] = 15.0  # 15m building
 
@@ -524,13 +507,9 @@ class TestTiledProcessing:
             global_rad=800.0,
         )
 
-        # Run both methods
-        result_nontiled = calculate(
-            surface, location, weather, compute_utci=False, compute_pet=False
-        )
-        result_tiled = calculate_tiled(
-            surface, location, weather, tile_size=256, compute_utci=False, compute_pet=False
-        )
+        # Run both methods (UTCI/PET not auto-computed in new API)
+        result_nontiled = calculate(surface, location, weather)
+        result_tiled = calculate_tiled(surface, location, weather, tile_size=256)
 
         # Compare Tmrt
         valid = np.isfinite(result_nontiled.tmrt) & np.isfinite(result_tiled.tmrt)
@@ -551,9 +530,7 @@ class TestTiledProcessing:
 
     def test_calculate_tiled_with_building(self):
         """Tiled calculation handles buildings correctly."""
-        from solweig.api import calculate_tiled
-
-        # DSM with a tall building that casts shadows
+# DSM with a tall building that casts shadows
         dsm = np.zeros((80, 80), dtype=np.float32)
         dsm[30:50, 30:50] = 20.0  # 20m building
 
@@ -566,14 +543,13 @@ class TestTiledProcessing:
             global_rad=600.0,
         )
 
-        result = calculate_tiled(
-            surface, location, weather, tile_size=256, compute_utci=True
-        )
+        result = calculate_tiled(surface, location, weather, tile_size=256)
 
         # Check output structure
         assert result.tmrt.shape == (80, 80)
         assert result.shadow.shape == (80, 80)
-        assert result.utci is not None
+        # UTCI not auto-computed - use post-processing if needed
+        assert result.utci is None
 
         # Check shadows exist - allow wider range since shadow fraction depends on
         # sun position (morning sun creates longer shadows)
@@ -582,9 +558,7 @@ class TestTiledProcessing:
 
     def test_calculate_tiled_fallback_to_nontiled(self):
         """Small rasters fall back to non-tiled calculation."""
-        from solweig.api import calculate_tiled
-
-        # Small DSM that fits in a single tile
+# Small DSM that fits in a single tile
         dsm = np.ones((40, 40), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0)
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
@@ -596,9 +570,7 @@ class TestTiledProcessing:
         )
 
         # This should work without errors (falls back to non-tiled)
-        result = calculate_tiled(
-            surface, location, weather, tile_size=256, compute_utci=False
-        )
+        result = calculate_tiled(surface, location, weather, tile_size=256)
 
         assert result.tmrt.shape == (40, 40)
         assert result.shadow.shape == (40, 40)
@@ -678,59 +650,59 @@ class TestPreprocessing:
 
     def test_transmissivity_leaf_on_summer(self):
         """Summer (leaf on) uses low transmissivity."""
-        from solweig.api import _compute_transmissivity
+        from solweig.components.shadows import compute_transmissivity
 
         # July is within typical leaf-on period (DOY 100-300)
-        psi = _compute_transmissivity(doy=180)
+        psi = compute_transmissivity(doy=180)
         assert psi == 0.03
 
     def test_transmissivity_leaf_off_winter(self):
         """Winter (leaf off) uses high transmissivity."""
-        from solweig.api import _compute_transmissivity
+        from solweig.components.shadows import compute_transmissivity
 
         # January is outside typical leaf-on period
-        psi = _compute_transmissivity(doy=30)
+        psi = compute_transmissivity(doy=30)
         assert psi == 0.5
 
     def test_transmissivity_leaf_off_late_autumn(self):
         """Late autumn (leaf off) uses high transmissivity."""
-        from solweig.api import _compute_transmissivity
+        from solweig.components.shadows import compute_transmissivity
 
         # December is outside typical leaf-on period
-        psi = _compute_transmissivity(doy=350)
+        psi = compute_transmissivity(doy=350)
         assert psi == 0.5
 
     def test_transmissivity_conifer_always_leaf_on(self):
         """Conifers always use leaf-on transmissivity regardless of season."""
-        from solweig.api import _compute_transmissivity
+        from solweig.components.shadows import compute_transmissivity
 
         # Winter with conifer flag should still use leaf-on value
-        psi = _compute_transmissivity(doy=30, conifer=True)
+        psi = compute_transmissivity(doy=30, conifer=True)
         assert psi == 0.03
 
         # Summer with conifer should also be leaf-on
-        psi = _compute_transmissivity(doy=180, conifer=True)
+        psi = compute_transmissivity(doy=180, conifer=True)
         assert psi == 0.03
 
     def test_transmissivity_boundary_days(self):
         """Test behavior at leaf on/off boundary days."""
-        from solweig.api import _compute_transmissivity
+        from solweig.components.shadows import compute_transmissivity
 
         # Default boundaries are 100 and 300
         # Day 100 is NOT included (first_day < doy < last_day)
-        psi_day_100 = _compute_transmissivity(doy=100)
+        psi_day_100 = compute_transmissivity(doy=100)
         assert psi_day_100 == 0.5  # Not yet leaf-on
 
         # Day 101 should be leaf-on
-        psi_day_101 = _compute_transmissivity(doy=101)
+        psi_day_101 = compute_transmissivity(doy=101)
         assert psi_day_101 == 0.03
 
         # Day 299 should be leaf-on
-        psi_day_299 = _compute_transmissivity(doy=299)
+        psi_day_299 = compute_transmissivity(doy=299)
         assert psi_day_299 == 0.03
 
         # Day 300 is NOT included
-        psi_day_300 = _compute_transmissivity(doy=300)
+        psi_day_300 = compute_transmissivity(doy=300)
         assert psi_day_300 == 0.5  # No longer leaf-on
 
     def test_relative_heights_parameter_default(self):
