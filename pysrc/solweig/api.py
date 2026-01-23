@@ -26,7 +26,14 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass, field
+
+# Import our QGIS-compatible logger
+from .logging import get_logger
+
+# Get module logger
+logger = get_logger(__name__)
 
 logger = logging.getLogger(__name__)
 from datetime import datetime as dt
@@ -38,7 +45,6 @@ import numpy as np
 
 from .algorithms import sun_position as sp
 from .algorithms.clearnessindex_2013b import clearnessindex_2013b
-from .algorithms.create_patches import create_patches
 from .algorithms.cylindric_wedge import cylindric_wedge
 from .algorithms.daylen import daylen
 from .algorithms.diffusefraction import diffusefraction
@@ -51,10 +57,14 @@ from .rustalgos import pet as pet_rust
 from .rustalgos import shadowing, sky, skyview, vegetation
 from .rustalgos import utci as utci_rust
 
+# Version for cache validation
+__version__ = "0.0.1a1"
+
 # Stefan-Boltzmann constant
 SBC = 5.67e-8
 
 if TYPE_CHECKING:
+    from affine import Affine
     from numpy.typing import NDArray
 
 
@@ -70,6 +80,130 @@ def _dict_to_namespace(d: dict[str, Any] | list | Any) -> SimpleNamespace | list
         return [_dict_to_namespace(i) for i in d]
     else:
         return d
+
+
+def _extract_bounds(transform: list[float] | Affine, shape: tuple[int, ...]) -> list[float]:
+    """
+    Extract bounding box [minx, miny, maxx, maxy] from affine transform and array shape.
+
+    Args:
+        transform: Affine transformation matrix (Affine object or GDAL list)
+        shape: Array shape (rows, cols)
+
+    Returns:
+        Bounding box as [minx, miny, maxx, maxy]
+    """
+    from affine import Affine as AffineClass
+    from rasterio.transform import array_bounds
+
+    # Convert list to Affine if needed
+    if isinstance(transform, list):
+        transform = AffineClass.from_gdal(*transform)
+
+    rows, cols = shape
+    bounds = array_bounds(rows, cols, transform)
+    # array_bounds returns (left, bottom, right, top)
+    return [bounds[0], bounds[1], bounds[2], bounds[3]]
+
+
+def _intersect_bounds(bounds_list: list[list[float]]) -> list[float]:
+    """
+    Compute intersection of multiple bounding boxes.
+
+    Args:
+        bounds_list: List of bounding boxes, each as [minx, miny, maxx, maxy]
+
+    Returns:
+        Intersection bounding box as [minx, miny, maxx, maxy]
+
+    Raises:
+        ValueError: If bounding boxes don't intersect
+    """
+    if not bounds_list:
+        raise ValueError("No bounding boxes provided")
+
+    # Start with first bounds
+    minx = bounds_list[0][0]
+    miny = bounds_list[0][1]
+    maxx = bounds_list[0][2]
+    maxy = bounds_list[0][3]
+
+    # Compute intersection with remaining bounds
+    for bounds in bounds_list[1:]:
+        minx = max(minx, bounds[0])
+        miny = max(miny, bounds[1])
+        maxx = min(maxx, bounds[2])
+        maxy = min(maxy, bounds[3])
+
+    # Check if intersection is valid
+    if minx >= maxx or miny >= maxy:
+        raise ValueError(
+            f"Bounding boxes don't intersect: intersection would be "
+            f"[{minx}, {miny}, {maxx}, {maxy}]"
+        )
+
+    return [minx, miny, maxx, maxy]
+
+
+def _resample_to_grid(
+    array: NDArray,
+    src_transform: list[float] | Affine,
+    target_bbox: list[float],
+    target_pixel_size: float,
+    method: str = "bilinear",
+    src_crs: str | None = None,
+) -> tuple[NDArray, Affine]:
+    """
+    Resample array to match target grid specification.
+
+    Args:
+        array: Source array to resample
+        src_transform: Source affine transformation (Affine object or GDAL list)
+        target_bbox: Target bounding box [minx, miny, maxx, maxy]
+        target_pixel_size: Target pixel size in map units
+        method: Resampling method ("bilinear" or "nearest")
+        src_crs: Source CRS (WKT string), required for rasterio reproject
+
+    Returns:
+        Tuple of (resampled_array, target_transform as Affine)
+    """
+    from affine import Affine as AffineClass
+    from rasterio.transform import from_bounds
+    from rasterio.warp import Resampling, reproject
+
+    # Convert list to Affine if needed
+    if isinstance(src_transform, list):
+        src_transform = AffineClass.from_gdal(*src_transform)
+
+    minx, miny, maxx, maxy = target_bbox
+
+    # Calculate target dimensions
+    width = int(np.round((maxx - minx) / target_pixel_size))
+    height = int(np.round((maxy - miny) / target_pixel_size))
+
+    # Create target transform
+    target_transform = from_bounds(minx, miny, maxx, maxy, width, height)
+
+    # Create destination array
+    destination = np.zeros((height, width), dtype=array.dtype)
+
+    # Select resampling method
+    resampling_method = (
+        Resampling.nearest if method == "nearest" else Resampling.bilinear
+    )
+
+    # Reproject (same CRS, just resampling)
+    reproject(
+        source=array,
+        destination=destination,
+        src_transform=src_transform,
+        dst_transform=target_transform,
+        src_crs=src_crs,  # Pass through CRS for rasterio
+        dst_crs=src_crs,  # Same CRS (no reprojection, just resampling)
+        resampling=resampling_method,
+    )
+
+    return destination, target_transform
 
 
 def load_params(params_json_path: str | Path) -> SimpleNamespace:
@@ -99,15 +233,15 @@ def load_params(params_json_path: str | Path) -> SimpleNamespace:
 
 
 def _get_lc_properties_from_params(
-    land_cover: "NDArray[np.integer]",
+    land_cover: NDArray[np.integer],
     params: SimpleNamespace,
     shape: tuple[int, int],
 ) -> tuple[
-    "NDArray[np.floating]",
-    "NDArray[np.floating]",
-    "NDArray[np.floating]",
-    "NDArray[np.floating]",
-    "NDArray[np.floating]",
+    NDArray[np.floating],
+    NDArray[np.floating],
+    NDArray[np.floating],
+    NDArray[np.floating],
+    NDArray[np.floating],
 ]:
     """
     Derive surface properties from land cover grid using loaded params.
@@ -162,11 +296,11 @@ def _get_lc_properties_from_params(
 
 
 def _detect_building_mask(
-    dsm: "NDArray[np.floating]",
-    land_cover: "NDArray[np.integer] | None",
-    wall_height: "NDArray[np.floating] | None",
+    dsm: NDArray[np.floating],
+    land_cover: NDArray[np.integer] | None,
+    wall_height: NDArray[np.floating] | None,
     pixel_size: float,
-) -> "NDArray[np.floating]":
+) -> NDArray[np.floating]:
     """
     Create a building mask for GVF calculation.
 
@@ -245,17 +379,17 @@ def _compute_transmissivity(
     # Default values matching configs.py
     transmissivity = 0.03
     first_day = 100  # ~April 10
-    last_day = 300   # ~October 27
+    last_day = 300  # ~October 27
     is_conifer = conifer
 
     # Override from params if provided
-    if params is not None and hasattr(params, 'Tree_settings'):
+    if params is not None and hasattr(params, "Tree_settings"):
         ts = params.Tree_settings.Value
-        transmissivity = getattr(ts, 'Transmissivity', 0.03)
-        first_day = int(getattr(ts, 'First_day_leaf', 100))
-        last_day = int(getattr(ts, 'Last_day_leaf', 300))
+        transmissivity = getattr(ts, "Transmissivity", 0.03)
+        first_day = int(getattr(ts, "First_day_leaf", 100))
+        last_day = int(getattr(ts, "Last_day_leaf", 300))
         # Note: Conifer flag may not be in all params files
-        is_conifer = conifer or getattr(ts, 'Conifer', False)
+        is_conifer = conifer or getattr(ts, "Conifer", False)
 
     # Determine leaf on/off
     if is_conifer:
@@ -313,7 +447,7 @@ class ThermalState:
     timestep_dec: float = 0.0
 
     @classmethod
-    def initial(cls, shape: tuple[int, int]) -> "ThermalState":
+    def initial(cls, shape: tuple[int, int]) -> ThermalState:
         """
         Create initial state for first timestep.
 
@@ -336,7 +470,7 @@ class ThermalState:
             timestep_dec=0.0,
         )
 
-    def copy(self) -> "ThermalState":
+    def copy(self) -> ThermalState:
         """Create a deep copy of this state."""
         return ThermalState(
             tgmap1=self.tgmap1.copy(),
@@ -366,18 +500,25 @@ class SurfaceData:
             Set relative_heights=True if CDSM contains relative heights.
         dem: Digital Elevation Model (ground elevation). Optional.
         tdsm: Trunk Digital Surface Model (trunk zone heights). Optional.
-        wall_height: Wall height grid (meters). Optional but improves accuracy.
-        wall_aspect: Wall aspect grid (degrees, 0=N). Optional.
-        albedo: Per-pixel ground albedo (0-1). Optional, defaults to 0.15.
-        emissivity: Per-pixel ground emissivity (0-1). Optional, defaults to 0.95.
         land_cover: Land cover classification grid (UMEP standard IDs). Optional.
             IDs: 0=paved, 1=asphalt, 2=buildings, 5=grass, 6=bare_soil, 7=water.
             When provided, albedo and emissivity are derived from land cover.
+        wall_height: Preprocessed wall heights (meters). Optional.
+            If not provided, computed on-the-fly from DSM.
+        wall_aspect: Preprocessed wall aspects (degrees, 0=N). Optional.
+            If not provided, computed on-the-fly from DSM.
+        svf: Preprocessed Sky View Factor arrays. Optional.
+            If not provided, computed on-the-fly.
+        shadow_matrices: Preprocessed shadow matrices for anisotropic sky. Optional.
         pixel_size: Pixel size in meters. Default 1.0.
         trunk_ratio: Ratio for auto-generating TDSM from CDSM. Default 0.25.
         relative_heights: Whether CDSM/TDSM contain relative heights (above ground)
             rather than absolute elevations. Default True.
             If True and preprocess() is not called, a warning is issued.
+
+    Note:
+        Albedo and emissivity are derived internally from land_cover using
+        standard UMEP parameters. They cannot be directly specified.
 
     Note:
         max_height is auto-computed from dsm as: np.nanmax(dsm) - np.nanmin(dsm)
@@ -392,41 +533,559 @@ class SurfaceData:
         # No need to call preprocess()
     """
 
+    # Surface rasters
     dsm: NDArray[np.floating]
     cdsm: NDArray[np.floating] | None = None
     dem: NDArray[np.floating] | None = None
     tdsm: NDArray[np.floating] | None = None
-    wall_height: NDArray[np.floating] | None = None
-    wall_aspect: NDArray[np.floating] | None = None
     albedo: NDArray[np.floating] | None = None
     emissivity: NDArray[np.floating] | None = None
     land_cover: NDArray[np.integer] | None = None
+
+    # Preprocessing data (walls, SVF, shadows)
+    wall_height: NDArray[np.floating] | None = None
+    wall_aspect: NDArray[np.floating] | None = None
+    svf: SvfArrays | None = None
+    shadow_matrices: ShadowArrays | None = None
+
+    # Grid properties
     pixel_size: float = 1.0
     trunk_ratio: float = 0.25  # Trunk zone ratio for auto-generating TDSM from CDSM
     relative_heights: bool = True  # Whether CDSM/TDSM are relative (not absolute)
+
+    # Internal state
     _preprocessed: bool = field(default=False, init=False, repr=False)
+    _geotransform: list[float] | None = field(default=None, init=False, repr=False)  # GDAL geotransform
+    _crs_wkt: str | None = field(default=None, init=False, repr=False)  # CRS as WKT string
 
     def __post_init__(self):
         # Ensure dsm is float32 for memory efficiency
         self.dsm = np.asarray(self.dsm, dtype=np.float32)
 
-        # Convert optional arrays if provided
+        # Convert optional surface arrays if provided
         if self.cdsm is not None:
             self.cdsm = np.asarray(self.cdsm, dtype=np.float32)
         if self.dem is not None:
             self.dem = np.asarray(self.dem, dtype=np.float32)
         if self.tdsm is not None:
             self.tdsm = np.asarray(self.tdsm, dtype=np.float32)
-        if self.wall_height is not None:
-            self.wall_height = np.asarray(self.wall_height, dtype=np.float32)
-        if self.wall_aspect is not None:
-            self.wall_aspect = np.asarray(self.wall_aspect, dtype=np.float32)
         if self.albedo is not None:
             self.albedo = np.asarray(self.albedo, dtype=np.float32)
         if self.emissivity is not None:
             self.emissivity = np.asarray(self.emissivity, dtype=np.float32)
         if self.land_cover is not None:
             self.land_cover = np.asarray(self.land_cover, dtype=np.uint8)
+
+        # Convert optional preprocessing arrays if provided
+        if self.wall_height is not None:
+            self.wall_height = np.asarray(self.wall_height, dtype=np.float32)
+        if self.wall_aspect is not None:
+            self.wall_aspect = np.asarray(self.wall_aspect, dtype=np.float32)
+
+    @classmethod
+    def prepare(
+        cls,
+        dsm: str | Path,
+        working_dir: str | Path,
+        cdsm: str | Path | None = None,
+        dem: str | Path | None = None,
+        tdsm: str | Path | None = None,
+        land_cover: str | Path | None = None,
+        wall_height: str | Path | None = None,
+        wall_aspect: str | Path | None = None,
+        svf_dir: str | Path | None = None,
+        bbox: list[float] | None = None,
+        pixel_size: float | None = None,
+        trunk_ratio: float = 0.25,
+        relative_heights: bool = True,
+        force_recompute: bool = False,
+    ) -> SurfaceData:
+        """
+        Prepare surface data and optional preprocessing from GeoTIFF files.
+
+        Loads raster data from disk and prepares it for SOLWEIG calculations.
+        Optionally loads preprocessing data (walls, SVF) and automatically
+        aligns it to match the surface grid.
+
+        Args:
+            dsm: Path to DSM GeoTIFF file (required).
+            working_dir: Working directory for caching computed/resampled data (required).
+                Computed walls/SVF and resampled rasters are auto-discovered here and
+                reused on subsequent runs. Structure: working_dir/walls/, working_dir/svf/,
+                working_dir/resampled/. All intermediate results saved for inspection.
+                To regenerate cached data, delete the working_dir.
+            cdsm: Path to CDSM GeoTIFF file (optional).
+            dem: Path to DEM GeoTIFF file (optional).
+            tdsm: Path to TDSM GeoTIFF file (optional).
+            land_cover: Path to land cover GeoTIFF file (optional).
+                Albedo and emissivity are derived from land cover internally.
+            wall_height: Path to wall height GeoTIFF file (optional).
+                If not provided, walls are auto-discovered in working_dir/walls/ or
+                computed from DSM and cached.
+            wall_aspect: Path to wall aspect GeoTIFF file (optional, degrees 0=N).
+                If not provided, walls are auto-discovered in working_dir/walls/ or
+                computed from DSM and cached.
+            svf_dir: Directory containing SVF preprocessing files (optional):
+                - svfs.zip: SVF arrays (required if svf_dir provided)
+                - shadowmats.npz: Shadow matrices for anisotropic sky (optional)
+                If not provided, SVF is auto-discovered in working_dir/svf/ or
+                computed and cached.
+            bbox: Explicit bounding box [minx, miny, maxx, maxy] (optional).
+                If provided, all data is cropped/resampled to this extent.
+                If None, uses auto-intersection of all provided data.
+            pixel_size: Pixel size in meters. If None, computed from DSM geotransform.
+            trunk_ratio: Ratio for auto-generating TDSM from CDSM. Default 0.25.
+            relative_heights: Whether CDSM/TDSM contain relative heights. Default True.
+            force_recompute: If True, skip cache and recompute walls/SVF even if they
+                exist in working_dir. Default False (use cached data when available).
+
+        Returns:
+            SurfaceData instance with loaded terrain and preprocessing data.
+
+        Note:
+            When preprocessing data (walls/SVF) has different extents or resolution
+            than the surface data, it is automatically resampled/cropped to match.
+            Use bbox parameter to explicitly control the output extent.
+
+        Example:
+            # Load surface with preprocessing
+            surface = SurfaceData.prepare(
+                dsm="data/dsm.tif",
+                cdsm="data/cdsm.tif",
+                wall_height="preprocessed/walls/wall_hts.tif",
+                wall_aspect="preprocessed/walls/wall_aspects.tif",
+                svf_dir="preprocessed/svf",
+            )
+
+            # Minimal case - walls and SVF computed automatically
+            surface = SurfaceData.prepare(dsm="data/dsm.tif")
+
+            # Explicit extent override
+            surface = SurfaceData.prepare(
+                dsm="data/dsm.tif",
+                wall_height="preprocessed/walls/wall_hts.tif",
+                wall_aspect="preprocessed/walls/wall_aspects.tif",
+                bbox=[476800, 4205850, 477200, 4206250],
+                pixel_size=1.0,
+            )
+        """
+        from . import io
+
+        logger.info("Preparing surface data from GeoTIFF files...")
+
+        # Load required DSM
+        dsm_arr, dsm_transform, dsm_crs, _ = io.load_raster(str(dsm))
+        logger.info(f"  DSM: {dsm_arr.shape[1]}×{dsm_arr.shape[0]} pixels")
+
+        # Compute pixel size from geotransform if not provided
+        if pixel_size is None:
+            pixel_size = abs(dsm_transform[1])  # X pixel size
+            logger.info(f"  Extracted pixel size from DSM: {pixel_size:.2f} m")
+        else:
+            logger.info(f"  Using specified pixel size: {pixel_size:.2f} m")
+
+        # Warn if pixel size is less than 1 meter
+        if pixel_size < 1.0:
+            logger.warning(
+                f"  ⚠ Pixel size ({pixel_size:.2f} m) is less than 1 meter - "
+                f"calculations may be slow for large areas"
+            )
+
+        # Validate CRS is projected (required for distance calculations)
+        if dsm_crs is None:
+            raise ValueError(
+                "DSM file has no CRS information. SOLWEIG requires a projected coordinate system."
+            )
+
+        try:
+            from pyproj import CRS as pyproj_CRS
+
+            crs_obj = pyproj_CRS.from_wkt(dsm_crs)
+            if not crs_obj.is_projected:
+                raise ValueError(
+                    f"DSM CRS is geographic (lat/lon): {crs_obj.name}. "
+                    f"SOLWEIG requires a projected coordinate system (e.g., UTM, State Plane) "
+                    f"for accurate distance and area calculations. Please reproject your data."
+                )
+            logger.info(f"  CRS validated: {crs_obj.name} (EPSG:{crs_obj.to_epsg() or 'custom'})")
+        except Exception as e:
+            logger.warning(f"  ⚠ Could not validate CRS: {e}")
+
+        # Load optional terrain rasters (store transforms for extent calculation)
+        cdsm_arr, cdsm_transform = None, None
+        if cdsm is not None:
+            cdsm_arr, cdsm_transform, _, _ = io.load_raster(str(cdsm))
+            logger.info("  ✓ Canopy DSM (CDSM) provided")
+        else:
+            logger.info("  → No vegetation data - simulation without trees/vegetation")
+
+        dem_arr, dem_transform = None, None
+        if dem is not None:
+            dem_arr, dem_transform, _, _ = io.load_raster(str(dem))
+            logger.info("  ✓ Ground elevation (DEM) provided")
+
+        tdsm_arr, tdsm_transform = None, None
+        if tdsm is not None:
+            tdsm_arr, tdsm_transform, _, _ = io.load_raster(str(tdsm))
+            logger.info("  ✓ Trunk DSM (TDSM) provided")
+        elif cdsm_arr is not None:
+            logger.info(f"  → No TDSM provided - will auto-generate from CDSM (ratio={trunk_ratio})")
+
+        land_cover_arr, land_cover_transform = None, None
+        if land_cover is not None:
+            land_cover_arr, land_cover_transform, _, _ = io.load_raster(str(land_cover))
+            logger.info("  ✓ Land cover provided (albedo/emissivity derived from classification)")
+
+        # Load preprocessing data (walls, SVF)
+        logger.info("Checking for preprocessing data...")
+
+        # Convert working_dir to Path (always provided now)
+        working_path = Path(working_dir)
+
+        # Walls loading with auto-discovery in working_dir
+        wall_height_arr, wall_height_transform = None, None
+        wall_aspect_arr, wall_aspect_transform = None, None
+        compute_walls_to_cache = False  # Flag: compute and save to working_dir after resampling
+
+        if wall_height is not None and wall_aspect is not None:
+            # Explicit paths provided - use them
+            wall_height_arr, wall_height_transform, _, _ = io.load_raster(str(wall_height))
+            wall_aspect_arr, wall_aspect_transform, _, _ = io.load_raster(str(wall_aspect))
+            logger.info("  ✓ Existing walls found (will use precomputed)")
+
+        elif wall_height is not None or wall_aspect is not None:
+            logger.warning("  ⚠ Only one wall file provided - both wall_height and wall_aspect required")
+            logger.info("  → Walls will be computed from DSM and cached")
+            compute_walls_to_cache = True
+
+        else:
+            # Try to auto-discover walls in working_dir (unless force_recompute)
+            if force_recompute:
+                logger.info("  → force_recompute=True - will recompute walls from DSM and cache")
+                compute_walls_to_cache = True
+            else:
+                walls_cache_dir = working_path / "walls"
+                wall_hts_path = walls_cache_dir / "wall_hts.tif"
+                wall_aspects_path = walls_cache_dir / "wall_aspects.tif"
+
+                if wall_hts_path.exists() and wall_aspects_path.exists():
+                    # Files exist - load and validate compatibility
+                    wall_height_arr, wall_height_transform, _, _ = io.load_raster(str(wall_hts_path))
+                    wall_aspect_arr, wall_aspect_transform, _, _ = io.load_raster(str(wall_aspects_path))
+                    logger.info(f"  ✓ Walls found in working_dir: {walls_cache_dir}")
+                    # Note: Compatibility with DSM checked during resampling below
+                else:
+                    # No cached walls - will compute and cache
+                    logger.info("  → No walls found in working_dir - will compute from DSM and cache")
+                    compute_walls_to_cache = True
+
+        # SVF loading with auto-discovery in working_dir
+        svf_data = None
+        shadow_data = None
+        compute_svf_to_cache = False  # Flag: compute and save to working_dir after resampling
+
+        if svf_dir is not None:
+            # Explicit SVF directory provided - use it
+            svf_path = Path(svf_dir)
+            svf_zip_path = svf_path / "svfs.zip"
+            shadow_npz_path = svf_path / "shadowmats.npz"
+
+            if svf_zip_path.exists():
+                svf_data = SvfArrays.from_zip(str(svf_zip_path))
+                logger.info("  ✓ Existing SVF found (will use precomputed)")
+
+                if shadow_npz_path.exists():
+                    shadow_data = ShadowArrays.from_npz(str(shadow_npz_path))
+                    logger.info("  ✓ Existing shadow matrices found (anisotropic sky enabled)")
+            else:
+                logger.info(f"  → SVF directory provided but svfs.zip not found: {svf_zip_path}")
+                logger.info("  → SVF will be computed and cached")
+                compute_svf_to_cache = True
+
+        else:
+            # Try to auto-discover SVF in working_dir (unless force_recompute)
+            if force_recompute:
+                logger.info("  → force_recompute=True - will recompute SVF and cache")
+                compute_svf_to_cache = True
+            else:
+                svf_cache_dir = working_path / "svf"
+                svf_zip_path = svf_cache_dir / "svfs.zip"
+                shadow_npz_path = svf_cache_dir / "shadowmats.npz"
+
+                if svf_zip_path.exists():
+                    # Files exist - load them
+                    svf_data = SvfArrays.from_zip(str(svf_zip_path))
+                    logger.info(f"  ✓ SVF found in working_dir: {svf_cache_dir}")
+
+                    if shadow_npz_path.exists():
+                        shadow_data = ShadowArrays.from_npz(str(shadow_npz_path))
+                        logger.info("  ✓ Shadow matrices found (anisotropic sky enabled)")
+                    # Note: Compatibility checked during calculation
+                else:
+                    # No cached SVF - will compute and cache
+                    logger.info("  → No SVF found in working_dir - will compute and cache")
+                    compute_svf_to_cache = True
+
+        # Compute extent and resample if needed
+        logger.info("Computing spatial extent and resolution...")
+
+        # Extract bounds from all loaded rasters
+        bounds_list = [_extract_bounds(dsm_transform, dsm_arr.shape)]
+        if cdsm_arr is not None and cdsm_transform is not None:
+            bounds_list.append(_extract_bounds(cdsm_transform, cdsm_arr.shape))
+        if dem_arr is not None and dem_transform is not None:
+            bounds_list.append(_extract_bounds(dem_transform, dem_arr.shape))
+        if tdsm_arr is not None and tdsm_transform is not None:
+            bounds_list.append(_extract_bounds(tdsm_transform, tdsm_arr.shape))
+        if land_cover_arr is not None and land_cover_transform is not None:
+            bounds_list.append(_extract_bounds(land_cover_transform, land_cover_arr.shape))
+        if wall_height_arr is not None and wall_height_transform is not None:
+            bounds_list.append(_extract_bounds(wall_height_transform, wall_height_arr.shape))
+        if wall_aspect_arr is not None and wall_aspect_transform is not None:
+            bounds_list.append(_extract_bounds(wall_aspect_transform, wall_aspect_arr.shape))
+
+        # Determine target bounding box
+        if bbox is not None:
+            # User provided explicit bbox - validate it's within intersection
+            computed_intersection = _intersect_bounds(bounds_list)
+            user_minx, user_miny, user_maxx, user_maxy = bbox
+            int_minx, int_miny, int_maxx, int_maxy = computed_intersection
+
+            # Check if user bbox is within or equal to intersection
+            if (user_minx < int_minx - 1e-6 or user_maxx > int_maxx + 1e-6 or
+                user_miny < int_miny - 1e-6 or user_maxy > int_maxy + 1e-6):
+                raise ValueError(
+                    f"Specified bbox {bbox} extends beyond the intersection of input rasters "
+                    f"{computed_intersection}. Bbox must be within or equal to the intersection."
+                )
+
+            target_bbox = bbox
+            logger.info(f"  Using user-specified extent: {target_bbox}")
+        else:
+            # Auto-compute intersection
+            target_bbox = _intersect_bounds(bounds_list)
+            logger.info(f"  Auto-computed extent from raster intersection: {target_bbox}")
+
+        # Check if resampling is needed (compare DSM to target)
+        dsm_bounds = _extract_bounds(dsm_transform, dsm_arr.shape)
+        dsm_pixel_size = abs(dsm_transform[1])
+        needs_resampling = (
+            abs(dsm_bounds[0] - target_bbox[0]) > 1e-6 or
+            abs(dsm_bounds[1] - target_bbox[1]) > 1e-6 or
+            abs(dsm_bounds[2] - target_bbox[2]) > 1e-6 or
+            abs(dsm_bounds[3] - target_bbox[3]) > 1e-6 or
+            abs(dsm_pixel_size - pixel_size) > 1e-6
+        )
+
+        if needs_resampling:
+            logger.info("  Resampling all rasters to target grid...")
+
+            # Resample DSM
+            dsm_arr, dsm_transform = _resample_to_grid(
+                dsm_arr, dsm_transform, target_bbox, pixel_size, method="bilinear", src_crs=dsm_crs
+            )
+
+            # Resample optional terrain rasters
+            if cdsm_arr is not None and cdsm_transform is not None:
+                cdsm_arr, _ = _resample_to_grid(
+                    cdsm_arr, cdsm_transform, target_bbox, pixel_size, method="bilinear", src_crs=dsm_crs
+                )
+            if dem_arr is not None and dem_transform is not None:
+                dem_arr, _ = _resample_to_grid(
+                    dem_arr, dem_transform, target_bbox, pixel_size, method="bilinear", src_crs=dsm_crs
+                )
+            if tdsm_arr is not None and tdsm_transform is not None:
+                tdsm_arr, _ = _resample_to_grid(
+                    tdsm_arr, tdsm_transform, target_bbox, pixel_size, method="bilinear", src_crs=dsm_crs
+                )
+            if land_cover_arr is not None and land_cover_transform is not None:
+                # Use nearest neighbor for categorical data
+                land_cover_arr, _ = _resample_to_grid(
+                    land_cover_arr, land_cover_transform, target_bbox, pixel_size, method="nearest", src_crs=dsm_crs
+                )
+
+            # Resample preprocessing data
+            if wall_height_arr is not None and wall_height_transform is not None:
+                wall_height_arr, _ = _resample_to_grid(
+                    wall_height_arr, wall_height_transform, target_bbox, pixel_size, method="bilinear", src_crs=dsm_crs
+                )
+            if wall_aspect_arr is not None and wall_aspect_transform is not None:
+                wall_aspect_arr, _ = _resample_to_grid(
+                    wall_aspect_arr, wall_aspect_transform, target_bbox, pixel_size, method="bilinear", src_crs=dsm_crs
+                )
+
+            # Note: SVF resampling is more complex (multiple arrays) - handled separately if needed
+            if svf_data is not None and svf_data.svf.shape != dsm_arr.shape:
+                logger.warning(
+                    f"  ⚠ SVF shape {svf_data.svf.shape} doesn't match target shape "
+                    f"{dsm_arr.shape} - SVF resampling not yet implemented. "
+                    f"SVF will be recomputed on-the-fly if needed."
+                )
+                svf_data = None
+                shadow_data = None
+
+            logger.info(f"  ✓ Resampled to {dsm_arr.shape[1]}×{dsm_arr.shape[0]} pixels")
+        else:
+            logger.info("  ✓ No resampling needed - all rasters match target grid")
+
+        # Create SurfaceData instance
+        surface_data = cls(
+            dsm=dsm_arr,
+            cdsm=cdsm_arr,
+            dem=dem_arr,
+            tdsm=tdsm_arr,
+            land_cover=land_cover_arr,
+            wall_height=wall_height_arr,
+            wall_aspect=wall_aspect_arr,
+            svf=svf_data,
+            shadow_matrices=shadow_data,
+            pixel_size=pixel_size,
+            trunk_ratio=trunk_ratio,
+            relative_heights=relative_heights,
+        )
+
+        # Store geotransform and CRS for later export
+        # Convert Affine to GDAL list if needed
+        from affine import Affine as AffineClass
+
+        if isinstance(dsm_transform, AffineClass):
+            surface_data._geotransform = list(dsm_transform.to_gdal())
+        else:
+            surface_data._geotransform = dsm_transform
+        surface_data._crs_wkt = dsm_crs
+
+        # Log what was loaded
+        layers_loaded = ["DSM"]
+        if cdsm_arr is not None:
+            layers_loaded.append("CDSM")
+        if dem_arr is not None:
+            layers_loaded.append("DEM")
+        if tdsm_arr is not None:
+            layers_loaded.append("TDSM")
+        if land_cover_arr is not None:
+            layers_loaded.append("land_cover")
+        logger.info(f"  Layers loaded: {', '.join(layers_loaded)}")
+
+        # Compute and cache walls if needed
+        if compute_walls_to_cache:
+            logger.info("Computing walls from DSM and caching to working_dir...")
+            walls_cache_dir = working_path / "walls"
+
+            # First, save resampled DSM to working_dir so wall computation can use it
+            resampled_dir = working_path / "resampled"
+            resampled_dir.mkdir(parents=True, exist_ok=True)
+            resampled_dsm_path = resampled_dir / "dsm_resampled.tif"
+
+            io.save_raster(
+                str(resampled_dsm_path),
+                dsm_arr,
+                list(dsm_transform.to_gdal()) if isinstance(dsm_transform, AffineClass) else dsm_transform,
+                dsm_crs,
+            )
+
+            # Generate walls using the walls module
+            from . import walls as walls_module
+            walls_module.generate_wall_hts(
+                dsm_path=str(resampled_dsm_path),
+                bbox=None,  # Already resampled to target extent
+                out_dir=str(walls_cache_dir),
+            )
+
+            # Load the generated walls back into surface_data
+            wall_hts_path = walls_cache_dir / "wall_hts.tif"
+            wall_aspects_path = walls_cache_dir / "wall_aspects.tif"
+
+            if wall_hts_path.exists() and wall_aspects_path.exists():
+                wall_height_arr, _, _, _ = io.load_raster(str(wall_hts_path))
+                wall_aspect_arr, _, _, _ = io.load_raster(str(wall_aspects_path))
+                surface_data.wall_height = wall_height_arr
+                surface_data.wall_aspect = wall_aspect_arr
+                logger.info(f"  ✓ Walls computed and cached to {walls_cache_dir}")
+            else:
+                logger.warning("  ⚠ Wall generation completed but files not found")
+
+        # Compute and cache SVF if needed
+        if compute_svf_to_cache:
+            if tdsm_arr is not None:
+                logger.info("Computing SVF from DSM/CDSM/TDSM and caching to working_dir...")
+            else:
+                logger.info("Computing SVF from DSM/CDSM and caching to working_dir...")
+            svf_cache_dir = working_path / "svf"
+
+            # Save resampled DSM if not already saved
+            resampled_dir = working_path / "resampled"
+            resampled_dir.mkdir(parents=True, exist_ok=True)
+            resampled_dsm_path = resampled_dir / "dsm_resampled.tif"
+
+            if not resampled_dsm_path.exists():
+                io.save_raster(
+                    str(resampled_dsm_path),
+                    dsm_arr,
+                    list(dsm_transform.to_gdal()) if isinstance(dsm_transform, AffineClass) else dsm_transform,
+                    dsm_crs,
+                )
+
+            # Save resampled CDSM if present
+            resampled_cdsm_path = None
+            if cdsm_arr is not None:
+                resampled_cdsm_path = resampled_dir / "cdsm_resampled.tif"
+                io.save_raster(
+                    str(resampled_cdsm_path),
+                    cdsm_arr,
+                    list(dsm_transform.to_gdal()) if isinstance(dsm_transform, AffineClass) else dsm_transform,
+                    dsm_crs,
+                )
+
+            # Save resampled TDSM if present (user-provided)
+            resampled_tdsm_path = None
+            if tdsm_arr is not None:
+                resampled_tdsm_path = resampled_dir / "tdsm_resampled.tif"
+                io.save_raster(
+                    str(resampled_tdsm_path),
+                    tdsm_arr,
+                    list(dsm_transform.to_gdal()) if isinstance(dsm_transform, AffineClass) else dsm_transform,
+                    dsm_crs,
+                )
+
+            # Generate SVF using the svf module
+            # Compute bbox from resampled extent
+            minx, miny, maxx, maxy = _extract_bounds(dsm_transform, dsm_arr.shape)
+            resampled_bbox = [int(minx), int(miny), int(maxx), int(maxy)]
+
+            from . import svf as svf_module
+            svf_module.generate_svf(
+                dsm_path=str(resampled_dsm_path),
+                bbox=resampled_bbox,
+                out_dir=str(svf_cache_dir),
+                cdsm_path=str(resampled_cdsm_path) if resampled_cdsm_path else None,
+                tdsm_path=str(resampled_tdsm_path) if resampled_tdsm_path else None,
+                trans_veg_perc=3.0,  # Default parameter
+                trunk_ratio_perc=trunk_ratio * 100,  # Match prepare() trunk_ratio
+            )
+
+            # Load the generated SVF back into surface_data
+            svf_zip_path = svf_cache_dir / "svfs.zip"
+            shadow_npz_path = svf_cache_dir / "shadowmats.npz"
+
+            if svf_zip_path.exists():
+                svf_data = SvfArrays.from_zip(str(svf_zip_path))
+                surface_data.svf = svf_data
+                logger.info(f"  ✓ SVF computed and cached to {svf_cache_dir}")
+
+                if shadow_npz_path.exists():
+                    shadow_data = ShadowArrays.from_npz(str(shadow_npz_path))
+                    surface_data.shadow_matrices = shadow_data
+                    logger.info("  ✓ Shadow matrices also generated (anisotropic sky enabled)")
+            else:
+                logger.warning("  ⚠ SVF generation completed but files not found")
+
+        # Preprocess CDSM/TDSM if relative heights
+        if relative_heights and surface_data.cdsm is not None:
+            logger.debug("  Preprocessing CDSM/TDSM (relative → absolute heights)")
+            surface_data.preprocess()
+
+        logger.info("✓ Surface data prepared successfully")
+        return surface_data
 
     def preprocess(self) -> None:
         """
@@ -452,9 +1111,7 @@ class SurfaceData:
 
         # Auto-generate TDSM from trunk ratio if CDSM provided but not TDSM
         if self.cdsm is not None and self.tdsm is None:
-            logger.info(
-                f"Auto-generating TDSM from CDSM using trunk_ratio={self.trunk_ratio}"
-            )
+            logger.info(f"Auto-generating TDSM from CDSM using trunk_ratio={self.trunk_ratio}")
             self.tdsm = (self.cdsm * self.trunk_ratio).astype(np.float32)
 
         # Boost CDSM/TDSM to absolute heights
@@ -483,8 +1140,7 @@ class SurfaceData:
                 self.tdsm = tdsm_abs.astype(np.float32)
 
             logger.info(
-                f"Preprocessed CDSM/TDSM to absolute heights "
-                f"(base: {'DEM' if self.dem is not None else 'DSM'})"
+                f"Preprocessed CDSM/TDSM to absolute heights (base: {'DEM' if self.dem is not None else 'DSM'})"
             )
 
         self._preprocessed = True
@@ -619,46 +1275,6 @@ class SurfaceData:
                 tmaxlst_grid[mask] = tmaxlst
 
         return alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid
-
-    @classmethod
-    def from_files(
-        cls,
-        dsm_path: str | Path,
-        cdsm_path: str | Path | None = None,
-        dem_path: str | Path | None = None,
-        tdsm_path: str | Path | None = None,
-        pixel_size: float = 1.0,
-    ) -> SurfaceData:
-        """
-        Load surface data from raster files.
-
-        Args:
-            dsm_path: Path to DSM raster file.
-            cdsm_path: Path to CDSM raster file. Optional.
-            dem_path: Path to DEM raster file. Optional.
-            tdsm_path: Path to TDSM raster file. Optional.
-            pixel_size: Pixel size in meters.
-
-        Returns:
-            SurfaceData instance with loaded arrays.
-        """
-        from . import io as common
-
-        dsm = common.load_raster(str(dsm_path))
-
-        cdsm = None
-        if cdsm_path is not None:
-            cdsm = common.load_raster(str(cdsm_path))
-
-        dem = None
-        if dem_path is not None:
-            dem = common.load_raster(str(dem_path))
-
-        tdsm = None
-        if tdsm_path is not None:
-            tdsm = common.load_raster(str(tdsm_path))
-
-        return cls(dsm=dsm, cdsm=cdsm, dem=dem, tdsm=tdsm, pixel_size=pixel_size)
 
 
 @dataclass
@@ -938,20 +1554,29 @@ class ShadowArrays:
 @dataclass
 class PrecomputedData:
     """
-    Container for pre-computed data to skip expensive calculations.
+    Container for pre-computed preprocessing data to skip expensive calculations.
 
-    Use this to provide already-computed SVF and/or shadow matrices
+    Use this to provide already-computed walls, SVF, and/or shadow matrices
     to the calculate() function. This is useful when:
     - Running multiple timesteps with the same geometry
     - Using data generated by external tools
     - Optimizing performance by pre-computing once
 
     Attributes:
+        wall_height: Pre-computed wall height grid (meters). If None, computed on-the-fly.
+        wall_aspect: Pre-computed wall aspect grid (degrees, 0=N). If None, computed on-the-fly.
         svf: Pre-computed SVF arrays. If None, SVF is computed on-the-fly.
         shadow_matrices: Pre-computed anisotropic shadow matrices.
             If None, isotropic sky model is used.
 
     Example:
+        # Load all preprocessing
+        precomputed = PrecomputedData.load(
+            walls_dir="preprocessed/walls",
+            svf_dir="preprocessed/svf",
+        )
+
+        # Or create manually
         svf = SvfArrays.from_zip("path/to/svfs.zip")
         shadows = ShadowArrays.from_npz("path/to/shadowmats.npz")
         precomputed = PrecomputedData(svf=svf, shadow_matrices=shadows)
@@ -964,8 +1589,99 @@ class PrecomputedData:
         )
     """
 
+    wall_height: NDArray[np.floating] | None = None
+    wall_aspect: NDArray[np.floating] | None = None
     svf: SvfArrays | None = None
     shadow_matrices: ShadowArrays | None = None
+
+    @classmethod
+    def prepare(
+        cls,
+        walls_dir: str | Path | None = None,
+        svf_dir: str | Path | None = None,
+    ) -> PrecomputedData:
+        """
+        Prepare preprocessing data from directories.
+
+        Loads preprocessing files if they exist. If files don't exist,
+        the corresponding data will be None and computed on-the-fly during calculation.
+
+        All parameters are optional.
+
+        Args:
+            walls_dir: Directory containing wall preprocessing files:
+                - wall_hts.tif: Wall heights (meters)
+                - wall_aspects.tif: Wall aspects (degrees, 0=N)
+            svf_dir: Directory containing SVF preprocessing files:
+                - svfs.zip: SVF arrays (required if svf_dir provided)
+                - shadowmats.npz: Shadow matrices for anisotropic sky (optional)
+
+        Returns:
+            PrecomputedData with loaded arrays. Missing data is set to None.
+
+        Example:
+            # Prepare all preprocessing
+            precomputed = PrecomputedData.prepare(
+                walls_dir="preprocessed/walls",
+                svf_dir="preprocessed/svf",
+            )
+
+            # Prepare only SVF
+            precomputed = PrecomputedData.prepare(svf_dir="preprocessed/svf")
+
+            # Nothing prepared (all computed on-the-fly)
+            precomputed = PrecomputedData.prepare()
+        """
+        from . import io
+
+        wall_height_arr = None
+        wall_aspect_arr = None
+        svf_arrays = None
+        shadow_arrays = None
+
+        # Load walls if directory provided
+        if walls_dir is not None:
+            walls_path = Path(walls_dir)
+            wall_height_path = walls_path / "wall_hts.tif"
+            wall_aspect_path = walls_path / "wall_aspects.tif"
+
+            if wall_height_path.exists():
+                wall_height_arr, _, _, _ = io.load_raster(str(wall_height_path))
+                logger.info(f"  Loaded wall heights from {walls_dir}")
+            else:
+                logger.debug(f"  Wall heights not found: {wall_height_path}")
+
+            if wall_aspect_path.exists():
+                wall_aspect_arr, _, _, _ = io.load_raster(str(wall_aspect_path))
+                logger.info(f"  Loaded wall aspects from {walls_dir}")
+            else:
+                logger.debug(f"  Wall aspects not found: {wall_aspect_path}")
+
+        # Load SVF if directory provided
+        if svf_dir is not None:
+            svf_path = Path(svf_dir)
+            svf_zip = svf_path / "svfs.zip"
+
+            if svf_zip.exists():
+                svf_arrays = SvfArrays.from_zip(str(svf_zip))
+                logger.info(f"  Loaded SVF data: {svf_arrays.svf.shape}")
+            else:
+                logger.debug(f"  SVF not found: {svf_zip}")
+
+            # Load shadow matrices (optional - for anisotropic sky)
+            shadow_npz = svf_path / "shadowmats.npz"
+            if shadow_npz.exists():
+                shadow_arrays = ShadowArrays.from_npz(str(shadow_npz))
+                logger.info("  Loaded shadow matrices for anisotropic sky")
+            else:
+                logger.debug("  No shadow matrices found (anisotropic sky will be slower)")
+
+        return cls(
+            wall_height=wall_height_arr,
+            wall_aspect=wall_aspect_arr,
+            svf=svf_arrays,
+            shadow_matrices=shadow_arrays,
+        )
 
 
 @dataclass
@@ -990,6 +1706,115 @@ class Location:
             raise ValueError(f"Latitude must be in [-90, 90], got {self.latitude}")
         if not -180 <= self.longitude <= 180:
             raise ValueError(f"Longitude must be in [-180, 180], got {self.longitude}")
+
+    @classmethod
+    def from_dsm_crs(cls, dsm_path: str | Path, utc_offset: int = 0, altitude: float = 0.0) -> Location:
+        """
+        Extract location from DSM raster's CRS by converting center point to WGS84.
+
+        Args:
+            dsm_path: Path to DSM GeoTIFF file with valid CRS.
+            utc_offset: UTC offset in hours. Must be provided by user.
+            altitude: Altitude above sea level in meters. Default 0.
+
+        Returns:
+            Location object with lat/lon from DSM center point.
+
+        Raises:
+            ValueError: If DSM has no CRS or CRS conversion fails.
+
+        Example:
+            location = Location.from_dsm_crs("dsm.tif", utc_offset=2)
+        """
+        from . import io
+
+        try:
+            from pyproj import Transformer
+        except ImportError:
+            raise ImportError("pyproj is required for CRS extraction. Install with: pip install pyproj")
+
+        # Load DSM to get CRS and bounds
+        _, transform, crs_wkt, _ = io.load_raster(str(dsm_path))
+
+        if not crs_wkt:
+            raise ValueError(
+                f"DSM has no CRS metadata: {dsm_path}\n"
+                f"Either:\n"
+                f"  1. Add CRS to GeoTIFF: gdal_edit.py -a_srs EPSG:XXXXX {dsm_path}\n"
+                f"  2. Provide location manually: Location(latitude=X, longitude=Y, utc_offset={utc_offset})"
+            )
+
+        # Get center point from geotransform
+        # Transform is [x_origin, x_pixel_size, x_rotation, y_origin, y_rotation, y_pixel_size]
+        # We need the raster dimensions to find center - load again to get shape
+        dsm_array, _, _, _ = io.load_raster(str(dsm_path))
+        rows, cols = dsm_array.shape
+
+        center_x = transform[0] + (cols / 2) * transform[1]
+        center_y = transform[3] + (rows / 2) * transform[5]
+
+        # Convert to WGS84
+        transformer = Transformer.from_crs(crs_wkt, "EPSG:4326", always_xy=True)
+        lon, lat = transformer.transform(center_x, center_y)
+
+        logger.info(f"Extracted location from DSM CRS: {lat:.4f}°N, {lon:.4f}°E (UTC{utc_offset:+d})")
+        return cls(latitude=lat, longitude=lon, altitude=altitude, utc_offset=utc_offset)
+
+    @classmethod
+    def from_surface(cls, surface: SurfaceData, utc_offset: int = 0, altitude: float = 0.0) -> Location:
+        """
+        Extract location from SurfaceData's CRS by converting center point to WGS84.
+
+        This avoids reloading the DSM raster when you already have loaded SurfaceData.
+
+        Args:
+            surface: SurfaceData instance loaded from GeoTIFF.
+            utc_offset: UTC offset in hours. Default 0.
+            altitude: Altitude above sea level in meters. Default 0.
+
+        Returns:
+            Location object with lat/lon from DSM center point.
+
+        Raises:
+            ValueError: If surface has no CRS metadata.
+            ImportError: If pyproj is not installed.
+
+        Example:
+            surface = SurfaceData.from_geotiff("dsm.tif")
+            location = Location.from_surface(surface, utc_offset=2)
+        """
+        try:
+            from pyproj import Transformer
+        except ImportError:
+            raise ImportError("pyproj is required for CRS extraction. Install with: pip install pyproj")
+
+        # Check if geotransform and CRS are available
+        if not hasattr(surface, "_geotransform") or surface._geotransform is None:
+            raise ValueError(
+                "Surface data has no geotransform metadata.\n"
+                "Load surface with SurfaceData.from_geotiff() or provide location manually."
+            )
+        if not hasattr(surface, "_crs_wkt") or surface._crs_wkt is None:
+            raise ValueError(
+                "Surface data has no CRS metadata.\n"
+                "Provide location manually: Location(latitude=X, longitude=Y, utc_offset=0)"
+            )
+
+        transform = surface._geotransform
+        crs_wkt = surface._crs_wkt
+        rows, cols = surface.dsm.shape
+
+        # Get center point from geotransform
+        # Transform is [x_origin, x_pixel_size, x_rotation, y_origin, y_rotation, y_pixel_size]
+        center_x = transform[0] + (cols / 2) * transform[1]
+        center_y = transform[3] + (rows / 2) * transform[5]
+
+        # Convert to WGS84
+        transformer = Transformer.from_crs(crs_wkt, "EPSG:4326", always_xy=True)
+        lon, lat = transformer.transform(center_x, center_y)
+
+        logger.debug(f"Auto-extracted location: {lat:.4f}°N, {lon:.4f}°E (UTC{utc_offset:+d})")
+        return cls(latitude=lat, longitude=lon, altitude=altitude, utc_offset=utc_offset)
 
     def to_sun_position_dict(self) -> dict:
         """Convert to dict format expected by sun_position module."""
@@ -1088,6 +1913,7 @@ class Weather:
             # Meteorological data timestamps typically represent the end of an interval,
             # so we compute sun position at the center of the interval to match SOLWEIG runner
             from datetime import timedelta
+
             half_timestep = timedelta(minutes=self.timestep_minutes / 2.0)
             sun_time = self.datetime - half_timestep
 
@@ -1133,7 +1959,9 @@ class Weather:
                 }
                 sun_step = sp.sun_position(time_dict_step, location_dict)
                 zenith_step = sun_step["zenith"]
-                zenith_val = float(np.asarray(zenith_step).flat[0]) if hasattr(zenith_step, "__iter__") else float(zenith_step)
+                zenith_val = (
+                    float(np.asarray(zenith_step).flat[0]) if hasattr(zenith_step, "__iter__") else float(zenith_step)
+                )
                 alt_step = 90.0 - zenith_val
                 if alt_step > sunmaximum:
                     sunmaximum = alt_step
@@ -1178,6 +2006,337 @@ class Weather:
         """Check if sun is above horizon."""
         return self.sun_altitude > 0
 
+    @classmethod
+    def from_epw(
+        cls,
+        path: str | Path,
+        start: str | dt | None = None,
+        end: str | dt | None = None,
+        hours: list[int] | None = None,
+        year: int | None = None,
+    ) -> list[Weather]:
+        """
+        Load weather data from an EnergyPlus Weather (EPW) file.
+
+        Args:
+            path: Path to the EPW file.
+            start: Start date/datetime. Can be:
+                   - ISO date string "YYYY-MM-DD" or "MM-DD" (for TMY with year=None)
+                   - datetime object
+                   If None, uses first date in file.
+            end: End date/datetime (inclusive). Same format as start.
+                 If None, uses same as start (single day).
+            hours: List of hours to include (0-23). If None, includes all hours.
+            year: Year override for TMY files. If None and start/end use MM-DD format,
+                  matches any year in the file.
+
+        Returns:
+            List of Weather objects for each timestep in the requested range.
+
+        Raises:
+            FileNotFoundError: If the EPW file doesn't exist.
+            ValueError: If requested dates are outside the EPW file's date range.
+
+        Example:
+            # Load a single day
+            weather_list = Weather.from_epw("weather.epw", start="2023-07-15", end="2023-07-15")
+
+            # Load with specific hours only (daylight hours)
+            weather_list = Weather.from_epw(
+                "weather.epw",
+                start="2023-07-15",
+                end="2023-07-16",
+                hours=[6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+            )
+
+            # TMY file (year-agnostic)
+            weather_list = Weather.from_epw("tmy.epw", start="07-15", end="07-15")
+        """
+        from . import io as common
+
+        # Parse EPW file
+        df, epw_info = common.read_epw(path)
+
+        # Parse start/end dates
+        def parse_date(date_val, is_tmy: bool, default_year: int):
+            if date_val is None:
+                return None
+            if isinstance(date_val, dt):
+                return date_val
+            # String parsing
+            date_str = str(date_val)
+            if "-" in date_str:
+                parts = date_str.split("-")
+                if len(parts) == 2:
+                    # MM-DD format (TMY)
+                    month, day = int(parts[0]), int(parts[1])
+                    return dt(default_year, month, day)
+                elif len(parts) == 3:
+                    # YYYY-MM-DD format
+                    return dt.fromisoformat(date_str)
+            raise ValueError(f"Cannot parse date: {date_val}. Use 'YYYY-MM-DD' or 'MM-DD' format.")
+
+        # Determine if using TMY mode (year-agnostic)
+        is_tmy = year is None and start is not None and isinstance(start, str) and len(start.split("-")) == 2
+
+        # Get default year from EPW data
+        if df.index.empty:
+            raise ValueError("EPW file contains no data")
+        default_year = df.index[0].year if year is None else year
+
+        # Parse dates
+        start_dt = parse_date(start, is_tmy, default_year)
+        end_dt = parse_date(end, is_tmy, default_year)
+
+        if start_dt is None:
+            start_dt = df.index[0].replace(tzinfo=None)
+        if end_dt is None:
+            end_dt = start_dt
+
+        # Make end_dt inclusive of the full day
+        if end_dt.hour == 0 and end_dt.minute == 0:
+            end_dt = end_dt.replace(hour=23, minute=59, second=59)
+
+        # Filter by date range
+        # Remove timezone from index for comparison if needed
+        df_idx = df.index.tz_localize(None) if df.index.tz is not None else df.index
+
+        if is_tmy:
+            # TMY mode: match month and day, ignore year
+            mask = (
+                (df_idx.month > start_dt.month) | ((df_idx.month == start_dt.month) & (df_idx.day >= start_dt.day))
+            ) & ((df_idx.month < end_dt.month) | ((df_idx.month == end_dt.month) & (df_idx.day <= end_dt.day)))
+        else:
+            # Normal mode: match full datetime
+            mask = (df_idx >= start_dt) & (df_idx <= end_dt)
+
+        df_filtered = df[mask]
+
+        if df_filtered.empty:
+            # Build helpful error message
+            avail_start = df_idx.min()
+            avail_end = df_idx.max()
+            raise ValueError(
+                f"Requested dates {start_dt.date()} to {end_dt.date()} not found in EPW file.\n"
+                f"EPW file '{path}' contains data for: {avail_start.date()} to {avail_end.date()}\n"
+                "Suggestions:\n"
+                "  - Use dates within the available range\n"
+                "  - For TMY files, use 'MM-DD' format (e.g., '07-15') to match any year"
+            )
+
+        # Filter by hours if specified
+        if hours is not None:
+            hours_set = set(hours)
+            hour_mask = df_filtered.index.hour.isin(hours_set)
+            df_filtered = df_filtered[hour_mask]
+
+        # Create Weather objects
+        weather_list = []
+        for timestamp, row in df_filtered.iterrows():
+            # Get timezone offset from EPW info
+            tz_offset = int(epw_info.get("tz_offset", 0))
+
+            # Create Weather object with available data
+            # EPW has dni/dhi which we can use as measured values
+            w = cls(
+                datetime=timestamp.to_pydatetime().replace(tzinfo=None),
+                ta=float(row["temp_air"]) if not np.isnan(row["temp_air"]) else 20.0,
+                rh=float(row["relative_humidity"]) if not np.isnan(row["relative_humidity"]) else 50.0,
+                global_rad=float(row["ghi"]) if not np.isnan(row["ghi"]) else 0.0,
+                ws=float(row["wind_speed"]) if not np.isnan(row["wind_speed"]) else 1.0,
+                pressure=(float(row["atmospheric_pressure"]) / 100.0)
+                if not np.isnan(row["atmospheric_pressure"])
+                else 1013.25,  # Convert Pa to hPa
+                measured_direct_rad=float(row["dni"]) if not np.isnan(row["dni"]) else None,
+                measured_diffuse_rad=float(row["dhi"]) if not np.isnan(row["dhi"]) else None,
+            )
+            weather_list.append(w)
+
+        if weather_list:
+            logger.info(
+                f"Loaded {len(weather_list)} timesteps from EPW: "
+                f"{weather_list[0].datetime.strftime('%Y-%m-%d %H:%M')} → "
+                f"{weather_list[-1].datetime.strftime('%Y-%m-%d %H:%M')}"
+            )
+        else:
+            logger.warning(f"No timesteps found in EPW file for date range {start_dt} to {end_dt}")
+
+        return weather_list
+
+
+@dataclass
+class ModelConfig:
+    """
+    Model configuration for SOLWEIG calculations.
+
+    Groups all computational settings in one typed object.
+    Pure configuration - no paths or data.
+
+    Attributes:
+        use_anisotropic_sky: Use anisotropic sky model. Default False.
+        human: Human body parameters for Tmrt calculations.
+        material_params: Optional material properties from JSON file.
+        outputs: Which outputs to save in timeseries calculations.
+        use_legacy_kelvin_offset: Backward compatibility flag. Default False.
+
+    Note:
+        UTCI and PET are now computed via post-processing functions (compute_utci, compute_pet)
+        rather than during the main calculation loop for better performance.
+
+    Examples:
+        Basic usage with defaults:
+
+        >>> config = ModelConfig.defaults()
+        >>> config.save("my_config.json")
+
+        Custom configuration:
+
+        >>> config = ModelConfig(
+        ...     use_anisotropic_sky=True,
+        ...     human=HumanParams(abs_k=0.7, posture="standing"),
+        ... )
+
+        Load from legacy JSON:
+
+        >>> config = ModelConfig.from_json("parametersforsolweig.json")
+    """
+
+    use_anisotropic_sky: bool = False
+    human: HumanParams | None = None
+    material_params: SimpleNamespace | None = None
+    outputs: list[str] = field(default_factory=lambda: ["tmrt"])
+    use_legacy_kelvin_offset: bool = False
+
+    def __post_init__(self):
+        """Initialize default HumanParams if not provided."""
+        # Defer import to avoid forward reference issues
+        if self.human is None:
+            # HumanParams is defined later in this module
+            pass  # Will be instantiated when HumanParams is available
+
+    @classmethod
+    def defaults(cls) -> ModelConfig:
+        """
+        Standard configuration for most users.
+
+        Returns:
+            ModelConfig with recommended defaults:
+            - Anisotropic sky enabled
+        """
+        return cls(
+            use_anisotropic_sky=True,
+        )
+
+    @classmethod
+    def from_json(cls, path: str | Path) -> ModelConfig:
+        """
+        Load configuration from legacy JSON parameters file.
+
+        Args:
+            path: Path to parametersforsolweig.json
+
+        Returns:
+            ModelConfig with settings extracted from JSON
+
+        Example:
+            >>> config = ModelConfig.from_json("parametersforsolweig.json")
+            >>> config.human.abs_k  # From Tmrt_params
+            0.7
+        """
+        params = load_params(path)
+
+        # Extract human parameters from JSON
+        human = HumanParams()
+        if hasattr(params, "Tmrt_params"):
+            human.abs_k = getattr(params.Tmrt_params, "absK", 0.7)
+            human.abs_l = getattr(params.Tmrt_params, "absL", 0.97)
+            posture_str = getattr(params.Tmrt_params, "posture", "Standing")
+            human.posture = posture_str.lower()
+
+        if hasattr(params, "PET_settings"):
+            human.age = getattr(params.PET_settings, "Age", 35)
+            human.weight = getattr(params.PET_settings, "Weight", 75.0)
+            human.height = getattr(params.PET_settings, "Height", 1.75)
+            human.sex = getattr(params.PET_settings, "Sex", 1)
+            human.activity = getattr(params.PET_settings, "Activity", 80.0)
+            human.clothing = getattr(params.PET_settings, "clo", 0.9)
+
+        return cls(
+            human=human,
+            material_params=params,
+        )
+
+    def save(self, path: str | Path):
+        """
+        Save configuration to JSON file.
+
+        Args:
+            path: Output path for JSON file
+
+        Example:
+            >>> config = ModelConfig.defaults()
+            >>> config.save("my_settings.json")
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Serialize to dict
+        data = {
+            "use_anisotropic_sky": self.use_anisotropic_sky,
+            "outputs": self.outputs,
+            "use_legacy_kelvin_offset": self.use_legacy_kelvin_offset,
+            "human": {
+                "posture": self.human.posture,
+                "abs_k": self.human.abs_k,
+                "abs_l": self.human.abs_l,
+                "age": self.human.age,
+                "weight": self.human.weight,
+                "height": self.human.height,
+                "sex": self.human.sex,
+                "activity": self.human.activity,
+                "clothing": self.human.clothing,
+            }
+            if self.human
+            else None,
+        }
+
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+
+        logger.info(f"Saved configuration to {path}")
+
+    @classmethod
+    def load(cls, path: str | Path) -> ModelConfig:
+        """
+        Load configuration from JSON file.
+
+        Args:
+            path: Path to JSON configuration file
+
+        Returns:
+            ModelConfig loaded from file
+
+        Example:
+            >>> config = ModelConfig.load("my_settings.json")
+            >>> results = calculate_timeseries(surface, weather, config=config)
+        """
+        path = Path(path)
+
+        with open(path) as f:
+            data = json.load(f)
+
+        # Deserialize human params
+        human = None
+        if data.get("human"):
+            human = HumanParams(**data["human"])
+
+        return cls(
+            use_anisotropic_sky=data.get("use_anisotropic_sky", False),
+            human=human,
+            outputs=data.get("outputs", ["tmrt"]),
+            use_legacy_kelvin_offset=data.get("use_legacy_kelvin_offset", False),
+        )
+
 
 @dataclass
 class HumanParams:
@@ -1192,7 +2351,7 @@ class HumanParams:
         abs_k: Shortwave absorption coefficient. Default 0.7.
         abs_l: Longwave absorption coefficient. Default 0.97.
 
-    PET-specific parameters (only used if compute_pet=True):
+    PET-specific parameters (used by compute_pet() post-processing):
         age: Age in years. Default 35.
         weight: Body weight in kg. Default 75.
         height: Body height in meters. Default 1.75.
@@ -1254,22 +2413,132 @@ class SolweigResult:
     pet: NDArray[np.floating] | None = None
     state: ThermalState | None = None
 
+    def to_geotiff(
+        self,
+        output_dir: str | Path,
+        timestamp: dt | None = None,
+        outputs: list[str] | None = None,
+        surface: SurfaceData | None = None,
+        transform: list[float] | None = None,
+        crs_wkt: str | None = None,
+    ) -> None:
+        """
+        Save results to GeoTIFF files.
+
+        Creates one GeoTIFF file per output variable per timestep.
+        Filename pattern: {output}_{YYYYMMDD}_{HHMM}.tif
+
+        Args:
+            output_dir: Directory to write GeoTIFF files.
+            timestamp: Timestamp for filename. If None, uses current time.
+            outputs: List of outputs to save. Options: "tmrt", "utci", "pet",
+                "shadow", "kdown", "kup", "ldown", "lup".
+                Default: ["tmrt"] (only save Mean Radiant Temperature).
+            surface: SurfaceData object (if loaded via from_geotiff, contains CRS/transform).
+                If provided and transform/crs_wkt not specified, uses surface metadata.
+            transform: GDAL-style geotransform [x_origin, pixel_width, 0,
+                y_origin, 0, -pixel_height]. If None, attempts to use surface metadata,
+                otherwise uses identity transform.
+            crs_wkt: Coordinate reference system in WKT format. If None, attempts to use
+                surface metadata, otherwise no CRS set.
+
+        Example:
+            # With surface metadata (recommended when using from_geotiff)
+            >>> surface, precomputed = SurfaceData.from_geotiff("dsm.tif", svf_dir="svf/")
+            >>> result = solweig.calculate(surface, location, weather, precomputed=precomputed)
+            >>> result.to_geotiff("output/", timestamp=weather.dt, surface=surface)
+
+            # Without surface metadata (explicit transform/CRS)
+            >>> result.to_geotiff(
+            ...     "output/",
+            ...     timestamp=datetime(2023, 7, 15, 12, 0),
+            ...     outputs=["tmrt", "utci", "pet"],
+            ...     transform=[0, 1, 0, 0, 0, -1],
+            ...     crs_wkt="EPSG:32633",
+            ... )
+        """
+        from . import io
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Default outputs: just tmrt
+        if outputs is None:
+            outputs = ["tmrt"]
+
+        # Default timestamp: current time
+        if timestamp is None:
+            timestamp = dt.now()
+
+        # Format timestamp for filename
+        ts_str = timestamp.strftime("%Y%m%d_%H%M")
+
+        # Use surface metadata if available and not overridden
+        if surface is not None:
+            if transform is None and surface._geotransform is not None:
+                transform = surface._geotransform
+            if crs_wkt is None and surface._crs_wkt is not None:
+                crs_wkt = surface._crs_wkt
+
+        # Default transform: identity (top-left origin, 1m pixels)
+        if transform is None:
+            height, width = self.tmrt.shape
+            transform = [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+
+        # Default CRS: empty string (no CRS)
+        if crs_wkt is None:
+            crs_wkt = ""
+
+        # Map output names to arrays
+        available_outputs = {
+            "tmrt": self.tmrt,
+            "utci": self.utci,
+            "pet": self.pet,
+            "shadow": self.shadow,
+            "kdown": self.kdown,
+            "kup": self.kup,
+            "ldown": self.ldown,
+            "lup": self.lup,
+        }
+
+        # Save each requested output
+        for name in outputs:
+            if name not in available_outputs:
+                logger.warning(f"Unknown output '{name}', skipping. Valid: {list(available_outputs.keys())}")
+                continue
+
+            array = available_outputs[name]
+            if array is None:
+                logger.warning(f"Output '{name}' is None (not computed), skipping.")
+                continue
+
+            # Write to GeoTIFF
+            filepath = output_dir / f"{name}_{ts_str}.tif"
+            io.save_raster(
+                out_path_str=str(filepath),
+                data_arr=array,
+                trf_arr=transform,
+                crs_wkt=crs_wkt,
+                no_data_val=np.nan,
+            )
+            logger.debug(f"Saved {name} to {filepath}")
+
 
 def calculate(
     surface: SurfaceData,
     location: Location,
     weather: Weather,
+    config: ModelConfig | None = None,
     human: HumanParams | None = None,
     precomputed: PrecomputedData | None = None,
     use_anisotropic_sky: bool = False,
-    compute_utci: bool = True,
-    compute_pet: bool = False,
     poi_coords: list[tuple[int, int]] | None = None,
     state: ThermalState | None = None,
     params: SimpleNamespace | None = None,
+    use_legacy_kelvin_offset: bool = False,
 ) -> SolweigResult:
     """
-    Calculate mean radiant temperature and thermal comfort indices.
+    Calculate mean radiant temperature (Tmrt).
 
     This is the main entry point for SOLWEIG calculations.
 
@@ -1277,14 +2546,16 @@ def calculate(
         surface: Surface/terrain data (DSM required, CDSM/DEM optional).
         location: Geographic location (lat, lon, UTC offset).
         weather: Weather data (datetime, temperature, humidity, radiation).
-        human: Human body parameters. Uses defaults if not provided.
-        precomputed: Pre-computed SVF and/or shadow matrices. Optional.
-            When provided, skips expensive SVF computation.
+        config: Model configuration object. If provided, overrides individual parameters
+            (use_anisotropic_sky, human, params, use_legacy_kelvin_offset).
+        human: Human body parameters. Overridden by config.human if config provided.
+        precomputed: Pre-computed preprocessing data (walls, SVF, shadow matrices). Optional.
+            When provided, skips expensive preprocessing computations.
+            Use PrecomputedData.load() to load from directories.
         use_anisotropic_sky: Use anisotropic sky model for radiation. Default False.
             Requires precomputed.shadow_matrices to be provided.
             Uses Perez diffuse model and patch-based longwave calculation.
-        compute_utci: Whether to compute UTCI. Default True.
-        compute_pet: Whether to compute PET. Default False (slower).
+            Overridden by config.use_anisotropic_sky if config provided.
         poi_coords: Optional list of (row, col) coordinates for POI mode.
             If provided, only computes at these points (much faster).
         state: Thermal state from previous timestep. Optional.
@@ -1294,6 +2565,12 @@ def calculate(
         params: Loaded SOLWEIG parameters from JSON file (via load_params()).
             When provided, uses these parameters for land cover properties.
             When None, uses built-in defaults matching parametersforsolweig.json.
+            Overridden by config.material_params if config provided.
+        use_legacy_kelvin_offset: If True, use -273.2 (legacy) instead of
+            -273.15 (correct) for Kelvin offset in Tmrt calculation.
+            Default False (uses scientifically correct value).
+            Set to True for exact backwards compatibility with older versions.
+            Overridden by config.use_legacy_kelvin_offset if config provided.
 
     Returns:
         SolweigResult with Tmrt and optionally UTCI/PET grids.
@@ -1329,6 +2606,16 @@ def calculate(
         params = load_params("parametersforsolweig.json")
         result = calculate(surface=surface, location=location, weather=weather, params=params)
     """
+    # Apply config if provided (overrides individual parameters)
+    if config is not None:
+        use_anisotropic_sky = config.use_anisotropic_sky
+        if config.human is not None:
+            human = config.human
+        if config.material_params is not None:
+            params = config.material_params
+        if config.use_legacy_kelvin_offset:
+            use_legacy_kelvin_offset = config.use_legacy_kelvin_offset
+
     # Use default human params if not provided
     if human is None:
         human = HumanParams()
@@ -1345,11 +2632,10 @@ def calculate(
         human=human,
         precomputed=precomputed,
         use_anisotropic_sky=use_anisotropic_sky,
-        compute_utci=compute_utci,
-        compute_pet=compute_pet,
         poi_coords=poi_coords,
         state=state,
         params=params,
+        use_legacy_kelvin_offset=use_legacy_kelvin_offset,
     )
 
 
@@ -1360,11 +2646,10 @@ def _calculate_core(
     human: HumanParams,
     precomputed: PrecomputedData | None,
     use_anisotropic_sky: bool,
-    compute_utci: bool,
-    compute_pet: bool,
     poi_coords: list[tuple[int, int]] | None,
     state: ThermalState | None = None,
     params: SimpleNamespace | None = None,
+    use_legacy_kelvin_offset: bool = False,
 ) -> SolweigResult:
     """
     Core calculation implementation using Rust modules.
@@ -1402,11 +2687,33 @@ def _calculate_core(
     else:
         bush = np.zeros_like(dsm)
 
-    # Check for wall data - enables full radiation model
-    has_walls = surface.wall_height is not None and surface.wall_aspect is not None
-    wall_ht = surface.wall_height if has_walls else np.zeros_like(dsm)
-    wall_asp = surface.wall_aspect if has_walls else np.zeros_like(dsm)
-    wall_asp_rad = wall_asp * (np.pi / 180.0) if has_walls else np.zeros_like(dsm)
+    # Get wall data: use precomputed if provided, check surface, or compute on-the-fly
+    if precomputed is not None and precomputed.wall_height is not None:
+        # Use precomputed walls (legacy path)
+        wall_ht = precomputed.wall_height
+        wall_asp = precomputed.wall_aspect  # type: ignore[union-attr]
+        logger.debug("  Using precomputed walls (legacy)")
+    elif surface.wall_height is not None:
+        # Use walls from surface (new unified API)
+        wall_ht = surface.wall_height
+        wall_asp = surface.wall_aspect  # type: ignore[union-attr]
+        logger.debug("  Using precomputed walls")
+    else:
+        # Compute walls on-the-fly from DSM
+        logger.info("  Computing walls on-the-fly from DSM...")
+        from .algorithms import wallalgorithms
+
+        wall_limit = 1.0  # Minimum height to be considered a wall (meters)
+        wall_ht = wallalgorithms.findwalls(dsm, wall_limit)
+        wall_asp = wallalgorithms.filter1Goodwin_as_aspect_v3(
+            wall_ht,
+            1.0 / pixel_size,  # dsm_scale
+            dsm
+        )
+        logger.info("  ✓ Walls computed from DSM")
+
+    has_walls = wall_ht is not None and wall_asp is not None
+    wall_asp_rad = np.asarray(wall_asp) * (np.pi / 180.0)
 
     # Identify building pixels for GVF calculation
     buildings = _detect_building_mask(dsm, surface.land_cover, wall_ht if has_walls else None, pixel_size)
@@ -1429,15 +2736,6 @@ def _calculate_core(
         lup_night = SBC * emis_grid * np.power(ta_k, 4)
         ldown_night = np.full((rows, cols), SBC * 0.95 * np.power(ta_k, 4), dtype=np.float32)
 
-        utci_grid = None
-        if compute_utci:
-            utci_grid = utci_rust.utci_grid(
-                weather.ta,
-                weather.rh,
-                tmrt,
-                np.full((rows, cols), weather.ws, dtype=np.float32),
-            )
-
         # Update thermal state for nighttime (matching reference lines 603-604)
         output_state = None
         if state is not None:
@@ -1452,15 +2750,38 @@ def _calculate_core(
             kup=np.zeros((rows, cols), dtype=np.float32),
             ldown=ldown_night.astype(np.float32),
             lup=lup_night.astype(np.float32),
-            utci=utci_grid,
+            utci=None,
+            pet=None,
             state=output_state,
         )
 
     # === Daytime calculation ===
 
-    # 1. Get SVF arrays - use precomputed if available, otherwise compute
-    if precomputed is not None and precomputed.svf is not None:
-        # Use precomputed SVF
+    # 1. Get SVF arrays - use precomputed/cached if available, otherwise compute
+    # Check surface.svf first (from prepare/cache), then precomputed (legacy)
+    if surface.svf is not None:
+        # Use SVF from surface (prepared/cached)
+        svf_data = surface.svf
+        svf = svf_data.svf
+        svf_n = svf_data.svf_north
+        svf_e = svf_data.svf_east
+        svf_s = svf_data.svf_south
+        svf_w = svf_data.svf_west
+        svf_veg = svf_data.svf_veg
+        svf_veg_n = svf_data.svf_veg_north
+        svf_veg_e = svf_data.svf_veg_east
+        svf_veg_s = svf_data.svf_veg_south
+        svf_veg_w = svf_data.svf_veg_west
+        svf_aveg = svf_data.svf_aveg
+        svf_aveg_n = svf_data.svf_aveg_north
+        svf_aveg_e = svf_data.svf_aveg_east
+        svf_aveg_s = svf_data.svf_aveg_south
+        svf_aveg_w = svf_data.svf_aveg_west
+        svfbuveg = svf_data.svfbuveg
+        # Cached svfbuveg already includes transmissivity adjustment
+        _svfbuveg_needs_psi_adjustment = False
+    elif precomputed is not None and precomputed.svf is not None:
+        # Use precomputed SVF (legacy)
         svf_data = precomputed.svf
         svf = svf_data.svf
         svf_n = svf_data.svf_north
@@ -1800,10 +3121,7 @@ def _calculate_core(
     rad_g = weather.global_rad
 
     # Check if anisotropic sky model should be used
-    has_shadow_matrices = (
-        precomputed is not None
-        and precomputed.shadow_matrices is not None
-    )
+    has_shadow_matrices = precomputed is not None and precomputed.shadow_matrices is not None
     use_aniso = use_anisotropic_sky and has_shadow_matrices
 
     # Compute svfalfa (SVF angle) from SVF values
@@ -1820,13 +3138,23 @@ def _calculate_core(
 
     # Compute Kup (ground-reflected shortwave) using full directional model
     kup, kup_e, kup_s, kup_w, kup_n = Kup_veg_2015a(
-        rad_i, rad_d, rad_g,
+        rad_i,
+        rad_d,
+        rad_g,
         weather.sun_altitude,
         svfbuveg,
         albedo_wall,
         f_sh,
-        gvfalb, gvfalb_e, gvfalb_s, gvfalb_w, gvfalb_n,
-        gvfalbnosh, gvfalbnosh_e, gvfalbnosh_s, gvfalbnosh_w, gvfalbnosh_n,
+        gvfalb,
+        gvfalb_e,
+        gvfalb_s,
+        gvfalb_w,
+        gvfalb_n,
+        gvfalbnosh,
+        gvfalbnosh_e,
+        gvfalbnosh_s,
+        gvfalbnosh_w,
+        gvfalbnosh_n,
     )
 
     # Compute diffuse radiation and directional shortwave
@@ -1867,10 +3195,10 @@ def _calculate_core(
 
         # Compute base Ldown first (needed for lside_veg)
         ldown_base = (
-            (svf + svf_veg - 1) * esky * SBC * (ta_k ** 4)
-            + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k ** 4)
+            (svf + svf_veg - 1) * esky * SBC * (ta_k**4)
+            + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
             + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
-            + (2 - svf - svf_veg) * (1 - emis_wall) * esky * SBC * (ta_k ** 4)
+            + (2 - svf - svf_veg) * (1 - emis_wall) * esky * SBC * (ta_k**4)
         )
 
         # CI correction for non-clear conditions
@@ -1878,10 +3206,10 @@ def _calculate_core(
         if ci < 0.95:
             c = 1.0 - ci
             ldown_cloudy = (
-                (svf + svf_veg - 1) * SBC * (ta_k ** 4)
-                + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k ** 4)
+                (svf + svf_veg - 1) * SBC * (ta_k**4)
+                + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
                 + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
-                + (2 - svf - svf_veg) * (1 - emis_wall) * SBC * (ta_k ** 4)
+                + (2 - svf - svf_veg) * (1 - emis_wall) * SBC * (ta_k**4)
             )
             ldown_base = ldown_base * (1 - c) + ldown_cloudy * c
 
@@ -1947,8 +3275,8 @@ def _calculate_core(
             esky_aniso,
             l_patches,
             False,  # wallScheme
-            None,   # voxelTable
-            None,   # voxelMaps
+            None,  # voxelTable
+            None,  # voxelMaps
             steradians.astype(np.float32),
             weather.ta,
             tg_wall,
@@ -2038,10 +3366,10 @@ def _calculate_core(
 
         # Longwave: Ldown (from Jonsson et al. 2006)
         ldown = (
-            (svf + svf_veg - 1) * esky * SBC * (ta_k ** 4)
-            + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k ** 4)
+            (svf + svf_veg - 1) * esky * SBC * (ta_k**4)
+            + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
             + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
-            + (2 - svf - svf_veg) * (1 - emis_wall) * esky * SBC * (ta_k ** 4)
+            + (2 - svf - svf_veg) * (1 - emis_wall) * esky * SBC * (ta_k**4)
         )
 
         # CI correction for non-clear conditions (reference: if CI < 0.95)
@@ -2050,10 +3378,10 @@ def _calculate_core(
         if ci < 0.95:
             c = 1.0 - ci
             ldown_cloudy = (
-                (svf + svf_veg - 1) * SBC * (ta_k ** 4)  # No esky for cloudy
-                + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k ** 4)
+                (svf + svf_veg - 1) * SBC * (ta_k**4)  # No esky for cloudy
+                + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
                 + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
-                + (2 - svf - svf_veg) * (1 - emis_wall) * SBC * (ta_k ** 4)  # No esky
+                + (2 - svf - svf_veg) * (1 - emis_wall) * SBC * (ta_k**4)  # No esky
             )
             ldown = ldown * (1 - c) + ldown_cloudy * c
 
@@ -2126,38 +3454,15 @@ def _calculate_core(
             + (kside_n + kside_e + kside_s + kside_w) * f_side  # Diffuse from 4 sides
         )
 
-        l_absorbed = human.abs_l * (
-            (ldown + lup) * f_up
-            + (lside_n + lside_e + lside_s + lside_w) * f_side
-        )
+        l_absorbed = human.abs_l * ((ldown + lup) * f_up + (lside_n + lside_e + lside_s + lside_w) * f_side)
 
     sstr = k_absorbed + l_absorbed
 
-    tmrt = np.sqrt(np.sqrt(sstr / (human.abs_l * SBC))) - 273.2  # Match reference (historical convention)
+    # Kelvin to Celsius conversion
+    # -273.15 is scientifically correct, -273.2 is legacy for backwards compatibility
+    kelvin_offset = 273.2 if use_legacy_kelvin_offset else 273.15
+    tmrt = np.sqrt(np.sqrt(sstr / (human.abs_l * SBC))) - kelvin_offset
     tmrt = np.clip(tmrt.astype(np.float32), -50, 80)
-
-    # 7. Compute UTCI if requested
-    utci_grid = None
-    if compute_utci:
-        wind_grid = np.full((rows, cols), weather.ws, dtype=np.float32)
-        utci_grid = utci_rust.utci_grid(weather.ta, weather.rh, tmrt, wind_grid)
-
-    # 8. Compute PET if requested
-    pet_grid = None
-    if compute_pet:
-        wind_grid = np.full((rows, cols), weather.ws, dtype=np.float32)
-        pet_grid = pet_rust.pet_grid(
-            weather.ta,
-            weather.rh,
-            tmrt,
-            wind_grid,
-            human.weight,
-            float(human.age),
-            human.height,
-            human.activity,
-            human.clothing,
-            human.sex,
-        )
 
     return SolweigResult(
         tmrt=tmrt,
@@ -2166,22 +3471,23 @@ def _calculate_core(
         kup=kup.astype(np.float32),
         ldown=ldown.astype(np.float32),
         lup=lup.astype(np.float32),
-        utci=utci_grid,
-        pet=pet_grid,
+        utci=None,
+        pet=None,
         state=output_state,
     )
 
 
 def calculate_timeseries(
     surface: SurfaceData,
-    location: Location,
     weather_series: list[Weather],
+    location: Location | None = None,
+    config: ModelConfig | None = None,
     human: HumanParams | None = None,
     precomputed: PrecomputedData | None = None,
     use_anisotropic_sky: bool = False,
-    compute_utci: bool = True,
-    compute_pet: bool = False,
     params: SimpleNamespace | None = None,
+    output_dir: str | Path | None = None,
+    outputs: list[str] | None = None,
 ) -> list[SolweigResult]:
     """
     Calculate Tmrt for a time series of weather data.
@@ -2194,42 +3500,97 @@ def calculate_timeseries(
 
     Args:
         surface: Surface/terrain data (DSM required, CDSM/DEM optional).
-        location: Geographic location (lat, lon, UTC offset).
         weather_series: List of Weather objects in chronological order.
             The datetime of each Weather object determines the timestep size.
-        human: Human body parameters. Uses defaults if not provided.
+        location: Geographic location (lat, lon, UTC offset). If None, automatically
+            extracted from surface's CRS metadata.
+        config: Model configuration object. If provided, overrides individual parameters
+            (use_anisotropic_sky, human, params, outputs).
+        human: Human body parameters. Overridden by config.human if config provided.
         precomputed: Pre-computed SVF and/or shadow matrices. Optional.
-        use_anisotropic_sky: Use anisotropic sky model. Default False.
-        compute_utci: Whether to compute UTCI. Default True.
-        compute_pet: Whether to compute PET. Default False.
+        use_anisotropic_sky: Use anisotropic sky model. Overridden by config if provided.
         params: Loaded SOLWEIG parameters from JSON file (via load_params()).
             When provided, uses these parameters for land cover properties.
-            When None, uses built-in defaults matching parametersforsolweig.json.
+            Overridden by config.material_params if config provided.
+        output_dir: Directory to save results. If provided, results are saved
+            incrementally as GeoTIFF files during calculation (recommended for
+            long timeseries to avoid memory issues).
+        outputs: Which outputs to save (e.g., ["tmrt", "shadow", "kdown"]).
+            Only used if output_dir is provided. Overridden by config.outputs if config provided.
 
     Returns:
         List of SolweigResult objects, one per timestep.
         Each result includes the thermal state at that timestep.
+        Note: UTCI and PET fields will be None. Use compute_utci() or compute_pet()
+        for post-processing thermal comfort indices.
 
     Example:
-        # Create weather data for a day
-        weather_list = [
-            Weather(datetime=datetime(2024, 7, 15, h, 0), ta=20+5*h/12, rh=60, global_rad=max(0, 800*sin((h-6)*pi/12)))
-            for h in range(6, 20)  # 6am to 8pm
-        ]
-
-        # Run time series
+        # Run time series with auto-save (recommended for long runs)
         results = calculate_timeseries(
-            surface=SurfaceData(dsm=my_dsm),
-            location=Location(latitude=57.7, longitude=12.0),
-            weather_series=weather_list,
+            surface=surface,
+            location=location,
+            weather_series=weather_list_full_year,  # 8760 timesteps
+            output_dir="output/yearly/",
+            outputs=["tmrt", "shadow"],
         )
+        # Results saved incrementally, also returned for summary stats
 
-        # Access results
-        for i, result in enumerate(results):
-            print(f"Hour {i}: mean Tmrt = {result.tmrt.mean():.1f}°C")
+        # Short run without auto-save (for interactive analysis)
+        results = calculate_timeseries(
+            surface=surface,
+            location=location,
+            weather_series=weather_list_single_day,  # 24 timesteps
+        )
+        # Results only returned, not saved
     """
     if not weather_series:
         return []
+
+    # Auto-extract location from surface if not provided
+    if location is None:
+        logger.info("Location not provided, auto-extracting from surface CRS...")
+        location = Location.from_surface(surface)
+
+    # Apply config if provided (overrides individual parameters)
+    if config is not None:
+        use_anisotropic_sky = config.use_anisotropic_sky
+        if config.human is not None:
+            human = config.human
+        if config.material_params is not None:
+            params = config.material_params
+        if config.outputs:
+            outputs = config.outputs
+
+    # Log configuration summary
+    logger.info("=" * 60)
+    logger.info("Starting SOLWEIG timeseries calculation")
+    logger.info(f"  Grid size: {surface.dsm.shape[1]}×{surface.dsm.shape[0]} pixels")
+    logger.info(f"  Timesteps: {len(weather_series)}")
+    logger.info(
+        f"  Period: {weather_series[0].datetime.strftime('%Y-%m-%d %H:%M')} → {weather_series[-1].datetime.strftime('%Y-%m-%d %H:%M')}"
+    )
+    logger.info(f"  Location: {location.latitude:.2f}°N, {location.longitude:.2f}°E")
+
+    options = []
+    if use_anisotropic_sky:
+        options.append("anisotropic sky")
+    if precomputed is not None:
+        options.append("precomputed SVF")
+    if options:
+        logger.info(f"  Options: {', '.join(options)}")
+
+    if output_dir is not None:
+        logger.info(f"  Auto-save: {output_dir} ({', '.join(outputs or ['tmrt'])})")
+    logger.info("=" * 60)
+
+    # Create output directory if needed
+    if output_dir is not None:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+    # Default outputs
+    if output_dir is not None and outputs is None:
+        outputs = ["tmrt"]
 
     results = []
     state = ThermalState.initial(surface.shape)
@@ -2241,7 +3602,27 @@ def calculate_timeseries(
         dt1 = weather_series[1].datetime
         state.timestep_dec = (dt1 - dt0).total_seconds() / 86400.0
 
+    # Progress reporting interval (log every N timesteps)
+    report_interval = max(1, len(weather_series) // 10) if len(weather_series) > 20 else 1
+
+    # Start timing
+    start_time = time.time()
+    last_report_time = start_time
+
     for i, weather in enumerate(weather_series):
+        # Log progress
+        if (i + 1) % report_interval == 0 or i == 0:
+            current_time = time.time()
+            elapsed = current_time - start_time
+            interval_time = current_time - last_report_time
+            timesteps_in_interval = report_interval if i > 0 else 1
+            rate = timesteps_in_interval / interval_time if interval_time > 0 else 0
+
+            logger.info(
+                f"  Processing timestep {i + 1}/{len(weather_series)}: {weather.datetime.strftime('%Y-%m-%d %H:%M')} "
+                f"[{rate:.2f} steps/s, {elapsed:.1f}s elapsed]"
+            )
+            last_report_time = current_time
         result = calculate(
             surface=surface,
             location=location,
@@ -2249,8 +3630,6 @@ def calculate_timeseries(
             human=human,
             precomputed=precomputed,
             use_anisotropic_sky=use_anisotropic_sky,
-            compute_utci=compute_utci,
-            compute_pet=compute_pet,
             state=state,
             params=params,
         )
@@ -2259,7 +3638,36 @@ def calculate_timeseries(
         if result.state is not None:
             state = result.state
 
+        # Save incrementally if output_dir provided
+        if output_dir is not None:
+            result.to_geotiff(
+                output_dir=output_dir,
+                timestamp=weather.datetime,
+                outputs=outputs,
+                surface=surface,
+            )
+
         results.append(result)
+
+    # Calculate total elapsed time
+    total_time = time.time() - start_time
+    overall_rate = len(results) / total_time if total_time > 0 else 0
+
+    # Log summary statistics
+    logger.info("=" * 60)
+    logger.info(f"✓ Calculation complete: {len(results)} timesteps processed")
+    logger.info(f"  Total time: {total_time:.1f}s ({overall_rate:.2f} steps/s)")
+    if results:
+        # Compute summary statistics
+        mean_tmrt = sum(r.tmrt.mean() for r in results) / len(results)
+        max_tmrt = max(r.tmrt.max() for r in results)
+        min_tmrt = min(r.tmrt.min() for r in results)
+        logger.info(f"  Tmrt range: {min_tmrt:.1f}°C - {max_tmrt:.1f}°C (mean: {mean_tmrt:.1f}°C)")
+
+    if output_dir is not None and outputs is not None:
+        file_count = len(results) * len(outputs)
+        logger.info(f"  Files saved: {file_count} GeoTIFFs in {output_dir}")
+    logger.info("=" * 60)
 
     return results
 
@@ -2350,10 +3758,7 @@ def validate_tile_size(
     if adjusted < min_for_buffer:
         adjusted = min(min_for_buffer, MAX_TILE_SIZE)
         buffer_m = buffer_pixels * pixel_size
-        warning = (
-            f"Tile size increased to {adjusted} to ensure meaningful core area "
-            f"with {buffer_m:.0f}m buffer"
-        )
+        warning = f"Tile size increased to {adjusted} to ensure meaningful core area with {buffer_m:.0f}m buffer"
 
     return adjusted, warning
 
@@ -2487,10 +3892,9 @@ def calculate_tiled(
     location: Location,
     weather: Weather,
     human: HumanParams | None = None,
+    precomputed: PrecomputedData | None = None,
     tile_size: int = 1024,
     use_anisotropic_sky: bool = False,
-    compute_utci: bool = True,
-    compute_pet: bool = False,
     params: SimpleNamespace | None = None,
     progress_callback: callable | None = None,
 ) -> SolweigResult:
@@ -2509,17 +3913,18 @@ def calculate_tiled(
         location: Geographic location (lat, lon, UTC offset).
         weather: Weather data for a single timestep.
         human: Human body parameters. Uses defaults if not provided.
+        precomputed: Pre-computed preprocessing data (walls only for tiled mode).
+            SVF is computed per-tile. Shadow matrices not supported in tiled mode.
         tile_size: Core tile size in pixels (default 1024). Actual size may be
             adjusted to ensure meaningful core area after buffer overlap.
         use_anisotropic_sky: Use anisotropic sky model. Default False.
             Note: Anisotropic sky is not yet supported in tiled mode.
-        compute_utci: Whether to compute UTCI. Default True.
-        compute_pet: Whether to compute PET. Default False.
         params: Loaded SOLWEIG parameters from JSON file (via load_params()).
         progress_callback: Optional callback(tile_idx, total_tiles) for progress.
 
     Returns:
-        SolweigResult with Tmrt and optionally UTCI/PET grids.
+        SolweigResult with Tmrt grid. UTCI and PET fields will be None - use
+        compute_utci() or compute_pet() for post-processing.
         Note: state is not returned for tiled mode (use calculate_timeseries_tiled
         for multi-timestep with state).
 
@@ -2568,17 +3973,13 @@ def calculate_tiled(
 
     # Check if tiling is actually needed
     if rows <= adjusted_tile_size and cols <= adjusted_tile_size:
-        logger.info(
-            f"Raster {rows}x{cols} fits in single tile, using non-tiled calculation"
-        )
+        logger.info(f"Raster {rows}x{cols} fits in single tile, using non-tiled calculation")
         return calculate(
             surface=surface,
             location=location,
             weather=weather,
             human=human,
             use_anisotropic_sky=use_anisotropic_sky,
-            compute_utci=compute_utci,
-            compute_pet=compute_pet,
             params=params,
         )
 
@@ -2598,8 +3999,6 @@ def calculate_tiled(
     kup_out = np.full((rows, cols), np.nan, dtype=np.float32)
     ldown_out = np.full((rows, cols), np.nan, dtype=np.float32)
     lup_out = np.full((rows, cols), np.nan, dtype=np.float32)
-    utci_out = np.full((rows, cols), np.nan, dtype=np.float32) if compute_utci else None
-    pet_out = np.full((rows, cols), np.nan, dtype=np.float32) if compute_pet else None
 
     # Process each tile
     for tile_idx, tile in enumerate(tiles):
@@ -2622,14 +4021,6 @@ def calculate_tiled(
         if surface.dem is not None:
             tile_dem = surface.dem[read_slice].copy()
 
-        tile_wall_ht = None
-        if surface.wall_height is not None:
-            tile_wall_ht = surface.wall_height[read_slice].copy()
-
-        tile_wall_asp = None
-        if surface.wall_aspect is not None:
-            tile_wall_asp = surface.wall_aspect[read_slice].copy()
-
         tile_lc = None
         if surface.land_cover is not None:
             tile_lc = surface.land_cover[read_slice].copy()
@@ -2642,30 +4033,44 @@ def calculate_tiled(
         if surface.emissivity is not None:
             tile_emis = surface.emissivity[read_slice].copy()
 
-        # Create tile surface
+        # Slice walls from precomputed if available
+        tile_wall_ht = None
+        tile_wall_asp = None
+        tile_precomputed = None
+        if precomputed is not None:
+            if precomputed.wall_height is not None:
+                tile_wall_ht = precomputed.wall_height[read_slice].copy()
+            if precomputed.wall_aspect is not None:
+                tile_wall_asp = precomputed.wall_aspect[read_slice].copy()
+            # Create tile precomputed with sliced walls
+            if tile_wall_ht is not None or tile_wall_asp is not None:
+                tile_precomputed = PrecomputedData(
+                    wall_height=tile_wall_ht,
+                    wall_aspect=tile_wall_asp,
+                    svf=None,  # SVF computed per-tile
+                    shadow_matrices=None,
+                )
+
+        # Create tile surface (without walls)
         tile_surface = SurfaceData(
             dsm=tile_dsm,
             cdsm=tile_cdsm,
             tdsm=tile_tdsm,
             dem=tile_dem,
-            wall_height=tile_wall_ht,
-            wall_aspect=tile_wall_asp,
             land_cover=tile_lc,
             albedo=tile_albedo,
             emissivity=tile_emis,
             pixel_size=pixel_size,
         )
 
-        # Calculate for tile (without precomputed SVF/shadows - computed per-tile)
+        # Calculate for tile (SVF computed per-tile, walls from precomputed if available)
         tile_result = calculate(
             surface=tile_surface,
             location=location,
             weather=weather,
             human=human,
-            precomputed=None,  # Compute SVF per-tile
+            precomputed=tile_precomputed,  # Walls from precomputed, SVF computed per-tile
             use_anisotropic_sky=False,
-            compute_utci=compute_utci,
-            compute_pet=compute_pet,
             state=None,  # No state for single-timestep tiled
             params=params,
         )
@@ -2685,10 +4090,6 @@ def calculate_tiled(
             ldown_out[write_slice] = tile_result.ldown[core_slice]
         if tile_result.lup is not None:
             lup_out[write_slice] = tile_result.lup[core_slice]
-        if compute_utci and tile_result.utci is not None:
-            utci_out[write_slice] = tile_result.utci[core_slice]
-        if compute_pet and tile_result.pet is not None:
-            pet_out[write_slice] = tile_result.pet[core_slice]
 
     if progress_callback:
         progress_callback(n_tiles, n_tiles)
@@ -2700,7 +4101,308 @@ def calculate_tiled(
         kup=kup_out,
         ldown=ldown_out,
         lup=lup_out,
-        utci=utci_out,
-        pet=pet_out,
+        utci=None,
+        pet=None,
         state=None,  # No state for tiled mode
     )
+
+# =============================================================================
+# Post-Processing: Thermal Comfort Indices
+# =============================================================================
+
+
+def compute_utci_grid(
+    tmrt: NDArray[np.floating],
+    ta: float,
+    rh: float,
+    wind: float,
+) -> NDArray[np.floating]:
+    """
+    Compute UTCI (Universal Thermal Climate Index) for a single grid.
+
+    This is a thin wrapper around the Rust UTCI implementation for in-memory processing.
+    For batch processing of saved Tmrt files, use compute_utci() instead.
+
+    Args:
+        tmrt: Mean Radiant Temperature grid (°C).
+        ta: Air temperature (°C).
+        rh: Relative humidity (%).
+        wind: Wind speed at 10m height (m/s).
+
+    Returns:
+        UTCI grid (°C).
+
+    Example:
+        # Compute UTCI for a single result
+        utci = compute_utci_grid(
+            tmrt=result.tmrt,
+            ta=25.0,
+            rh=60.0,
+            wind=2.0,
+        )
+    """
+    from .rustalgos import utci as utci_rust
+
+    wind_grid = np.full_like(tmrt, wind, dtype=np.float32)
+    return utci_rust.utci_grid(ta, rh, tmrt, wind_grid)
+
+
+def compute_pet_grid(
+    tmrt: NDArray[np.floating],
+    ta: float,
+    rh: float,
+    wind: float,
+    human: HumanParams | None = None,
+) -> NDArray[np.floating]:
+    """
+    Compute PET (Physiological Equivalent Temperature) for a single grid.
+
+    This is a thin wrapper around the Rust PET implementation for in-memory processing.
+    For batch processing of saved Tmrt files, use compute_pet() instead.
+
+    Args:
+        tmrt: Mean Radiant Temperature grid (°C).
+        ta: Air temperature (°C).
+        rh: Relative humidity (%).
+        wind: Wind speed at 10m height (m/s).
+        human: Human body parameters. Uses defaults if not provided.
+
+    Returns:
+        PET grid (°C).
+
+    Example:
+        # Compute PET for a single result
+        pet = compute_pet_grid(
+            tmrt=result.tmrt,
+            ta=25.0,
+            rh=60.0,
+            wind=2.0,
+            human=HumanParams(weight=75, height=1.75),
+        )
+    """
+    from .rustalgos import pet as pet_rust
+
+    if human is None:
+        human = HumanParams()
+
+    wind_grid = np.full_like(tmrt, wind, dtype=np.float32)
+    return pet_rust.pet_grid(
+        ta,
+        rh,
+        tmrt,
+        wind_grid,
+        human.weight,
+        float(human.age),
+        human.height,
+        human.activity,
+        human.clothing,
+        human.sex,
+    )
+
+
+def compute_utci(
+    tmrt_dir: str | Path,
+    weather_series: list[Weather],
+    output_dir: str | Path,
+    location: Location | None = None,
+) -> int:
+    """
+    Batch compute UTCI from saved Tmrt GeoTIFF files.
+
+    Auto-discovers tmrt_*.tif files in tmrt_dir, matches them with weather_series
+    by datetime, and saves utci_*.tif files to output_dir.
+
+    Args:
+        tmrt_dir: Directory containing tmrt_YYYYMMDD_HHMM.tif files.
+        weather_series: List of Weather objects with datetime, ta, rh, ws.
+        output_dir: Directory to save utci_YYYYMMDD_HHMM.tif files.
+        location: Geographic location for weather.compute_derived(). 
+            If None, assumes weather is already computed.
+
+    Returns:
+        Number of UTCI files processed.
+
+    Example:
+        # After running calculate_timeseries with output_dir
+        n_processed = solweig.compute_utci(
+            tmrt_dir="output/",
+            weather_series=weather_list,
+            output_dir="output_utci/",
+        )
+        print(f"Processed {n_processed} timesteps")
+    """
+    from . import io
+    import re
+    from datetime import datetime as dt
+
+    tmrt_dir = Path(tmrt_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find all tmrt_*.tif files
+    tmrt_files = sorted(tmrt_dir.glob("tmrt_*.tif"))
+    if not tmrt_files:
+        logger.warning(f"No tmrt_*.tif files found in {tmrt_dir}")
+        return 0
+
+    # Parse timestamps from filenames
+    pattern = re.compile(r"tmrt_(\d{8})_(\d{4})\.tif")
+    tmrt_map = {}
+    for f in tmrt_files:
+        match = pattern.match(f.name)
+        if match:
+            date_str, time_str = match.groups()
+            timestamp = dt.strptime(f"{date_str}_{time_str}", "%Y%m%d_%H%M")
+            tmrt_map[timestamp] = f
+
+    # Match weather with timestamps
+    if location is not None:
+        for w in weather_series:
+            if not w._derived_computed:
+                w.compute_derived(location)
+
+    # Start timing
+    start_time = time.time()
+    processed = 0
+    for weather in weather_series:
+        if weather.datetime not in tmrt_map:
+            logger.warning(f"No Tmrt file found for {weather.datetime}")
+            continue
+
+        # Load Tmrt
+        tmrt_path = tmrt_map[weather.datetime]
+        tmrt, transform, crs, _ = io.load_raster(str(tmrt_path))
+
+        # Compute UTCI
+        utci = compute_utci_grid(tmrt, weather.ta, weather.rh, weather.ws)
+
+        # Save UTCI
+        date_str = weather.datetime.strftime("%Y%m%d")
+        time_str = weather.datetime.strftime("%H%M")
+        utci_path = output_dir / f"utci_{date_str}_{time_str}.tif"
+
+        io.save_raster(
+            str(utci_path),
+            utci,
+            transform if isinstance(transform, list) else list(transform.to_gdal()),
+            crs,
+        )
+        processed += 1
+
+        if processed % 10 == 0:
+            logger.info(f"Processed {processed}/{len(weather_series)} timesteps")
+
+    total_time = time.time() - start_time
+    rate = processed / total_time if total_time > 0 else 0
+    logger.info(
+        f"✓ UTCI computation complete: {processed} files saved to {output_dir} "
+        f"({total_time:.1f}s, {rate:.2f} steps/s)"
+    )
+    return processed
+
+
+def compute_pet(
+    tmrt_dir: str | Path,
+    weather_series: list[Weather],
+    output_dir: str | Path,
+    human: HumanParams | None = None,
+    location: Location | None = None,
+) -> int:
+    """
+    Batch compute PET from saved Tmrt GeoTIFF files.
+
+    Auto-discovers tmrt_*.tif files in tmrt_dir, matches them with weather_series
+    by datetime, and saves pet_*.tif files to output_dir.
+
+    Args:
+        tmrt_dir: Directory containing tmrt_YYYYMMDD_HHMM.tif files.
+        weather_series: List of Weather objects with datetime, ta, rh, ws.
+        output_dir: Directory to save pet_YYYYMMDD_HHMM.tif files.
+        human: Human body parameters. Uses defaults if not provided.
+        location: Geographic location for weather.compute_derived(). 
+            If None, assumes weather is already computed.
+
+    Returns:
+        Number of PET files processed.
+
+    Example:
+        # After running calculate_timeseries with output_dir
+        n_processed = solweig.compute_pet(
+            tmrt_dir="output/",
+            weather_series=weather_list,
+            output_dir="output_pet/",
+            human=HumanParams(weight=75, height=1.75),
+        )
+        print(f"Processed {n_processed} timesteps")
+    """
+    from . import io
+    import re
+    from datetime import datetime as dt
+
+    if human is None:
+        human = HumanParams()
+
+    tmrt_dir = Path(tmrt_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find all tmrt_*.tif files
+    tmrt_files = sorted(tmrt_dir.glob("tmrt_*.tif"))
+    if not tmrt_files:
+        logger.warning(f"No tmrt_*.tif files found in {tmrt_dir}")
+        return 0
+
+    # Parse timestamps from filenames
+    pattern = re.compile(r"tmrt_(\d{8})_(\d{4})\.tif")
+    tmrt_map = {}
+    for f in tmrt_files:
+        match = pattern.match(f.name)
+        if match:
+            date_str, time_str = match.groups()
+            timestamp = dt.strptime(f"{date_str}_{time_str}", "%Y%m%d_%H%M")
+            tmrt_map[timestamp] = f
+
+    # Match weather with timestamps
+    if location is not None:
+        for w in weather_series:
+            if not w._derived_computed:
+                w.compute_derived(location)
+
+    # Start timing
+    start_time = time.time()
+    processed = 0
+    for weather in weather_series:
+        if weather.datetime not in tmrt_map:
+            logger.warning(f"No Tmrt file found for {weather.datetime}")
+            continue
+
+        # Load Tmrt
+        tmrt_path = tmrt_map[weather.datetime]
+        tmrt, transform, crs, _ = io.load_raster(str(tmrt_path))
+
+        # Compute PET
+        pet = compute_pet_grid(tmrt, weather.ta, weather.rh, weather.ws, human)
+
+        # Save PET
+        date_str = weather.datetime.strftime("%Y%m%d")
+        time_str = weather.datetime.strftime("%H%M")
+        pet_path = output_dir / f"pet_{date_str}_{time_str}.tif"
+
+        io.save_raster(
+            str(pet_path),
+            pet,
+            transform if isinstance(transform, list) else list(transform.to_gdal()),
+            crs,
+        )
+        processed += 1
+
+        if processed % 10 == 0:
+            logger.info(f"Processed {processed}/{len(weather_series)} timesteps")
+
+    total_time = time.time() - start_time
+    rate = processed / total_time if total_time > 0 else 0
+    logger.info(
+        f"✓ PET computation complete: {processed} files saved to {output_dir} "
+        f"({total_time:.1f}s, {rate:.2f} steps/s)"
+    )
+    return processed

@@ -46,9 +46,11 @@ __version__ = "0.0.1a1"
 # Import simplified API (Phase 2 modernization)
 from .api import (
     SurfaceData,
+    PrecomputedData,
     Location,
     Weather,
     HumanParams,
+    ModelConfig,
     SolweigResult,
     calculate,
     calculate_timeseries,
@@ -58,6 +60,11 @@ from .api import (
     calculate_buffer_distance,
     TileSpec,
     generate_tiles,
+    # Post-processing: Thermal comfort indices
+    compute_utci,
+    compute_pet,
+    compute_utci_grid,
+    compute_pet_grid,
 )
 
 # Import I/O module
@@ -67,6 +74,7 @@ from . import tiles
 from . import svf
 from . import shadows
 from . import walls
+from . import progress
 
 # Import runner classes (after configs to avoid circular imports)
 try:
@@ -99,14 +107,50 @@ except ImportError as e:
     utci = None
     pet = None
 
+
+def is_gpu_available() -> bool:
+    """
+    Check if GPU acceleration is available at runtime.
+
+    Returns True if:
+    - GPU support was compiled into the Rust extension
+    - A GPU device was successfully detected and initialized
+
+    Use this to check GPU status before running compute-intensive operations.
+
+    Returns:
+        True if GPU acceleration is available, False otherwise.
+    """
+    if not GPU_ENABLED:
+        return False
+    if shadowing is None:
+        return False
+    try:
+        return shadowing.is_gpu_enabled()
+    except (AttributeError, RuntimeError):
+        return False
+
+
+def get_compute_backend() -> str:
+    """
+    Get the current compute backend.
+
+    Returns:
+        "gpu" if GPU acceleration is available and enabled, "cpu" otherwise.
+    """
+    return "gpu" if is_gpu_available() else "cpu"
+
+
 __all__ = [
     # Version
     "__version__",
     # Simplified API (recommended)
     "SurfaceData",
+    "PrecomputedData",
     "Location",
     "Weather",
     "HumanParams",
+    "ModelConfig",
     "SolweigResult",
     "calculate",
     "calculate_timeseries",
@@ -116,6 +160,11 @@ __all__ = [
     "calculate_buffer_distance",
     "TileSpec",
     "generate_tiles",
+    # Post-processing: Thermal comfort
+    "compute_utci",
+    "compute_pet",
+    "compute_utci_grid",
+    "compute_pet_grid",
     # Modules
     "io",
     "configs",
@@ -123,9 +172,13 @@ __all__ = [
     "svf",
     "shadows",
     "walls",
+    "progress",
     # Runner classes
     "SolweigRunCore",
     "SolweigRunRust",
+    # GPU utilities
+    "is_gpu_available",
+    "get_compute_backend",
     # Rust modules
     "GPU_ENABLED",
     "shadowing",
