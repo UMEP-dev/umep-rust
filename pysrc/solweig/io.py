@@ -272,11 +272,20 @@ def check_path(path_str: str | Path, make_dir: bool = False) -> Path:
     return path
 
 
-def _generate_preview_png(data_arr: np.ndarray, out_path: Path, max_size: int = 512) -> None:
+def _generate_preview_png(
+    data_arr: np.ndarray, out_path: Path, max_size: int = 512, colormap: str = "turbo"
+) -> None:
     """
-    Generate a grayscale PNG preview image from raster data.
+    Generate a color PNG preview image from raster data.
 
-    Normalizes float data to 0-255 uint8 for OS thumbnail compatibility.
+    Normalizes float data to 0-255 and applies a colormap for better visualization.
+
+    Args:
+        data_arr: 2D numpy array to visualize
+        out_path: Output file path (preview will be saved as .preview.png)
+        max_size: Maximum dimension for the preview image (maintains aspect ratio)
+        colormap: Matplotlib colormap name (default: 'turbo'). Falls back to grayscale if unavailable.
+                  Common options: 'turbo', 'viridis', 'plasma', 'inferno', 'magma', 'coolwarm'
     """
     try:
         from PIL import Image
@@ -293,12 +302,25 @@ def _generate_preview_png(data_arr: np.ndarray, out_path: Path, max_size: int = 
         if vmax <= vmin:
             vmax = vmin + 1  # Avoid division by zero
 
-        # Normalize to 0-255
-        normalized = np.clip((data_arr - vmin) / (vmax - vmin) * 255, 0, 255)
-        normalized = np.nan_to_num(normalized, nan=0).astype(np.uint8)
+        # Normalize to 0-1
+        normalized = np.clip((data_arr - vmin) / (vmax - vmin), 0, 1)
+        normalized = np.nan_to_num(normalized, nan=0)
 
-        # Create image and resize if needed
-        img = Image.fromarray(normalized, mode="L")
+        # Try to apply matplotlib colormap for color output
+        try:
+            import matplotlib.pyplot as plt
+
+            # Get colormap and apply
+            cmap = plt.get_cmap(colormap)
+            colored = cmap(normalized)  # Returns RGBA in [0, 1]
+
+            # Convert to RGB uint8 (drop alpha channel)
+            rgb = (colored[:, :, :3] * 255).astype(np.uint8)
+            img = Image.fromarray(rgb, mode="RGB")
+        except (ImportError, ValueError):
+            # Fallback to grayscale if matplotlib not available or colormap invalid
+            grayscale = (normalized * 255).astype(np.uint8)
+            img = Image.fromarray(grayscale, mode="L")
 
         # Resize to max_size while maintaining aspect ratio
         if max(img.size) > max_size:
