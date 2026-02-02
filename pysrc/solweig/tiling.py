@@ -1,23 +1,32 @@
-"""Tiled processing for large rasters."""
+"""
+Tiled processing for large rasters.
+
+This module provides the active tiling implementation for SOLWEIG, supporting
+memory-efficient processing of large rasters by dividing them into overlapping
+tiles. Shadows and radiation are computed per-tile with buffers to ensure
+accurate results at tile boundaries.
+
+Note: An older tiles.py module (TileManager, LazyRasterLoader) was removed
+during Q3 consolidation (Feb 2026) as it was unused legacy code from pre-Phase 5.
+This module (tiling.py) is the canonical implementation.
+"""
 
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
 
 from .logging import get_logger
-from .models import HumanParams, TileSpec
+from .models import HumanParams, TileSpec, SurfaceData, PrecomputedData, SolweigResult
 
 logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from .models import (
         Location,
-        PrecomputedData,
-        SolweigResult,
-        SurfaceData,
         Weather,
     )
 

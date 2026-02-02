@@ -20,6 +20,62 @@ GVF = Σ (surface_area × view_factor × surface_property)
 
 Where surface_property can be albedo (for reflected shortwave) or emissivity (for longwave).
 
+## Wall Integration Method
+
+**Reference:** Lindberg et al. (2008) Section 2.3, Holmer et al. (2015) "SOLWEIG-POI: a new model for estimating Tmrt at points of interest"
+
+When walls are present, GVF is computed using geometric integration of visible surfaces from a person's height above ground. The method considers:
+
+### Full GVF Calculation (with walls)
+
+The implementation in `gvf.py` calls the Rust `gvf_calc` function which:
+
+1. **Person height parameters**: Uses human height to determine view geometry
+
+   - `first = round(height)` - primary height parameter
+   - `second = round(height × 20)` - finer height discretization
+
+2. **Wall visibility**: For each pixel, integrates visible wall surfaces in all directions
+
+   - Wall heights (`wall_ht`) define vertical obstruction
+   - Wall aspects (`wall_asp`) define cardinal orientation
+   - Shadow fraction adjusts wall temperature contribution
+
+3. **Directional components**: Splits GVF into cardinal directions (N, E, S, W)
+
+   - Ground contribution: Based on distance and elevation angle
+   - Wall contribution: Based on wall height, orientation, and temperature
+
+4. **Temperature-weighted emission**: Longwave GVF includes thermal emission
+
+   ```text
+   Lup = ε_surface × σ × T_surface^4 × GVF
+   ```
+
+   Where:
+
+   - Sunlit walls: T_wall = T_air + Tg_wall
+   - Shaded walls: T_wall = T_air
+   - Ground: T_ground = T_air + Tg (shadow-dependent)
+
+5. **Albedo weighting**: Shortwave GVF weighted by surface albedo
+
+   ```text
+   GVF_alb = albedo × GVF
+   ```
+
+### Simplified GVF (no walls)
+
+When wall data is unavailable, uses simplified calculation:
+
+```text
+GVF_simple = 1 - SVF
+Lup = ε_ground × σ × (T_air + Tg × shadow)^4
+GVF_alb = albedo_ground × GVF_simple
+```
+
+This assumes only ground surfaces contribute (no walls).
+
 ## Inputs
 
 | Input | Type | Description |

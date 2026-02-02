@@ -18,15 +18,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 from scipy import ndimage
 
+from ..buffers import as_float32
 from ..bundles import GvfBundle
+from ..constants import KELVIN_OFFSET, SBC
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from ..api import HumanParams, SurfaceData, Weather
-
-# Stefan-Boltzmann constant (W/m²/K⁴)
-SBC = 5.67e-8
 
 
 def detect_building_mask(
@@ -159,26 +158,30 @@ def compute_gvf(
 
     if has_walls:
         # Use full GVF calculation with wall radiation
+        # Create parameter struct (reduces 20 params to 11)
+        gvf_params = gvf_module.GvfScalarParams(
+            scale=pixel_size,
+            first=first,
+            second=second,
+            tgwall=tg_wall,
+            ta=weather.ta,
+            ewall=emis_wall,
+            sbc=SBC,
+            albedo_b=albedo_wall,
+            twater=weather.ta,  # Twater = Ta (approximation for water temperature)
+            landcover=use_landcover,
+        )
         gvf_result = gvf_module.gvf_calc(
-            wallsun.astype(np.float32),
-            wall_ht.astype(np.float32),
-            buildings.astype(np.float32),
-            pixel_size,
-            shadow.astype(np.float32),
-            first,
-            second,
-            wall_asp.astype(np.float32),
-            tg.astype(np.float32),
-            tg_wall,
-            weather.ta,
-            emis_grid.astype(np.float32),
-            emis_wall,
-            alb_grid.astype(np.float32),
-            SBC,
-            albedo_wall,
-            weather.ta,  # Twater = Ta (approximation for water temperature)
+            as_float32(wallsun),
+            as_float32(wall_ht),
+            as_float32(buildings),
+            as_float32(shadow),
+            as_float32(wall_asp),
+            as_float32(tg),
+            as_float32(emis_grid),
+            as_float32(alb_grid),
             lc_grid,
-            use_landcover,
+            gvf_params,
         )
 
         # Extract GVF results
@@ -210,7 +213,7 @@ def compute_gvf(
 
         # Upwelling longwave: Stefan-Boltzmann law for ground emission
         # Lup = emissivity × SBC × T^4
-        lup = emis_grid * SBC * np.power(weather.ta + tg_with_shadow + 273.15, 4)
+        lup = emis_grid * SBC * np.power(weather.ta + tg_with_shadow + KELVIN_OFFSET, 4)
 
         # Simplified: assume isotropic (all directions same)
         lup_e = lup
@@ -233,19 +236,19 @@ def compute_gvf(
         gvfalbnosh_n = alb_grid
 
     return GvfBundle(
-        lup=lup.astype(np.float32),
-        lup_e=lup_e.astype(np.float32),
-        lup_s=lup_s.astype(np.float32),
-        lup_w=lup_w.astype(np.float32),
-        lup_n=lup_n.astype(np.float32),
-        gvfalb=gvfalb.astype(np.float32),
-        gvfalb_e=gvfalb_e.astype(np.float32),
-        gvfalb_s=gvfalb_s.astype(np.float32),
-        gvfalb_w=gvfalb_w.astype(np.float32),
-        gvfalb_n=gvfalb_n.astype(np.float32),
-        gvfalbnosh=gvfalbnosh.astype(np.float32),
-        gvfalbnosh_e=gvfalbnosh_e.astype(np.float32),
-        gvfalbnosh_s=gvfalbnosh_s.astype(np.float32),
-        gvfalbnosh_w=gvfalbnosh_w.astype(np.float32),
-        gvfalbnosh_n=gvfalbnosh_n.astype(np.float32),
+        lup=as_float32(lup),
+        lup_e=as_float32(lup_e),
+        lup_s=as_float32(lup_s),
+        lup_w=as_float32(lup_w),
+        lup_n=as_float32(lup_n),
+        gvfalb=as_float32(gvfalb),
+        gvfalb_e=as_float32(gvfalb_e),
+        gvfalb_s=as_float32(gvfalb_s),
+        gvfalb_w=as_float32(gvfalb_w),
+        gvfalb_n=as_float32(gvfalb_n),
+        gvfalbnosh=as_float32(gvfalbnosh),
+        gvfalbnosh_e=as_float32(gvfalbnosh_e),
+        gvfalbnosh_s=as_float32(gvfalbnosh_s),
+        gvfalbnosh_w=as_float32(gvfalbnosh_w),
+        gvfalbnosh_n=as_float32(gvfalbnosh_n),
     )

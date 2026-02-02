@@ -10,17 +10,18 @@ SOLWEIG (Solar and Longwave Environmental Irradiance Geometry) calculates mean r
 
 ## Specification Files
 
-| File | Description |
-| ---- | ----------- |
-| [OVERVIEW.md](OVERVIEW.md) | This file - pipeline and relationships |
-| [shadows.md](shadows.md) | Shadow casting algorithm |
-| [svf.md](svf.md) | Sky View Factor calculation |
-| [gvf.md](gvf.md) | Ground View Factor calculation |
-| [radiation.md](radiation.md) | Shortwave and longwave radiation |
-| [tmrt.md](tmrt.md) | Mean Radiant Temperature |
-| [utci.md](utci.md) | Universal Thermal Climate Index |
-| [pet.md](pet.md) | Physiological Equivalent Temperature |
-| [technical.md](technical.md) | Implementation details (tiling, precision, GPU) |
+| File                                           | Description                                     |
+| ---------------------------------------------- | ----------------------------------------------- |
+| [OVERVIEW.md](OVERVIEW.md)                     | This file - pipeline and relationships          |
+| [shadows.md](shadows.md)                       | Shadow casting algorithm                        |
+| [svf.md](svf.md)                               | Sky View Factor calculation                     |
+| [gvf.md](gvf.md)                               | Ground View Factor calculation                  |
+| [radiation.md](radiation.md)                   | Shortwave and longwave radiation                |
+| [ground_temperature.md](ground_temperature.md) | Surface temperature and thermal delay model     |
+| [tmrt.md](tmrt.md)                             | Mean Radiant Temperature                        |
+| [utci.md](utci.md)                             | Universal Thermal Climate Index                 |
+| [pet.md](pet.md)                               | Physiological Equivalent Temperature            |
+| [technical.md](technical.md)                   | Implementation details (tiling, precision, GPU) |
 
 ## Pipeline
 
@@ -81,23 +82,25 @@ SOLWEIG (Solar and Longwave Environmental Irradiance Geometry) calculates mean r
 
 ## Module Dependencies
 
-| Module | Depends On | Produces |
-|--------|------------|----------|
-| **Shadows** | DSM, sun position | Shadow mask (per timestep) |
-| **SVF** | DSM, CDSM | Sky view factors (static) |
-| **GVF** | SVF, walls, albedo | Ground view factors |
-| **Radiation** | Shadows, SVF, GVF, weather | K and L fluxes |
-| **Tmrt** | All radiation fluxes | Mean radiant temperature |
-| **UTCI** | Tmrt, Ta, RH, wind | Thermal comfort index |
-| **PET** | Tmrt, Ta, RH, wind, human params | Thermal comfort index |
+| Module        | Depends On                       | Produces                   |
+| ------------- | -------------------------------- | -------------------------- |
+| **Shadows**   | DSM, sun position                | Shadow mask (per timestep) |
+| **SVF**       | DSM, CDSM                        | Sky view factors (static)  |
+| **GVF**       | SVF, walls, albedo               | Ground view factors        |
+| **Radiation** | Shadows, SVF, GVF, weather       | K and L fluxes             |
+| **Tmrt**      | All radiation fluxes             | Mean radiant temperature   |
+| **UTCI**      | Tmrt, Ta, RH, wind               | Thermal comfort index      |
+| **PET**       | Tmrt, Ta, RH, wind, human params | Thermal comfort index      |
 
 ## Static vs Dynamic Calculations
 
 **Calculated Once (static geometry):**
+
 - SVF - depends only on DSM geometry
 - GVF - depends on SVF and surface properties
 
 **Calculated Per Timestep:**
+
 - Shadows - sun position changes
 - Radiation - sun position + weather changes
 - Tmrt - radiation changes
@@ -106,13 +109,17 @@ SOLWEIG (Solar and Longwave Environmental Irradiance Geometry) calculates mean r
 ## Key Physical Principles
 
 ### 1. Shadow Casting
+
 Shadows are cast opposite to the sun direction. Shadow length depends on obstacle height and sun altitude: `L = h / tan(α)`.
 
 ### 2. Sky View Factor
+
 SVF represents the fraction of sky visible from a point. In open terrain SVF=1, in deep canyons SVF<0.5. Affects how much sky radiation reaches the surface.
 
 ### 3. Radiation Balance
+
 Total radiation at a point combines:
+
 - **Direct shortwave (I)** - blocked by shadows
 - **Diffuse shortwave (D)** - reduced by low SVF
 - **Reflected shortwave** - from ground and walls
@@ -121,13 +128,17 @@ Total radiation at a point combines:
 - **Longwave from walls** - depends on wall temperature and view factor
 
 ### 4. Mean Radiant Temperature
+
 Tmrt integrates radiation from all directions, weighted by human body geometry:
+
 ```
 Tmrt = (Sstr / (ε × σ))^0.25 - 273.15
 ```
+
 Where Sstr = absorbed radiation from all 6 directions.
 
 ### 5. Thermal Comfort
+
 UTCI and PET translate the physical environment (Tmrt, Ta, wind, humidity) into equivalent temperatures that represent physiological response.
 
 ## Coordinate Conventions
@@ -138,12 +149,22 @@ UTCI and PET translate the physical environment (Tmrt, Ta, wind, humidity) into 
 
 ## Units
 
-| Quantity | Unit |
-|----------|------|
-| Elevation/height | meters (m) |
-| Temperature | degrees Celsius (°C) |
-| Radiation | W/m² |
-| Wind speed | m/s |
-| Humidity | % (relative) |
-| SVF/GVF | dimensionless (0-1) |
-| Pixel size | meters |
+| Quantity         | Unit                 |
+| ---------------- | -------------------- |
+| Elevation/height | meters (m)           |
+| Temperature      | degrees Celsius (°C) |
+| Radiation        | W/m²                 |
+| Wind speed       | m/s                  |
+| Humidity         | % (relative)         |
+| SVF/GVF          | dimensionless (0-1)  |
+| Pixel size       | meters               |
+
+| Quantity         | Unit                 |
+| ---------------- | -------------------- |
+| Elevation/height | meters (m)           |
+| Temperature      | degrees Celsius (°C) |
+| Radiation        | W/m²                 |
+| Wind speed       | m/s                  |
+| Humidity         | % (relative)         |
+| SVF/GVF          | dimensionless (0-1)  |
+| Pixel size       | meters               |

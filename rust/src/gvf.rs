@@ -5,6 +5,75 @@ use rayon::prelude::*;
 
 const PI: f32 = std::f32::consts::PI;
 
+/// Scalar parameters for GVF calculation.
+///
+/// Groups all scalar (non-array) parameters to reduce function signature complexity.
+#[pyclass]
+#[derive(Clone)]
+pub struct GvfScalarParams {
+    /// Pixel scale (meters per pixel)
+    #[pyo3(get, set)]
+    pub scale: f32,
+    /// First threshold for wall/building ratio
+    #[pyo3(get, set)]
+    pub first: f32,
+    /// Second threshold for wall/building ratio
+    #[pyo3(get, set)]
+    pub second: f32,
+    /// Wall temperature deviation from air temperature (K)
+    #[pyo3(get, set)]
+    pub tgwall: f32,
+    /// Air temperature (°C)
+    #[pyo3(get, set)]
+    pub ta: f32,
+    /// Wall emissivity
+    #[pyo3(get, set)]
+    pub ewall: f32,
+    /// Stefan-Boltzmann constant (W/m²/K⁴)
+    #[pyo3(get, set)]
+    pub sbc: f32,
+    /// Building albedo
+    #[pyo3(get, set)]
+    pub albedo_b: f32,
+    /// Water temperature (°C)
+    #[pyo3(get, set)]
+    pub twater: f32,
+    /// Whether land cover data is available
+    #[pyo3(get, set)]
+    pub landcover: bool,
+}
+
+#[pymethods]
+impl GvfScalarParams {
+    #[new]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        scale: f32,
+        first: f32,
+        second: f32,
+        tgwall: f32,
+        ta: f32,
+        ewall: f32,
+        sbc: f32,
+        albedo_b: f32,
+        twater: f32,
+        landcover: bool,
+    ) -> Self {
+        Self {
+            scale,
+            first,
+            second,
+            tgwall,
+            ta,
+            ewall,
+            sbc,
+            albedo_b,
+            twater,
+            landcover,
+        }
+    }
+}
+
 #[pyclass]
 pub struct GvfResult {
     #[pyo3(get)]
@@ -43,10 +112,10 @@ pub struct GvfResult {
     pub gvf_norm: Py<PyArray2<f32>>,
 }
 
-#[pyfunction]
+/// Internal implementation of GVF calculation.
 #[allow(clippy::too_many_arguments)]
 #[allow(non_snake_case)]
-pub fn gvf_calc(
+fn gvf_calc_impl(
     py: Python,
     wallsun: PyReadonlyArray2<f32>,
     walls: PyReadonlyArray2<f32>,
@@ -320,5 +389,62 @@ pub fn gvf_calc(
             gvf_sum: gvf_sum.into_pyarray(py).unbind(),
             gvf_norm: gvf_norm.into_pyarray(py).unbind(),
         },
+    )
+}
+
+/// Compute Ground View Factor (GVF) for upwelling longwave and albedo components.
+///
+/// GVF represents how much a person "sees" the ground and walls from a given height.
+/// This determines thermal radiation received from surrounding surfaces.
+///
+/// Parameters:
+/// - wallsun: Wall sun exposure grid
+/// - walls: Wall height grid
+/// - buildings: Building mask (0=building, 1=ground)
+/// - shadow: Combined shadow fraction
+/// - dirwalls: Wall direction/aspect in degrees
+/// - tg: Ground temperature deviation from air temperature (K)
+/// - emis_grid: Emissivity per pixel
+/// - alb_grid: Albedo per pixel
+/// - lc_grid: Optional land cover grid
+/// - params: Scalar parameters (scale, thresholds, temperatures, etc.)
+///
+/// Returns GvfResult with upwelling longwave and albedo view factors for all directions.
+#[pyfunction]
+#[allow(non_snake_case)]
+pub fn gvf_calc(
+    py: Python,
+    wallsun: PyReadonlyArray2<f32>,
+    walls: PyReadonlyArray2<f32>,
+    buildings: PyReadonlyArray2<f32>,
+    shadow: PyReadonlyArray2<f32>,
+    dirwalls: PyReadonlyArray2<f32>,
+    tg: PyReadonlyArray2<f32>,
+    emis_grid: PyReadonlyArray2<f32>,
+    alb_grid: PyReadonlyArray2<f32>,
+    lc_grid: Option<PyReadonlyArray2<f32>>,
+    params: &GvfScalarParams,
+) -> PyResult<Py<GvfResult>> {
+    gvf_calc_impl(
+        py,
+        wallsun,
+        walls,
+        buildings,
+        params.scale,
+        shadow,
+        params.first,
+        params.second,
+        dirwalls,
+        tg,
+        params.tgwall,
+        params.ta,
+        emis_grid,
+        params.ewall,
+        alb_grid,
+        params.sbc,
+        params.albedo_b,
+        params.twater,
+        lc_grid,
+        params.landcover,
     )
 }

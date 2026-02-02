@@ -192,8 +192,8 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
         skyvaultalt = np.atleast_2d([])
         skyvaultazi = np.atleast_2d([])
         # Creating skyvault at one degree intervals
-        skyvaultalt = np.ones([90, 361])*90
-        skyvaultazi = np.empty((90, 361))
+        skyvaultalt = np.ones([90, 361], dtype=np.float32)*90
+        skyvaultazi = np.empty((90, 361), dtype=np.float32)
         for j in range(90):
             skyvaultalt[j, :] = 91-j
             skyvaultazi[j, :] = range(361)

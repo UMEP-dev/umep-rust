@@ -14,13 +14,74 @@ SVF = Ω_sky / 2π
 
 Where Ω_sky is the solid angle of visible sky (steradians).
 
-For computational purposes, the sky is divided into patches and SVF is accumulated:
+## Patch-Based Calculation Method
+
+**Reference:** Robinson & Stone (1990) "Solar Radiation Modelling in the Urban Context", Building and Environment 25(3):201-209.
+
+SOLWEIG uses the patch-based method where the sky hemisphere is divided into discrete angular patches (annuli). SVF is computed by testing visibility to each patch and weighting by the patch's solid angle.
+
+### Patch Configuration
+
+The sky is divided into concentric annuli (altitude bands) from 0° to 90° elevation. Each annulus is further subdivided into azimuthal patches. Standard configurations:
+
+- **Option 1** (145 patches): Coarse for fast computation
+- **Option 2** (153 patches - default): Balance of accuracy and speed
+- **Option 3** (306 patches): Fine for high accuracy
+- **Option 4** (930 patches): Research-grade resolution
+
+For option 2 (153 patches):
+
+- 8 altitude bands: 6°, 18°, 30°, 42°, 54°, 66°, 78°, 90°
+- Azimuthal divisions per band: 31, 30, 28, 24, 19, 13, 7, 1
+
+### Solid Angle Weight Calculation
+
+Each patch's contribution to SVF is weighted by its solid angle (steradian):
 
 ```text
-SVF = Σ (patch_weight × visibility)
+w_patch = Δφ × (sin(θ_max) - sin(θ_min))
 ```
 
-Where visibility is 1 if the patch is unobstructed, 0 if blocked.
+Where:
+- Δφ = azimuthal width of patch (radians)
+- θ_min, θ_max = altitude bounds of annulus (radians)
+
+For patch in annulus i with n_i azimuthal divisions:
+
+```text
+Δφ_i = 2π / n_i
+w_i = Δφ_i × (sin(θ_i + Δθ/2) - sin(θ_i - Δθ/2))
+```
+
+### SVF Accumulation Formula
+
+```text
+SVF = Σ_patches (w_patch × visibility_patch)
+```
+
+Where:
+- w_patch = solid angle weight for the patch
+- visibility_patch = 1 if patch center is unobstructed, 0 if blocked by DSM
+
+### Directional SVF
+
+Directional components split patches by azimuth quadrant:
+
+```text
+SVF_east  = Σ (w_patch × visibility) for 0° ≤ azimuth < 180°
+SVF_south = Σ (w_patch × visibility) for 90° ≤ azimuth < 270°
+SVF_west  = Σ (w_patch × visibility) for 180° ≤ azimuth < 360°
+SVF_north = Σ (w_patch × visibility) for 270° ≤ azimuth < 90°
+```
+
+### Algorithm Implementation
+
+The Rust implementation in `skyview.rs` computes SVF using:
+
+1. **Shadow casting**: For each patch (altitude, azimuth), cast shadows from the DSM
+2. **Weight computation**: Calculate solid angle weight using annulus bounds
+3. **Accumulation**: Sum weighted visibility across all patches per pixel
+4. **Correction factor**: Apply final correction (3.0459e-4) for numerical stability
 
 ## Inputs
 

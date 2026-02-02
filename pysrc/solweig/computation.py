@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .algorithms.TsWaveDelay_2015a import TsWaveDelay_2015a
+from .rustalgos import ground as ground_rust
 from .bundles import LupBundle
 from .components.ground import compute_ground_temperature
 from .components.gvf import compute_gvf
@@ -22,15 +22,13 @@ from .components.radiation import compute_radiation
 from .components.shadows import compute_shadows
 from .components.svf_resolution import resolve_svf
 from .components.tmrt import compute_tmrt
+from .constants import KELVIN_OFFSET, SBC
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from .api import HumanParams, Location, PrecomputedData, SolweigResult, SurfaceData, ThermalState, Weather
     from .bundles import GvfBundle
-
-# Stefan-Boltzmann constant (W/m²/K⁴)
-SBC = 5.67e-8
 
 
 def _nighttime_result(
@@ -70,7 +68,7 @@ def _nighttime_result(
     shadow = np.zeros((rows, cols), dtype=np.float32)  # 0 = shaded (night)
 
     # Nighttime longwave: Lup = SBC × emis × Ta⁴
-    ta_k = weather.ta + 273.15
+    ta_k = weather.ta + KELVIN_OFFSET
     lup_night = SBC * emis_grid * np.power(ta_k, 4)
     # Ldown from sky with typical nighttime emissivity ~0.95
     ldown_night = np.full((rows, cols), SBC * 0.95 * np.power(ta_k, 4), dtype=np.float32)
@@ -108,6 +106,8 @@ def _apply_thermal_delay(
     This models the thermal mass of ground and walls, smoothing rapid temperature
     changes throughout the day. Essential for accurate time-series simulations.
 
+    Uses batched Rust function to reduce FFI overhead from 6 calls to 1.
+
     Args:
         gvf_bundle: Ground view factor results (raw Lup before delay)
         ground_tg: Ground temperature deviation from air temperature (K)
@@ -118,31 +118,49 @@ def _apply_thermal_delay(
     Returns:
         LupBundle with thermally-delayed upwelling longwave and updated state
     """
+    from .buffers import as_float32
+
     output_state = None
 
     if state is not None:
-        # Apply TsWaveDelay for thermal mass effect (smooths rapid changes)
-        lup, _, state.tgmap1 = TsWaveDelay_2015a(
-            gvf_bundle.lup, state.firstdaytime, state.timeadd, state.timestep_dec, state.tgmap1
-        )
-        lup_e, _, state.tgmap1_e = TsWaveDelay_2015a(
-            gvf_bundle.lup_e, state.firstdaytime, state.timeadd, state.timestep_dec, state.tgmap1_e
-        )
-        lup_s, _, state.tgmap1_s = TsWaveDelay_2015a(
-            gvf_bundle.lup_s, state.firstdaytime, state.timeadd, state.timestep_dec, state.tgmap1_s
-        )
-        lup_w, _, state.tgmap1_w = TsWaveDelay_2015a(
-            gvf_bundle.lup_w, state.firstdaytime, state.timeadd, state.timestep_dec, state.tgmap1_w
-        )
-        lup_n, _, state.tgmap1_n = TsWaveDelay_2015a(
-            gvf_bundle.lup_n, state.firstdaytime, state.timeadd, state.timestep_dec, state.tgmap1_n
+        # Compute ground temperature with shadow effect
+        tg_temp = (ground_tg * shadow + weather.ta).astype(np.float32)
+
+        # Apply TsWaveDelay for thermal mass effect (batched - 6 calls → 1)
+        firstdaytime_int = int(state.firstdaytime)
+        result = ground_rust.ts_wave_delay_batch(
+            as_float32(gvf_bundle.lup),
+            as_float32(gvf_bundle.lup_e),
+            as_float32(gvf_bundle.lup_s),
+            as_float32(gvf_bundle.lup_w),
+            as_float32(gvf_bundle.lup_n),
+            tg_temp,
+            firstdaytime_int,
+            state.timeadd,
+            state.timestep_dec,
+            as_float32(state.tgmap1),
+            as_float32(state.tgmap1_e),
+            as_float32(state.tgmap1_s),
+            as_float32(state.tgmap1_w),
+            as_float32(state.tgmap1_n),
+            as_float32(state.tgout1),
         )
 
-        # Ground temperature output with delay
-        tg_temp = ground_tg * shadow + weather.ta
-        _, state.timeadd, state.tgout1 = TsWaveDelay_2015a(
-            tg_temp, state.firstdaytime, state.timeadd, state.timestep_dec, state.tgout1
-        )
+        # Extract delayed outputs
+        lup = np.asarray(result.lup)
+        lup_e = np.asarray(result.lup_e)
+        lup_s = np.asarray(result.lup_s)
+        lup_w = np.asarray(result.lup_w)
+        lup_n = np.asarray(result.lup_n)
+
+        # Update state with new values
+        state.timeadd = result.timeadd
+        state.tgmap1 = np.asarray(result.tgmap1)
+        state.tgmap1_e = np.asarray(result.tgmap1_e)
+        state.tgmap1_s = np.asarray(result.tgmap1_s)
+        state.tgmap1_w = np.asarray(result.tgmap1_w)
+        state.tgmap1_n = np.asarray(result.tgmap1_n)
+        state.tgout1 = np.asarray(result.tgout1)
 
         # Update firstdaytime flag for next timestep
         if weather.is_daytime:
@@ -182,7 +200,6 @@ def calculate_core(
     physics: SimpleNamespace | None,
     materials: SimpleNamespace | None,
     conifer: bool = False,
-    use_legacy_kelvin_offset: bool = False,
 ) -> SolweigResult:
     """
     Core SOLWEIG calculation orchestrating all components.
@@ -210,7 +227,6 @@ def calculate_core(
         physics: Optional physics parameters (vegetation transmissivity, etc.)
         materials: Optional material properties (albedo, emissivity by land cover)
         conifer: Treat vegetation as evergreen conifers (always leaf-on)
-        use_legacy_kelvin_offset: Use -273.2 instead of -273.15 for backwards compat
 
     Returns:
         SolweigResult with Tmrt, shadow, radiation components, and updated state
@@ -347,7 +363,6 @@ def calculate_core(
         radiation=radiation_bundle,
         human=human,
         use_anisotropic_sky=use_anisotropic_sky,
-        use_legacy_kelvin_offset=use_legacy_kelvin_offset,
     )
 
     return SolweigResult(

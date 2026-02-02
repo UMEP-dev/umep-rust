@@ -10,14 +10,14 @@ def shaded_or_sunlit(solar_altitude, solar_azimuth, patch_altitude, patch_azimut
 
     # Degrees to radians
     deg2rad = np.pi/180
-    
+
     # Radians to degrees
     rad2deg = 180/np.pi
 
-    # 
+    #
     xi = np.cos(patch_to_sun_azi * deg2rad)
 
-    # 
+    #
     yi = 2 * xi * np.tan(solar_altitude * deg2rad)
 
     hsvf = np.tan(asvf)
@@ -27,7 +27,7 @@ def shaded_or_sunlit(solar_altitude, solar_azimuth, patch_altitude, patch_azimut
     else:
         yi_ = yi
 
-    # 
+    #
     tan_delta = hsvf + yi_
 
     # Degrees where below is in shade and above is sunlit

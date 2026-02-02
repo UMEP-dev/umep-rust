@@ -2,10 +2,10 @@
   "Tmrt_params": {
     "Value": {
       "absK": 0.7,
-      "absL": 0.95,
+      "absL": 0.97,
       "posture": "Standing"
     },
-    "Comment": "Absorption coefficients for mean radiant temperature (Tmrt) and posture. Posture is either Standing or Sitting."
+    "Comment": "Absorption coefficients per ISO 7726:1998. absK=0.70 (shortwave, clothed human), absL=0.97 (longwave). Posture is Standing or Sitting."
   },
   "PET_settings": {
     "Value": {

@@ -9,6 +9,81 @@ use rayon::prelude::*;
 const PI: f32 = std::f32::consts::PI;
 const SBC: f32 = 5.67051e-8; // Stefan-Boltzmann constant
 
+/// Sun position parameters
+#[pyclass]
+#[derive(Clone)]
+pub struct SunParams {
+    #[pyo3(get, set)]
+    pub altitude: f32,
+    #[pyo3(get, set)]
+    pub azimuth: f32,
+}
+
+#[pymethods]
+impl SunParams {
+    #[new]
+    pub fn new(altitude: f32, azimuth: f32) -> Self {
+        Self { altitude, azimuth }
+    }
+}
+
+/// Sky model parameters
+#[pyclass]
+#[derive(Clone)]
+pub struct SkyParams {
+    #[pyo3(get, set)]
+    pub esky: f32,
+    #[pyo3(get, set)]
+    pub ta: f32,
+    #[pyo3(get, set)]
+    pub cyl: bool,
+    #[pyo3(get, set)]
+    pub wall_scheme: bool,
+    #[pyo3(get, set)]
+    pub albedo: f32,
+}
+
+#[pymethods]
+impl SkyParams {
+    #[new]
+    pub fn new(esky: f32, ta: f32, cyl: bool, wall_scheme: bool, albedo: f32) -> Self {
+        Self {
+            esky,
+            ta,
+            cyl,
+            wall_scheme,
+            albedo,
+        }
+    }
+}
+
+/// Surface radiation parameters
+#[pyclass]
+#[derive(Clone)]
+pub struct SurfaceParams {
+    #[pyo3(get, set)]
+    pub tgwall: f32,
+    #[pyo3(get, set)]
+    pub ewall: f32,
+    #[pyo3(get, set)]
+    pub rad_i: f32,
+    #[pyo3(get, set)]
+    pub rad_d: f32,
+}
+
+#[pymethods]
+impl SurfaceParams {
+    #[new]
+    pub fn new(tgwall: f32, ewall: f32, rad_i: f32, rad_d: f32) -> Self {
+        Self {
+            tgwall,
+            ewall,
+            rad_i,
+            rad_d,
+        }
+    }
+}
+
 #[pyclass]
 pub struct SkyResult {
     #[pyo3(get)]
@@ -109,34 +184,35 @@ pub fn anisotropic_sky(
     shmat: PyReadonlyArray3<f32>,
     vegshmat: PyReadonlyArray3<f32>,
     vbshvegshmat: PyReadonlyArray3<f32>,
-    solar_altitude: f32,
-    solar_azimuth: f32,
+    sun: &SunParams,
     asvf: PyReadonlyArray2<f32>,
-    cyl: bool,
-    esky: f32,
+    sky: &SkyParams,
     l_patches: PyReadonlyArray2<f32>,
-    wall_scheme: bool,
     voxel_table: Option<PyReadonlyArray2<f32>>,
     voxel_maps: Option<PyReadonlyArray3<f32>>,
     steradians: PyReadonlyArray1<f32>,
-    ta: f32,
-    tgwall: f32,
-    ewall: f32,
+    surface: &SurfaceParams,
     lup: PyReadonlyArray2<f32>,
-    rad_i: f32,
-    rad_d: f32,
-    _rad_g: f32,
     lv: PyReadonlyArray2<f32>,
-    albedo: f32,
-    _anisotropic_diffuse: bool,
-    _diffsh: PyReadonlyArray3<f32>,
     shadow: PyReadonlyArray2<f32>,
     kup_e: PyReadonlyArray2<f32>,
     kup_s: PyReadonlyArray2<f32>,
     kup_w: PyReadonlyArray2<f32>,
     kup_n: PyReadonlyArray2<f32>,
-    _current_step: i32,
 ) -> PyResult<Py<SkyResult>> {
+    // Extract parameters from structs
+    let solar_altitude = sun.altitude;
+    let solar_azimuth = sun.azimuth;
+    let cyl = sky.cyl;
+    let wall_scheme = sky.wall_scheme;
+    let esky = sky.esky;
+    let ta = sky.ta;
+    let albedo = sky.albedo;
+    let tgwall = surface.tgwall;
+    let ewall = surface.ewall;
+    let rad_i = surface.rad_i;
+    let rad_d = surface.rad_d;
+
     // Convert PyReadonlyArray to ArrayView for easier manipulation
     let shmat = shmat.as_array();
     let vegshmat = vegshmat.as_array();

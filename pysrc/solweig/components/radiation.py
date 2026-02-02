@@ -24,14 +24,13 @@ from ..algorithms.cylindric_wedge import cylindric_wedge
 from ..algorithms.Kup_veg_2015a import Kup_veg_2015a
 from ..algorithms.patch_radiation import patch_steradians
 from ..algorithms.Perez_v3 import Perez_v3
+from ..buffers import as_float32
 from ..bundles import DirectionalArrays, RadiationBundle
+from ..constants import F_SIDE_SITTING, F_SIDE_STANDING, F_UP_SITTING, F_UP_STANDING, KELVIN_OFFSET, SBC
 
 if TYPE_CHECKING:
     from ..api import HumanParams, PrecomputedData, SvfBundle, Weather
     from ..bundles import GvfBundle, LupBundle, ShadowBundle
-
-# Stefan-Boltzmann constant (W/m²/K⁴)
-SBC = 5.67e-8
 
 
 def compute_radiation(
@@ -86,7 +85,7 @@ def compute_radiation(
     from ..rustalgos import sky, vegetation
 
     # Sky emissivity (Jonsson et al. 2006)
-    ta_k = weather.ta + 273.15
+    ta_k = weather.ta + KELVIN_OFFSET
     ea = 6.107 * 10 ** ((7.5 * weather.ta) / (237.3 + weather.ta)) * (weather.rh / 100.0)
     msteg = 46.5 * (ea / ta_k)
     esky = 1 - (1 + msteg) * np.exp(-np.sqrt(1.2 + 3.0 * msteg))
@@ -94,12 +93,12 @@ def compute_radiation(
     # View factors (from SOLWEIG parameters - depends on posture)
     cyl = human.posture == "standing"
     if cyl:
-        f_up = 0.06
-        f_side = 0.22
-        # f_cyl = 0.28  # Cylindrical projection factor for direct beam (not used here)
+        f_up = F_UP_STANDING
+        f_side = F_SIDE_STANDING
+        # f_cyl = F_CYL_STANDING  # Cylindrical projection factor for direct beam (not used here)
     else:
-        f_up = 0.166666
-        f_side = 0.166666
+        f_up = F_UP_SITTING
+        f_side = F_SIDE_SITTING
         # f_cyl = 0.2
 
     # Shortwave radiation components
@@ -185,15 +184,15 @@ def compute_radiation(
         asvf = np.arccos(np.sqrt(np.clip(svf, 0.0, 1.0)))
 
         # Get raw shadow matrices for Rust functions
-        shmat = shadow_mats.shmat.astype(np.float32)
-        vegshmat = shadow_mats.vegshmat.astype(np.float32)
-        vbshmat = shadow_mats.vbshmat.astype(np.float32)
+        shmat = as_float32(shadow_mats.shmat)
+        vegshmat = as_float32(shadow_mats.vegshmat)
+        vbshmat = as_float32(shadow_mats.vbshmat)
 
         # Compute base Ldown first (needed for lside_veg)
         ldown_base = (
             (svf + svf_veg - 1) * esky * SBC * (ta_k**4)
             + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
-            + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
+            + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + KELVIN_OFFSET) ** 4)
             + (2 - svf - svf_veg) * (1 - emis_wall) * esky * SBC * (ta_k**4)
         )
 
@@ -204,40 +203,40 @@ def compute_radiation(
             ldown_cloudy = (
                 (svf + svf_veg - 1) * SBC * (ta_k**4)
                 + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
-                + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
+                + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + KELVIN_OFFSET) ** 4)
                 + (2 - svf - svf_veg) * (1 - emis_wall) * SBC * (ta_k**4)
             )
             ldown_base = ldown_base * (1 - c) + ldown_cloudy * c
 
         # Call lside_veg for base directional longwave (Least, Lsouth, Lwest, Lnorth)
         lside_veg_result = vegetation.lside_veg(
-            svf_directional.south.astype(np.float32),
-            svf_directional.west.astype(np.float32),
-            svf_directional.north.astype(np.float32),
-            svf_directional.east.astype(np.float32),
-            svf_veg_directional.east.astype(np.float32),
-            svf_veg_directional.south.astype(np.float32),
-            svf_veg_directional.west.astype(np.float32),
-            svf_veg_directional.north.astype(np.float32),
-            svf_aveg_directional.east.astype(np.float32),
-            svf_aveg_directional.south.astype(np.float32),
-            svf_aveg_directional.west.astype(np.float32),
-            svf_aveg_directional.north.astype(np.float32),
+            as_float32(svf_directional.south),
+            as_float32(svf_directional.west),
+            as_float32(svf_directional.north),
+            as_float32(svf_directional.east),
+            as_float32(svf_veg_directional.east),
+            as_float32(svf_veg_directional.south),
+            as_float32(svf_veg_directional.west),
+            as_float32(svf_veg_directional.north),
+            as_float32(svf_aveg_directional.east),
+            as_float32(svf_aveg_directional.south),
+            as_float32(svf_aveg_directional.west),
+            as_float32(svf_aveg_directional.north),
             weather.sun_azimuth,
             weather.sun_altitude,
             weather.ta,
             tg_wall,
             SBC,
             emis_wall,
-            ldown_base.astype(np.float32),
+            as_float32(ldown_base),
             esky,
             0.0,  # t (instrument offset, matching reference)
-            f_sh.astype(np.float32),
+            as_float32(f_sh),
             weather.clearness_index,
-            lup_bundle.lup_e.astype(np.float32),  # TsWaveDelay-processed values
-            lup_bundle.lup_s.astype(np.float32),
-            lup_bundle.lup_w.astype(np.float32),
-            lup_bundle.lup_n.astype(np.float32),
+            as_float32(lup_bundle.lup_e),  # TsWaveDelay-processed values
+            as_float32(lup_bundle.lup_s),
+            as_float32(lup_bundle.lup_w),
+            as_float32(lup_bundle.lup_n),
             True,  # anisotropic_sky flag
         )
         # Extract base directional longwave
@@ -250,7 +249,7 @@ def compute_radiation(
         steradians, _, _ = patch_steradians(lv)
 
         # Create L_patches array for anisotropic sky (altitude, azimuth, luminance)
-        l_patches = lv.astype(np.float32)
+        l_patches = as_float32(lv)
 
         # Adjust sky emissivity for cloudy conditions (CI < 0.95)
         # This matches the reference implementation: esky = CI * esky + (1 - CI) * 1.0
@@ -259,38 +258,45 @@ def compute_radiation(
         if ci < 0.95:
             esky_aniso = ci * esky + (1 - ci) * 1.0
 
-        # Call full Rust anisotropic sky function
+        # Create parameter structs for cleaner function signature
+        sun_params = sky.SunParams(
+            altitude=weather.sun_altitude,
+            azimuth=weather.sun_azimuth,
+        )
+        sky_params = sky.SkyParams(
+            esky=esky_aniso,
+            ta=weather.ta,
+            cyl=bool(cyl),
+            wall_scheme=False,
+            albedo=albedo_wall,
+        )
+        surface_params = sky.SurfaceParams(
+            tgwall=tg_wall,
+            ewall=emis_wall,
+            rad_i=rad_i,
+            rad_d=rad_d,
+        )
+
+        # Call full Rust anisotropic sky function with structs
         ani_sky_result = sky.anisotropic_sky(
             shmat,
             vegshmat,
             vbshmat,
-            weather.sun_altitude,
-            weather.sun_azimuth,
-            asvf.astype(np.float32),
-            bool(cyl),
-            esky_aniso,
+            sun_params,
+            as_float32(asvf),
+            sky_params,
             l_patches,
-            False,  # wallScheme
             None,  # voxelTable
             None,  # voxelMaps
-            steradians.astype(np.float32),
-            weather.ta,
-            tg_wall,
-            emis_wall,
-            lup_bundle.lup.astype(np.float32),  # TsWaveDelay-processed value
-            rad_i,
-            rad_d,
-            rad_g,
-            lv.astype(np.float32),
-            albedo_wall,
-            False,  # debug
-            diffsh.astype(np.float32),
-            shadow.astype(np.float32),
-            kup_e.astype(np.float32),
-            kup_s.astype(np.float32),
-            kup_w.astype(np.float32),
-            kup_n.astype(np.float32),
-            0,  # iteration index
+            as_float32(steradians),
+            surface_params,
+            as_float32(lup_bundle.lup),  # TsWaveDelay-processed value
+            as_float32(lv),
+            as_float32(shadow),
+            as_float32(kup_e),
+            as_float32(kup_s),
+            as_float32(kup_w),
+            as_float32(kup_n),
         )
 
         # Extract results from anisotropic sky
@@ -326,30 +332,30 @@ def compute_radiation(
             rad_i,
             rad_d,
             rad_g,
-            shadow.astype(np.float32),
-            svf_directional.south.astype(np.float32),
-            svf_directional.west.astype(np.float32),
-            svf_directional.north.astype(np.float32),
-            svf_directional.east.astype(np.float32),
-            svf_veg_directional.east.astype(np.float32),
-            svf_veg_directional.south.astype(np.float32),
-            svf_veg_directional.west.astype(np.float32),
-            svf_veg_directional.north.astype(np.float32),
+            as_float32(shadow),
+            as_float32(svf_directional.south),
+            as_float32(svf_directional.west),
+            as_float32(svf_directional.north),
+            as_float32(svf_directional.east),
+            as_float32(svf_veg_directional.east),
+            as_float32(svf_veg_directional.south),
+            as_float32(svf_veg_directional.west),
+            as_float32(svf_veg_directional.north),
             weather.sun_azimuth,
             weather.sun_altitude,
             psi,
             0.0,  # t (instrument offset)
             albedo_wall,
-            f_sh.astype(np.float32),
-            kup_e.astype(np.float32),
-            kup_s.astype(np.float32),
-            kup_w.astype(np.float32),
-            kup_n.astype(np.float32),
+            as_float32(f_sh),
+            as_float32(kup_e),
+            as_float32(kup_s),
+            as_float32(kup_w),
+            as_float32(kup_n),
             bool(cyl),
             None,  # lv (None for isotropic)
             False,  # anisotropic_sky
             None,  # diffsh (None for isotropic)
-            asvf.astype(np.float32),
+            as_float32(asvf),
             None,  # shmat (None for isotropic)
             None,  # vegshmat (None for isotropic)
             None,  # vbshvegshmat (None for isotropic)
@@ -367,7 +373,7 @@ def compute_radiation(
         ldown = (
             (svf + svf_veg - 1) * esky * SBC * (ta_k**4)
             + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
-            + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
+            + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + KELVIN_OFFSET) ** 4)
             + (2 - svf - svf_veg) * (1 - emis_wall) * esky * SBC * (ta_k**4)
         )
 
@@ -379,40 +385,40 @@ def compute_radiation(
             ldown_cloudy = (
                 (svf + svf_veg - 1) * SBC * (ta_k**4)  # No esky for cloudy
                 + (2 - svf_veg - svf_aveg) * emis_wall * SBC * (ta_k**4)
-                + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + 273.15) ** 4)
+                + (svf_aveg - svf) * emis_wall * SBC * ((weather.ta + tg_wall + KELVIN_OFFSET) ** 4)
                 + (2 - svf - svf_veg) * (1 - emis_wall) * SBC * (ta_k**4)  # No esky
             )
             ldown = ldown * (1 - c) + ldown_cloudy * c
 
         # Use Rust lside_veg for directional longwave
         lside_veg_result = vegetation.lside_veg(
-            svf_directional.south.astype(np.float32),
-            svf_directional.west.astype(np.float32),
-            svf_directional.north.astype(np.float32),
-            svf_directional.east.astype(np.float32),
-            svf_veg_directional.east.astype(np.float32),
-            svf_veg_directional.south.astype(np.float32),
-            svf_veg_directional.west.astype(np.float32),
-            svf_veg_directional.north.astype(np.float32),
-            svf_aveg_directional.east.astype(np.float32),
-            svf_aveg_directional.south.astype(np.float32),
-            svf_aveg_directional.west.astype(np.float32),
-            svf_aveg_directional.north.astype(np.float32),
+            as_float32(svf_directional.south),
+            as_float32(svf_directional.west),
+            as_float32(svf_directional.north),
+            as_float32(svf_directional.east),
+            as_float32(svf_veg_directional.east),
+            as_float32(svf_veg_directional.south),
+            as_float32(svf_veg_directional.west),
+            as_float32(svf_veg_directional.north),
+            as_float32(svf_aveg_directional.east),
+            as_float32(svf_aveg_directional.south),
+            as_float32(svf_aveg_directional.west),
+            as_float32(svf_aveg_directional.north),
             weather.sun_azimuth,
             weather.sun_altitude,
             weather.ta,
             tg_wall,
             SBC,
             emis_wall,
-            ldown.astype(np.float32),
+            as_float32(ldown),
             esky,
             0.0,  # t (instrument offset, matching reference)
-            f_sh.astype(np.float32),
+            as_float32(f_sh),
             weather.clearness_index,
-            lup_bundle.lup_e.astype(np.float32),  # TsWaveDelay-processed values
-            lup_bundle.lup_s.astype(np.float32),
-            lup_bundle.lup_w.astype(np.float32),
-            lup_bundle.lup_n.astype(np.float32),
+            as_float32(lup_bundle.lup_e),  # TsWaveDelay-processed values
+            as_float32(lup_bundle.lup_s),
+            as_float32(lup_bundle.lup_w),
+            as_float32(lup_bundle.lup_n),
             False,  # anisotropic_sky
         )
         lside_e = np.array(lside_veg_result.least)
@@ -424,23 +430,23 @@ def compute_radiation(
     kdown = rad_i * shadow * sin_alt + drad + albedo_wall * (1 - svfbuveg) * (rad_g * (1 - f_sh) + rad_d * f_sh)
 
     return RadiationBundle(
-        kdown=kdown.astype(np.float32),
-        kup=kup.astype(np.float32),
-        ldown=ldown.astype(np.float32),
+        kdown=as_float32(kdown),
+        kup=as_float32(kup),
+        ldown=as_float32(ldown),
         lup=lup_bundle.lup,  # Already float32 from LupBundle
         kside=DirectionalArrays(
-            north=kside_n.astype(np.float32),
-            east=kside_e.astype(np.float32),
-            south=kside_s.astype(np.float32),
-            west=kside_w.astype(np.float32),
+            north=as_float32(kside_n),
+            east=as_float32(kside_e),
+            south=as_float32(kside_s),
+            west=as_float32(kside_w),
         ),
         lside=DirectionalArrays(
-            north=lside_n.astype(np.float32),
-            east=lside_e.astype(np.float32),
-            south=lside_s.astype(np.float32),
-            west=lside_w.astype(np.float32),
+            north=as_float32(lside_n),
+            east=as_float32(lside_e),
+            south=as_float32(lside_s),
+            west=as_float32(lside_w),
         ),
-        kside_total=kside_total.astype(np.float32),
-        lside_total=lside_total.astype(np.float32),
-        drad=drad.astype(np.float32),
+        kside_total=as_float32(kside_total),
+        lside_total=as_float32(lside_total),
+        drad=as_float32(drad),
     )

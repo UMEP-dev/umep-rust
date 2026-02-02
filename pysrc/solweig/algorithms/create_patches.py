@@ -6,12 +6,12 @@ def create_patches(patch_option):
 
     # patch_option = 1 = 145 patches (Robinson & Stone, 2004)
     # patch_option = 2 = 153 patches (Wallenberg et al., 2022)
-    # patch_option = 3 = 306 patches -> test 
+    # patch_option = 3 = 306 patches -> test
     # patch_option = 4 = 612 patches -> test
 
     skyvaultalt = np.atleast_2d([])
     skyvaultazi = np.atleast_2d([])
-            
+
     # Creating skyvault of patches of constant radians (Tregeneza and Sharples, 1993)
     # Patch option 1, 145 patches, Original Robinson & Stone (2004) after Tregenza (1987)/Tregenza & Sharples (1993)
     if patch_option == 1:

@@ -21,7 +21,7 @@ def findwalls(a, walllimit):
 
     col = a.shape[0]
     row = a.shape[1]
-    walls = np.zeros((col, row))
+    walls = np.zeros((col, row), dtype=np.float32)
     domain = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
     index = 0
     for i in progress(np.arange(1, row - 1), desc="Finding walls"):
@@ -71,17 +71,17 @@ def filter1Goodwin_as_aspect_v3(walls, scale, a):
     filthalveceil = int(np.ceil(filtersize / 2.0))
     filthalvefloor = int(np.floor(filtersize / 2.0))
 
-    filtmatrix = np.zeros((int(filtersize), int(filtersize)))
-    buildfilt = np.zeros((int(filtersize), int(filtersize)))
+    filtmatrix = np.zeros((int(filtersize), int(filtersize)), dtype=np.float32)
+    buildfilt = np.zeros((int(filtersize), int(filtersize)), dtype=np.float32)
 
     filtmatrix[:, filthalveceil - 1] = 1
     n = filtmatrix.shape[0] - 1
     buildfilt[filthalveceil - 1, 0:filthalvefloor] = 1
     buildfilt[filthalveceil - 1, filthalveceil : int(filtersize)] = 2
 
-    y = np.zeros((row, col))  # final direction
-    z = np.zeros((row, col))  # temporary direction
-    x = np.zeros((row, col))  # building side
+    y = np.zeros((row, col), dtype=np.float32)  # final direction
+    z = np.zeros((row, col), dtype=np.float32)  # temporary direction
+    x = np.zeros((row, col), dtype=np.float32)  # building side
     walls[walls > 0.5] = 1
 
     for h in progress(range(0, 180), desc="Computing wall aspects"):  # =0:1:180 #%increased resolution to 1 deg 20140911

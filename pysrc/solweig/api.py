@@ -63,9 +63,6 @@ from .utils import dict_to_namespace, extract_bounds, intersect_bounds, namespac
 # Version for cache validation
 __version__ = "0.0.1a1"
 
-# Stefan-Boltzmann constant
-SBC = 5.67e-8
-
 if TYPE_CHECKING:
     pass
 
@@ -83,7 +80,6 @@ def calculate(
     state: ThermalState | None = None,
     physics: SimpleNamespace | None = None,
     materials: SimpleNamespace | None = None,
-    use_legacy_kelvin_offset: bool = False,
 ) -> SolweigResult:
     """
     Calculate mean radiant temperature (Tmrt).
@@ -95,7 +91,7 @@ def calculate(
         location: Geographic location (lat, lon, UTC offset).
         weather: Weather data (datetime, temperature, humidity, radiation).
         config: Model configuration object. If provided, overrides individual parameters
-            (use_anisotropic_sky, human, physics, materials, use_legacy_kelvin_offset).
+            (use_anisotropic_sky, human, physics, materials).
         human: Human body parameters (absorption, posture, weight, height, etc.).
             If None, uses HumanParams defaults. Overridden by config.human if config provided.
         precomputed: Pre-computed preprocessing data (walls, SVF, shadow matrices). Optional.
@@ -121,11 +117,6 @@ def calculate(
         materials: Material properties (albedo, emissivity per landcover class) from load_materials().
             Site-specific landcover parameters. Only needed if surface has land_cover grid.
             Overridden by config.materials if config provided.
-        use_legacy_kelvin_offset: If True, use -273.2 (legacy) instead of
-            -273.15 (correct) for Kelvin offset in Tmrt calculation.
-            Default False (uses scientifically correct value).
-            Set to True for exact backwards compatibility with older versions.
-            Overridden by config.use_legacy_kelvin_offset if config provided.
 
     Returns:
         SolweigResult with Tmrt and optionally UTCI/PET grids.
@@ -171,8 +162,6 @@ def calculate(
             physics = config.physics
         if config.materials is not None:
             materials = config.materials
-        if config.use_legacy_kelvin_offset:
-            use_legacy_kelvin_offset = config.use_legacy_kelvin_offset
 
     # Use default human params if not provided
     if human is None:
@@ -202,7 +191,6 @@ def calculate(
         physics=physics,
         materials=materials,
         conifer=conifer,
-        use_legacy_kelvin_offset=use_legacy_kelvin_offset,
     )
 
 

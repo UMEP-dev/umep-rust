@@ -1,5 +1,6 @@
 import numpy as np
 from . import sunlit_shaded_patches
+from ..constants import KELVIN_OFFSET, SBC
 
 def shortwave_from_sky(sky, angle_of_incidence, lumChi, steradian, patch_azimuth, cyl):
     '''Calculates the amount of diffuse shortwave radiation from the sky for a patch with:
@@ -24,10 +25,10 @@ def longwave_from_sky(sky, Lsky_side, Lsky_down, patch_azimuth):
     Lside_sky = sky * Lsky_side
 
     #
-    Least = np.zeros((sky.shape[0], sky.shape[1])) 
-    Lsouth = np.zeros((sky.shape[0], sky.shape[1]))
-    Lwest = np.zeros((sky.shape[0], sky.shape[1]))
-    Lnorth = np.zeros((sky.shape[0], sky.shape[1]))
+    Least = np.zeros((sky.shape[0], sky.shape[1]), dtype=np.float32)
+    Lsouth = np.zeros((sky.shape[0], sky.shape[1]), dtype=np.float32)
+    Lwest = np.zeros((sky.shape[0], sky.shape[1]), dtype=np.float32)
+    Lnorth = np.zeros((sky.shape[0], sky.shape[1]), dtype=np.float32)
 
     # Portion into cardinal directions to be used for standing box or POI output
     if (patch_azimuth > 360) or (patch_azimuth < 180):
@@ -48,14 +49,11 @@ def longwave_from_veg(vegetation, steradian, angle_of_incidence, angle_of_incide
     if a patch is vegetation = vegetation
     amount of radiation from vegetated patch = vegetation_surface'''
 
-    # Stefan-Boltzmann's Constant
-    SBC = 5.67051e-8
-
     # Degrees to radians
-    deg2rad = np.pi / 180    
-    
+    deg2rad = np.pi / 180
+
     # Longwave radiation from vegetation surface (considered vertical)
-    vegetation_surface = ((ewall * SBC * ((Ta + 273.15) ** 4)) / np.pi)
+    vegetation_surface = ((ewall * SBC * ((Ta + KELVIN_OFFSET) ** 4)) / np.pi)
 
     # Longwave radiation reaching a vertical surface
     Lside_veg = vegetation_surface * steradian * angle_of_incidence * vegetation
@@ -64,10 +62,10 @@ def longwave_from_veg(vegetation, steradian, angle_of_incidence, angle_of_incide
     Ldown_veg = vegetation_surface * steradian * angle_of_incidence_h * vegetation
 
     #
-    Least = np.zeros((vegetation.shape[0], vegetation.shape[1])) 
-    Lsouth = np.zeros((vegetation.shape[0], vegetation.shape[1]))
-    Lwest = np.zeros((vegetation.shape[0], vegetation.shape[1]))
-    Lnorth = np.zeros((vegetation.shape[0], vegetation.shape[1]))
+    Least = np.zeros((vegetation.shape[0], vegetation.shape[1]), dtype=np.float32)
+    Lsouth = np.zeros((vegetation.shape[0], vegetation.shape[1]), dtype=np.float32)
+    Lwest = np.zeros((vegetation.shape[0], vegetation.shape[1]), dtype=np.float32)
+    Lnorth = np.zeros((vegetation.shape[0], vegetation.shape[1]), dtype=np.float32)
 
     # Portion into cardinal directions to be used for standing box or POI output
     if (patch_azimuth > 360) or (patch_azimuth < 180):
@@ -83,22 +81,19 @@ def longwave_from_veg(vegetation, steradian, angle_of_incidence, angle_of_incide
 
 def longwave_from_buildings(building, steradian, angle_of_incidence, angle_of_incidence_h, patch_azimuth, sunlit_patches, shaded_patches, azimuth_difference, solar_altitude, ewall, Ta, Tgwall):
 
-    # Stefan-Boltzmann's Constant
-    SBC = 5.67051e-8
-
     # Degrees to radians
-    deg2rad = np.pi / 180    
+    deg2rad = np.pi / 180
 
     #
-    Least = np.zeros((building.shape[0], building.shape[1])) 
-    Lsouth = np.zeros((building.shape[0], building.shape[1]))
-    Lwest = np.zeros((building.shape[0], building.shape[1]))
-    Lnorth = np.zeros((building.shape[0], building.shape[1]))
+    Least = np.zeros((building.shape[0], building.shape[1]), dtype=np.float32)
+    Lsouth = np.zeros((building.shape[0], building.shape[1]), dtype=np.float32)
+    Lwest = np.zeros((building.shape[0], building.shape[1]), dtype=np.float32)
+    Lnorth = np.zeros((building.shape[0], building.shape[1]), dtype=np.float32)
 
     # Longwave radiation from sunlit surfaces
-    sunlit_surface = ((ewall * SBC * ((Ta + Tgwall + 273.15) ** 4)) / np.pi)
+    sunlit_surface = ((ewall * SBC * ((Ta + Tgwall + KELVIN_OFFSET) ** 4)) / np.pi)
     # Longwave radiation from shaded surfaces
-    shaded_surface = ((ewall * SBC * ((Ta + 273.15) ** 4)) / np.pi)
+    shaded_surface = ((ewall * SBC * ((Ta + KELVIN_OFFSET) ** 4)) / np.pi)
     if ((azimuth_difference > 90) and (azimuth_difference < 270) and (solar_altitude > 0)):
         # Calculate which patches defined as buildings that are sunlit or shaded
         # sunlit_patches, shaded_patches = sunlit_shaded_patches.shaded_or_sunlit(solar_altitude, solar_azimuth, patch_altitude, patch_azimuth, asvf)
@@ -130,11 +125,11 @@ def longwave_from_buildings(building, steradian, angle_of_incidence, angle_of_in
     else:
         # Calculate longwave radiation from shaded walls reaching a vertical surface
         Lside_sh = shaded_surface * steradian * angle_of_incidence * building
-        Lside_sun = np.zeros((Lside_sh.shape[0], Lside_sh.shape[1]))
+        Lside_sun = np.zeros((Lside_sh.shape[0], Lside_sh.shape[1]), dtype=np.float32)
         
         # Calculate longwave radiation from shaded walls reaching a horizontal surface
         Ldown_sh = shaded_surface * steradian * angle_of_incidence_h * building
-        Ldown_sun = np.zeros((Lside_sh.shape[0], Lside_sh.shape[1]))
+        Ldown_sun = np.zeros((Lside_sh.shape[0], Lside_sh.shape[1]), dtype=np.float32)
 
         # Portion into cardinal directions to be used for standing box or POI output
         if (patch_azimuth > 360) or (patch_azimuth < 180):
@@ -154,14 +149,14 @@ def longwave_from_buildings_wallScheme(voxelMaps, voxelTable, steradian, angle_o
     deg2rad = np.pi / 180    
 
     #
-    Lside = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]))
-    Lside_sh = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]))
-    Ldown = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]))
-    Ldown_sh = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]))
-    Least = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1])) 
-    Lsouth = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]))
-    Lwest = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]))
-    Lnorth = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]))    
+    Lside = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]), dtype=np.float32)
+    Lside_sh = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]), dtype=np.float32)
+    Ldown = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]), dtype=np.float32)
+    Ldown_sh = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]), dtype=np.float32)
+    Least = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]), dtype=np.float32)
+    Lsouth = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]), dtype=np.float32)
+    Lwest = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]), dtype=np.float32)
+    Lnorth = np.zeros((voxelMaps.shape[0], voxelMaps.shape[1]), dtype=np.float32)    
     
     # print(voxelMaps)
     #print(voxelTable.head())
@@ -201,10 +196,10 @@ def reflected_longwave(reflecting_surface, steradian, angle_of_incidence, angle_
     Ldown_ref = reflected_radiation * steradian * angle_of_incidence_h * reflecting_surface
 
     #
-    Least = np.zeros((reflecting_surface.shape[0], reflecting_surface.shape[1])) 
-    Lsouth = np.zeros((reflecting_surface.shape[0], reflecting_surface.shape[1]))
-    Lwest = np.zeros((reflecting_surface.shape[0], reflecting_surface.shape[1]))
-    Lnorth = np.zeros((reflecting_surface.shape[0], reflecting_surface.shape[1]))
+    Least = np.zeros((reflecting_surface.shape[0], reflecting_surface.shape[1]), dtype=np.float32)
+    Lsouth = np.zeros((reflecting_surface.shape[0], reflecting_surface.shape[1]), dtype=np.float32)
+    Lwest = np.zeros((reflecting_surface.shape[0], reflecting_surface.shape[1]), dtype=np.float32)
+    Lnorth = np.zeros((reflecting_surface.shape[0], reflecting_surface.shape[1]), dtype=np.float32)
 
     # Portion into cardinal directions to be used for standing box or POI output
     if (patch_azimuth > 360) or (patch_azimuth < 180):
@@ -231,7 +226,7 @@ def patch_steradians(L_patches):
     patch_altitude = L_patches[:, 0]
 
     # Calculation of steradian for each patch
-    steradian = np.zeros((patch_altitude.shape[0]))
+    steradian = np.zeros((patch_altitude.shape[0]), dtype=np.float32)
     for i in range(patch_altitude.shape[0]):
         # If there are more than one patch in a band
         if skyalt_c[skyalt == patch_altitude[i]] > 1:

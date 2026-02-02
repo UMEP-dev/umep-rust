@@ -3,6 +3,7 @@ use pyo3::prelude::*;
 mod emissivity_models;
 #[cfg(feature = "gpu")]
 mod gpu;
+mod ground;
 mod gvf;
 mod patch_radiation;
 mod pet;
@@ -11,6 +12,7 @@ mod sky;
 mod skyview;
 mod sun;
 mod sunlit_shaded_patches;
+mod tmrt;
 mod utci;
 mod vegetation;
 
@@ -28,6 +30,8 @@ fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_vegetation_module(py_module)?;
     register_utci_module(py_module)?;
     register_pet_module(py_module)?;
+    register_ground_module(py_module)?;
+    register_tmrt_module(py_module)?;
 
     // Add GPU feature flag
     #[cfg(feature = "gpu")]
@@ -73,6 +77,7 @@ fn register_skyview_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
 fn register_gvf_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     let submodule = PyModule::new(py_module.py(), "gvf")?;
     submodule.add("__doc__", "Ground View Factor calculation.")?;
+    submodule.add_class::<gvf::GvfScalarParams>()?;
     submodule.add_function(wrap_pyfunction!(gvf::gvf_calc, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
@@ -81,6 +86,10 @@ fn register_gvf_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
 fn register_sky_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     let submodule = PyModule::new(py_module.py(), "sky")?;
     submodule.add("__doc__", "Anisotropic sky radiation calculations.")?;
+    submodule.add_class::<sky::SunParams>()?;
+    submodule.add_class::<sky::SkyParams>()?;
+    submodule.add_class::<sky::SurfaceParams>()?;
+    submodule.add_class::<sky::SkyResult>()?;
     submodule.add_function(wrap_pyfunction!(sky::anisotropic_sky, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
@@ -111,6 +120,29 @@ fn register_pet_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     submodule.add("__doc__", "PET (Physiological Equivalent Temperature) calculations.")?;
     submodule.add_function(wrap_pyfunction!(pet::pet_calculate, &submodule)?)?;
     submodule.add_function(wrap_pyfunction!(pet::pet_grid, &submodule)?)?;
+    py_module.add_submodule(&submodule)?;
+    Ok(())
+}
+
+fn register_ground_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let submodule = PyModule::new(py_module.py(), "ground")?;
+    submodule.add("__doc__", "Ground temperature and thermal delay calculations.")?;
+    submodule.add_function(wrap_pyfunction!(
+        ground::compute_ground_temperature,
+        &submodule
+    )?)?;
+    submodule.add_function(wrap_pyfunction!(ground::ts_wave_delay, &submodule)?)?;
+    submodule.add_function(wrap_pyfunction!(ground::ts_wave_delay_batch, &submodule)?)?;
+    submodule.add_class::<ground::TsWaveDelayBatchResult>()?;
+    py_module.add_submodule(&submodule)?;
+    Ok(())
+}
+
+fn register_tmrt_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let submodule = PyModule::new(py_module.py(), "tmrt")?;
+    submodule.add("__doc__", "Mean Radiant Temperature (Tmrt) calculations.")?;
+    submodule.add_class::<tmrt::TmrtParams>()?;
+    submodule.add_function(wrap_pyfunction!(tmrt::compute_tmrt, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }

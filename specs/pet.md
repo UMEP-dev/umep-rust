@@ -2,26 +2,48 @@
 
 The air temperature at which, in a typical indoor setting, the human energy budget is balanced with the same core and skin temperature as under the actual outdoor conditions.
 
-**Reference:** Höppe (1999), Mayer & Höppe (1987)
+**Primary References:**
 
-## Equation
+- Höppe P (1999) "The physiological equivalent temperature - a universal index for the biometeorological assessment of the thermal environment." International Journal of Biometeorology 43:71-75.
+- Mayer H, Höppe P (1987) "Thermal comfort of man in different urban environments." Theoretical and Applied Climatology 38:43-49.
+- VDI 3787 Part 2 (2008) "Environmental Meteorology - Methods for the human biometeorological evaluation of climate and air quality for urban and regional planning."
 
-PET is calculated using the Munich Energy Balance Model for Individuals (MEMI):
+## MEMI Energy Balance Model
+
+**Reference:** Höppe P (1984) "Die Energiebilanz des Menschen." Wiss Mitt Meteorol Inst Univ München 49.
+
+PET is calculated using the Munich Energy Balance Model for Individuals (MEMI), a two-node model of human thermoregulation:
 
 ```text
 M + W = R + C + E_sk + E_re + S
 ```
 
 Where:
+
 - M = metabolic rate (W)
-- W = mechanical work (W)
+- W = mechanical work (W), typically ~0 for sedentary activities
 - R = net radiation heat flow (W)
 - C = convective heat flow (W)
-- E_sk = latent heat flow from skin (W)
-- E_re = respiratory heat loss (W)
-- S = storage (body heating/cooling) (W)
+- E_sk = latent heat flow from skin evaporation (W)
+- E_re = respiratory heat loss (latent + sensible) (W)
+- S = body heat storage (W), positive = body warming
 
-PET is the Ta at which, in a reference indoor environment (Tmrt=Ta, v=0.1m/s, RH=50%), the same S would result.
+**PET Definition:** The air temperature at which, in a reference indoor environment (Tmrt = Ta, v = 0.1 m/s, RH = 50%), the human body would have the same core and skin temperature as in the actual outdoor environment.
+
+### Metabolic Rate
+
+**Reference:** ISO 8996:2021 "Ergonomics of the thermal environment - Determination of metabolic rate."
+
+| Activity | Metabolic Rate (W/m²) | Description |
+|----------|----------------------|-------------|
+| Resting | 58 | Lying quietly |
+| Sitting | 65 | Office work |
+| Standing relaxed | 70 | Standing still |
+| Light walking | 80 | 2 km/h (SOLWEIG default) |
+| Normal walking | 110 | 4 km/h |
+| Brisk walking | 150 | 6 km/h |
+
+The default SOLWEIG value of 80 W/m² represents a person standing or slowly walking outdoors.
 
 ## Inputs
 
@@ -134,14 +156,62 @@ PET is the Ta at which, in a reference indoor environment (Tmrt=Ta, v=0.1m/s, RH
 
 ## Implementation Notes
 
-1. **Iterative solution**
-   - PET requires solving energy balance iteratively
-   - Convergence typically within 10-20 iterations
+### Iterative Solution
 
-2. **Body surface area**
-   - Calculated from height and weight (DuBois formula)
-   - A_body = 0.203 × height^0.725 × weight^0.425
+PET requires solving the energy balance iteratively to find the equivalent temperature. The algorithm:
 
-3. **Clothing area factor**
-   - Clothing increases effective surface area
-   - f_cl = 1 + 0.15 × I_cl (where I_cl in clo)
+1. Initialize with Ta as first guess
+2. Compute skin and core temperatures for actual conditions
+3. Find indoor Ta that produces same temperatures
+4. Convergence typically within 10-20 iterations (tolerance ~0.01°C)
+
+### Body Surface Area (DuBois Formula)
+
+**Reference:** DuBois D, DuBois EF (1916) "A formula to estimate the approximate surface area if height and weight be known." Archives of Internal Medicine 17:863-871.
+
+The body surface area A_body (m²) is calculated from height (m) and weight (kg):
+
+```text
+A_body = 0.203 × height^0.725 × weight^0.425
+```
+
+This empirical formula, derived from direct body surface measurements, remains the standard for thermoregulation calculations. For the default person (1.75m, 75kg):
+
+```text
+A_body = 0.203 × 1.75^0.725 × 75^0.425 ≈ 1.90 m²
+```
+
+### Clothing Insulation
+
+**Reference:** ISO 9920:2007 "Ergonomics of the thermal environment - Estimation of thermal insulation and water vapour resistance of a clothing ensemble."
+
+Clothing insulation is measured in clo units (1 clo = 0.155 m²K/W):
+
+| Ensemble | Insulation (clo) | Description |
+|----------|------------------|-------------|
+| Shorts only | 0.1 | Minimal |
+| Light summer | 0.5 | T-shirt, shorts |
+| Summer business | 0.9 | Shirt, trousers (SOLWEIG default) |
+| Winter indoor | 1.0 | Sweater, trousers |
+| Winter outdoor | 1.5-2.0 | Coat, layers |
+
+The clothing area factor accounts for increased surface area due to clothing:
+
+```text
+f_cl = 1 + 0.15 × I_cl
+```
+
+Where I_cl is clothing insulation in clo.
+
+### Convective Heat Transfer
+
+**Reference:** Fanger PO (1970) "Thermal Comfort: Analysis and Applications in Environmental Engineering." Danish Technical Press, Copenhagen.
+
+Convective heat transfer coefficient (W/m²K):
+
+```text
+h_c = 2.38 × |T_skin - T_air|^0.25  (natural convection)
+h_c = 12.1 × √v                      (forced convection, v in m/s)
+```
+
+The larger of the two values is used.

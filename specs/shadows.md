@@ -95,13 +95,71 @@ shadow[y,x] = 1  if  propagated_height > DSM[y,x]
 
 ## Vegetation Shadows
 
-Vegetation shadows differ from building shadows:
+Vegetation shadows differ from building shadows due to partial light transmission through foliage.
 
-- **Transmissivity**: Light partially passes through foliage (typically 3-50%)
-- **Trunk zone**: Lower portion of tree trunk doesn't cast foliage shadow
-- **Pergola effect**: Dappled shadow where canopy partially blocks sun
+**Primary References:**
 
+- Konarska J, Lindberg F, Larsson A, Thorsson S, Holmer B (2014) "Transmissivity of solar radiation through crowns of single urban trees—application for outdoor thermal comfort modelling." Theoretical and Applied Climatology 117:363-376.
+- Lindberg F, Grimmond CSB (2011) "The influence of vegetation and building morphology on shadow patterns and mean radiant temperatures in urban areas." Theoretical and Applied Climatology 105:311-323.
+
+### Canopy Transmissivity
+
+**Reference:** Konarska et al. (2014)
+
+Light transmission through tree canopies varies with species, leaf area index (LAI), and season:
+
+| Tree Type | Transmissivity | LAI | Description |
+|-----------|----------------|-----|-------------|
+| Dense deciduous (summer) | 0.02-0.05 | 5-7 | Oak, maple in full leaf |
+| Medium deciduous | 0.05-0.15 | 3-5 | Typical urban trees |
+| Open canopy | 0.15-0.30 | 2-3 | Young trees, sparse crown |
+| Conifers | 0.10-0.20 | 4-6 | Year-round |
+| Deciduous (winter) | 0.60-0.80 | 0-1 | Bare branches only |
+
+**SOLWEIG default:** 0.03 (3%) - represents dense summer canopy, conservative for shade provision studies.
+
+The transmitted radiation through vegetation:
+
+```text
+I_transmitted = I_direct × transmissivity
 ```
-veg_shadow = 1  if ray passes through canopy but not trunk
-           = 0  if ray passes through trunk (solid shadow)
+
+### Trunk Zone Ratio
+
+**Reference:** Lindberg & Grimmond (2011)
+
+The trunk zone is the lower portion of the tree where only the solid trunk exists (no foliage). This zone casts solid shadows like buildings.
+
+```text
+trunk_height = total_tree_height × trunk_ratio
+canopy_height = total_tree_height × (1 - trunk_ratio)
+```
+
+**SOLWEIG default:** trunk_ratio = 0.25 (25%)
+
+This means for a 10m tree:
+- Trunk zone: 0-2.5m (solid shadow)
+- Canopy zone: 2.5-10m (transmissive shadow)
+
+Typical values by tree type:
+
+| Tree Form | Trunk Ratio | Example Species |
+|-----------|-------------|-----------------|
+| Street tree (pollarded) | 0.30-0.40 | Plane tree, linden |
+| Natural form | 0.20-0.30 | Oak, beech |
+| Conifer | 0.10-0.20 | Pine, spruce |
+| Low-branching | 0.05-0.15 | Magnolia, ornamental |
+
+### Vegetation Shadow Formula
+
+```text
+veg_shadow = 1.0                    if ray passes only through trunk (solid)
+           = transmissivity         if ray passes through canopy
+           = 0.0                    if ray is unobstructed
+```
+
+The combined shadow (building + vegetation):
+
+```text
+total_shadow = building_shadow × (1 - veg_shadow × (1 - transmissivity))
 ```

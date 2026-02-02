@@ -88,13 +88,12 @@ from .bundles import (
 
 # Import utility modules
 from . import io
-from . import tiles
 from . import walls
 from . import progress
 
 # Try to import Rust algorithms
 try:
-    from .rustalgos import GPU_ENABLED, shadowing, skyview, gvf, sky, vegetation, utci, pet
+    from .rustalgos import GPU_ENABLED, shadowing, skyview, gvf, sky, vegetation, utci, pet, ground
 
     # Enable GPU by default if available
     if GPU_ENABLED:
@@ -190,7 +189,6 @@ __all__ = [
     "VegetationBundle",
     # Utility modules
     "io",
-    "tiles",
     "walls",
     "progress",
     # GPU utilities
