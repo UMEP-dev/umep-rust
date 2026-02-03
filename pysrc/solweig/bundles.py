@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
+    from .models import ThermalState
+
 
 @dataclass
 class DirectionalArrays:

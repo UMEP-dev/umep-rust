@@ -53,7 +53,9 @@ def load_params(params_json_path: str | Path | None = None) -> SimpleNamespace:
     with open(params_path) as f:
         params_dict = json.load(f)
 
-    return dict_to_namespace(params_dict)
+    result = dict_to_namespace(params_dict)
+    assert isinstance(result, SimpleNamespace)
+    return result
 
 
 def load_physics(physics_json_path: str | Path | None = None) -> SimpleNamespace:
@@ -96,7 +98,9 @@ def load_physics(physics_json_path: str | Path | None = None) -> SimpleNamespace
     with open(physics_path) as f:
         physics_dict = json.load(f)
 
-    return dict_to_namespace(physics_dict)
+    result = dict_to_namespace(physics_dict)
+    assert isinstance(result, SimpleNamespace)
+    return result
 
 
 def load_materials(materials_json_path: str | Path) -> SimpleNamespace:
@@ -139,7 +143,9 @@ def load_materials(materials_json_path: str | Path) -> SimpleNamespace:
     with open(materials_path) as f:
         materials_dict = json.load(f)
 
-    return dict_to_namespace(materials_dict)
+    result = dict_to_namespace(materials_dict)
+    assert isinstance(result, SimpleNamespace)
+    return result
 
 
 def get_lc_properties_from_params(

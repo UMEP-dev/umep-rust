@@ -154,9 +154,12 @@ def compute_gvf(
 
     # Land cover settings for gvf_calc
     use_landcover = surface.land_cover is not None
-    lc_grid = surface.land_cover.astype(np.float32) if use_landcover else None
+    lc_grid = surface.land_cover.astype(np.float32) if surface.land_cover is not None else None
 
     if has_walls:
+        # Type narrowing - wall_ht and wall_asp are not None when has_walls is True
+        assert wall_ht is not None
+        assert wall_asp is not None
         # Use full GVF calculation with wall radiation
         # Create parameter struct (reduces 20 params to 11)
         gvf_params = gvf_module.GvfScalarParams(

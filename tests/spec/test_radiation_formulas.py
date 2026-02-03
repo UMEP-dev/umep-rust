@@ -9,10 +9,7 @@ Validates that implementations match the formulas in specs/radiation.md:
 Reference: specs/radiation.md
 """
 
-import math
-
 import numpy as np
-import pytest
 
 
 class TestSkyEmissivity:
@@ -50,8 +47,7 @@ class TestSkyEmissivity:
         esky_high_rh = self.compute_sky_emissivity(ta, rh=80)
 
         assert esky_high_rh > esky_low_rh, (
-            f"Emissivity should increase with humidity: "
-            f"RH=20% → {esky_low_rh:.3f}, RH=80% → {esky_high_rh:.3f}"
+            f"Emissivity should increase with humidity: RH=20% → {esky_low_rh:.3f}, RH=80% → {esky_high_rh:.3f}"
         )
 
     def test_sky_emissivity_increases_with_temperature(self):
@@ -61,14 +57,12 @@ class TestSkyEmissivity:
         esky_warm = self.compute_sky_emissivity(ta=30, rh=rh)
 
         assert esky_warm > esky_cold, (
-            f"Emissivity should increase with temperature: "
-            f"Ta=5°C → {esky_cold:.3f}, Ta=30°C → {esky_warm:.3f}"
+            f"Emissivity should increase with temperature: Ta=5°C → {esky_cold:.3f}, Ta=30°C → {esky_warm:.3f}"
         )
 
     def test_implementation_matches_spec(self):
         """Verify implementation in components/radiation.py uses same formula."""
         # Import the actual implementation
-        from solweig.components.radiation import compute_radiation
 
         # The formula is embedded in compute_radiation, lines 88-92:
         # ta_k = weather.ta + 273.15
@@ -86,9 +80,7 @@ class TestSkyEmissivity:
         msteg = 46.5 * (ea / ta_k)
         actual = 1 - (1 + msteg) * np.exp(-np.sqrt(1.2 + 3.0 * msteg))
 
-        assert abs(expected - actual) < 1e-10, (
-            f"Formula mismatch: expected {expected}, got {actual}"
-        )
+        assert abs(expected - actual) < 1e-10, f"Formula mismatch: expected {expected}, got {actual}"
 
 
 class TestDiffuseFraction:
@@ -101,6 +93,7 @@ class TestDiffuseFraction:
     def test_diffuse_fraction_import(self):
         """Verify diffusefraction module can be imported."""
         from solweig.algorithms.diffusefraction import diffusefraction
+
         assert callable(diffusefraction)
 
     def test_overcast_high_diffuse_fraction(self):
@@ -135,9 +128,7 @@ class TestDiffuseFraction:
         radI, radD = diffusefraction(radG, altitude, Kt, Ta, RH)
         diffuse_fraction = radD / radG if radG > 0 else 0
 
-        assert diffuse_fraction < 0.3, (
-            f"Clear (Kt={Kt}) should have low diffuse fraction, got {diffuse_fraction:.2f}"
-        )
+        assert diffuse_fraction < 0.3, f"Clear (Kt={Kt}) should have low diffuse fraction, got {diffuse_fraction:.2f}"
 
     def test_direct_plus_diffuse_equals_global(self):
         """Direct + diffuse should approximately equal global radiation."""
@@ -158,9 +149,7 @@ class TestDiffuseFraction:
         reconstructed = radI_horizontal + radD
 
         # Should be close to radG (some numerical error acceptable)
-        assert abs(reconstructed - radG) < radG * 0.05, (
-            f"I*sin(alt) + D = {reconstructed:.1f}, expected ~{radG}"
-        )
+        assert abs(reconstructed - radG) < radG * 0.05, f"I*sin(alt) + D = {reconstructed:.1f}, expected ~{radG}"
 
 
 class TestAbsorptionCoefficients:
@@ -257,7 +246,7 @@ class TestThermalDelayModel:
 
         # With timeadd = 1/24 (1 hour), weight should be exp(-33.27/24) ≈ 0.25
         timeadd = 1 / 24  # 1 hour as fraction of day
-        result, _, _ = TsWaveDelay_2015a(gvfLup, 0, timeadd, 1/24, Tgmap1)
+        result, _, _ = TsWaveDelay_2015a(gvfLup, 0, timeadd, 1 / 24, Tgmap1)
 
         # Result should be weighted average
         expected_weight = np.exp(-33.27 * timeadd)
@@ -273,7 +262,7 @@ class TestThermalDelayModel:
         Tgmap1 = np.array([[300.0]])  # Previous day's value
 
         # First morning: Tgmap1 should be set to current
-        result, timeadd, new_Tgmap1 = TsWaveDelay_2015a(gvfLup, 1, 0.1, 1/24, Tgmap1)
+        result, timeadd, new_Tgmap1 = TsWaveDelay_2015a(gvfLup, 1, 0.1, 1 / 24, Tgmap1)
 
         # After first morning, Tgmap1 should equal gvfLup
         np.testing.assert_array_equal(new_Tgmap1, gvfLup)

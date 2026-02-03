@@ -21,7 +21,6 @@ from ..algorithms.clearnessindex_2013b import clearnessindex_2013b
 from ..algorithms.daylen import daylen
 from ..algorithms.diffusefraction import diffusefraction
 from ..bundles import GroundBundle
-from ..constants import KELVIN_OFFSET
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

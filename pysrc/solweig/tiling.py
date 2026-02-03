@@ -14,13 +14,14 @@ This module (tiling.py) is the canonical implementation.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from .logging import get_logger
-from .models import HumanParams, TileSpec, SurfaceData, PrecomputedData, SolweigResult
+from .models import HumanParams, PrecomputedData, SolweigResult, SurfaceData, TileSpec
 
 logger = get_logger(__name__)
 
@@ -195,7 +196,7 @@ def calculate_tiled(
     conifer: bool = False,
     physics: SimpleNamespace | None = None,
     materials: SimpleNamespace | None = None,
-    progress_callback: callable | None = None,
+    progress_callback: Callable[..., Any] | None = None,
 ) -> SolweigResult:
     """
     Calculate mean radiant temperature using tiled processing for large rasters.

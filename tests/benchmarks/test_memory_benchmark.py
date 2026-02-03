@@ -12,7 +12,6 @@ from datetime import datetime
 
 import numpy as np
 import pytest
-
 from solweig import Location, SurfaceData, Weather, calculate
 
 
@@ -65,9 +64,7 @@ class TestMemoryBenchmark:
             ws=2.0,
         )
 
-    def test_memory_per_pixel_within_threshold(
-        self, benchmark_surface, benchmark_location, benchmark_weather
-    ):
+    def test_memory_per_pixel_within_threshold(self, benchmark_surface, benchmark_location, benchmark_weather):
         """Verify memory usage stays within acceptable bounds.
 
         This test catches memory regressions (e.g., accidental float64 usage,

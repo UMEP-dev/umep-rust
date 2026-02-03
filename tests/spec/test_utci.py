@@ -9,9 +9,7 @@ ta and rh are scalars applied to the whole grid.
 
 import numpy as np
 import pytest
-
 from solweig.rustalgos import utci
-
 
 # =============================================================================
 # Property Tests (from specs/utci.md)
@@ -34,9 +32,9 @@ class TestUtciProperties:
         """Property 2: UTCI handles valid input ranges."""
         # Test various valid combinations (ta, rh, tmrt, va)
         test_cases = [
-            (-10.0, 50.0, -5.0, 1.0),   # Cold
-            (25.0, 50.0, 30.0, 2.0),    # Moderate
-            (40.0, 30.0, 60.0, 1.0),    # Hot
+            (-10.0, 50.0, -5.0, 1.0),  # Cold
+            (25.0, 50.0, 30.0, 2.0),  # Moderate
+            (40.0, 30.0, 60.0, 1.0),  # Hot
         ]
 
         for ta, rh, tmrt, va in test_cases:
@@ -55,9 +53,7 @@ class TestUtciProperties:
         # High Tmrt (sunlit) - larger delta to see clear effect
         utci_sun = utci.utci_single(ta, rh, ta + 35, va)
 
-        assert utci_sun > utci_shade, (
-            f"Sunlit UTCI ({utci_sun:.1f}) should be > shaded ({utci_shade:.1f})"
-        )
+        assert utci_sun > utci_shade, f"Sunlit UTCI ({utci_sun:.1f}) should be > shaded ({utci_shade:.1f})"
 
     def test_property_8_high_humidity_increases_utci_in_heat(self):
         """Property 8: High humidity increases UTCI in hot conditions."""
@@ -125,8 +121,7 @@ class TestUtciGrid:
         valid_values = result[valid_mask]
         if len(valid_values) > 1:
             np.testing.assert_allclose(
-                valid_values, valid_values[0], rtol=1e-4,
-                err_msg="Uniform inputs should produce uniform output"
+                valid_values, valid_values[0], rtol=1e-4, err_msg="Uniform inputs should produce uniform output"
             )
 
 

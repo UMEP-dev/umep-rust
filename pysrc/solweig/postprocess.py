@@ -10,15 +10,16 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from .models import HumanParams
 from .rustalgos import pet as pet_rust
 from .rustalgos import utci as utci_rust
-from .models import HumanParams
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
-    from .models import SolweigResult, Weather
+
+    from .models import Location, Weather
 
 
 # =============================================================================

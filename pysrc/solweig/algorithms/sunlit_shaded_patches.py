@@ -1,18 +1,18 @@
 import numpy as np
 
-''' This function calculates whether a point is sunlit or shaded
-    based on a sky view factor (in a cylinder), solar altitude, solar azimuth '''
+""" This function calculates whether a point is sunlit or shaded
+    based on a sky view factor (in a cylinder), solar altitude, solar azimuth """
+
 
 def shaded_or_sunlit(solar_altitude, solar_azimuth, patch_altitude, patch_azimuth, asvf):
-
     # Patch azimuth in relation to sun azimuth
     patch_to_sun_azi = np.abs(solar_azimuth - patch_azimuth)
 
     # Degrees to radians
-    deg2rad = np.pi/180
+    deg2rad = np.pi / 180
 
     # Radians to degrees
-    rad2deg = 180/np.pi
+    rad2deg = 180 / np.pi
 
     #
     xi = np.cos(patch_to_sun_azi * deg2rad)
@@ -22,10 +22,7 @@ def shaded_or_sunlit(solar_altitude, solar_azimuth, patch_altitude, patch_azimut
 
     hsvf = np.tan(asvf)
 
-    if yi > 0:
-        yi_ = 0
-    else:
-        yi_ = yi
+    yi_ = 0 if yi > 0 else yi
 
     #
     tan_delta = hsvf + yi_

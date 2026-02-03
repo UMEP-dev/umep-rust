@@ -171,10 +171,7 @@ class BufferPool:
 
     def __repr__(self) -> str:
         mb = self.memory_bytes / (1024 * 1024)
-        return (
-            f"BufferPool(shape={self.shape}, dtype={self.dtype}, "
-            f"buffers={self.num_buffers}, memory={mb:.1f}MB)"
-        )
+        return f"BufferPool(shape={self.shape}, dtype={self.dtype}, buffers={self.num_buffers}, memory={mb:.1f}MB)"
 
 
 class TimestepBuffers:

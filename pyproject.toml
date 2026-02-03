@@ -85,13 +85,14 @@ dev = [
     "ruff>=0.5.1",
     "poethepoet>=0.29.0",
     "pyright>=1.1.398",
-    "umep>=0.0.1a18",             # For cross-checking tests against reference implementation
+    "umep>=0.0.1a18", # For cross-checking tests against reference implementation
     "ty>=0.0.12",
     # Include full optional dependencies for dev/testing
-    "geopandas>=1.0.1",           # POI/WOI point-of-interest analysis
-    "rasterio>=1.3.0",            # Fast raster I/O (falls back to GDAL)
-    "tqdm>=4.67.1",               # Terminal progress bars
-    "pillow>=9.0.0",              # Preview PNG generation for GeoTIFFs
+    "geopandas>=1.0.1", # POI/WOI point-of-interest analysis
+    "rasterio>=1.3.0", # Fast raster I/O (falls back to GDAL)
+    "tqdm>=4.67.1", # Terminal progress bars
+    "pillow>=9.0.0", # Preview PNG generation for GeoTIFFs
+    "pre-commit>=4.3.0",
 ]
 # QGIS 3.34 LTR compatibility testing - uses GDAL backend, no rasterio/geopandas
 # Tests the minimal dependency set that works in QGIS/OSGeo4W Python environment
@@ -116,7 +117,9 @@ documentation = "https://github.com/UMEP-dev/solweig"
 repository = "https://github.com/UMEP-dev/solweig"
 
 [tool.poe.tasks]
-verify_project = { shell = "ruff format && ruff check && pyright . && pytest ./tests" }
+verify_project = { shell = "ruff format && ruff check --fix && ty check pysrc/ && pytest ./tests" }
+lint = { shell = "ruff format && ruff check --fix" }
+typecheck = { shell = "ty check pysrc/" }
 
 [tool.ruff]
 line-length = 120
@@ -139,6 +142,10 @@ select = [
 ]
 fixable = ["ALL"]
 
+[tool.ruff.lint.per-file-ignores]
+# EPW test data contains literal long lines matching real file format
+"tests/test_io.py" = ["E501"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
@@ -153,3 +160,8 @@ log_cli = true
 log_cli_level = "INFO"
 testpaths = ["tests"]
 addopts = "-s"
+
+[tool.ty.rules]
+# Ignore unresolved imports for external/optional modules that ty cannot resolve
+# (rustalgos is a Rust extension, osgeo/qgis are optional dependencies)
+unresolved-import = "ignore"

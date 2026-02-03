@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from dataclasses import dataclass, field
+from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     pass
@@ -49,6 +55,8 @@ class ModelConfig:
     human: HumanParams | None = None
     material_params: SimpleNamespace | None = None
     outputs: list[str] = field(default_factory=lambda: ["tmrt"])
+    physics: SimpleNamespace | None = None
+    materials: SimpleNamespace | None = None
 
     def __post_init__(self):
         """Initialize default HumanParams if not provided."""
@@ -86,6 +94,8 @@ class ModelConfig:
             >>> config.human.abs_k  # From Tmrt_params
             0.7
         """
+        from ..config import load_params
+
         params = load_params(path)
 
         # Extract human parameters from JSON
@@ -179,7 +189,6 @@ class ModelConfig:
         )
 
 
-
 @dataclass
 class HumanParams:
     """
@@ -222,5 +231,3 @@ class HumanParams:
             raise ValueError(f"abs_k must be in (0, 1], got {self.abs_k}")
         if not 0 < self.abs_l <= 1:
             raise ValueError(f"abs_l must be in (0, 1], got {self.abs_l}")
-
-

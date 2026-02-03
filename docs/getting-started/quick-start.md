@@ -1,229 +1,221 @@
 # Quick Start Guide
 
-Get up and running with SOLWEIG in 5 minutes.
+Get up and running with SOLWEIG in minutes.
 
 ## Installation
 
 ```bash
-pip install solweig
-```
-
-For full features including POI analysis and fast raster I/O:
-
-```bash
-pip install solweig[full]
+# From source (development)
+git clone https://github.com/UMEP-dev/solweig.git
+cd solweig
+pip install -e .
+maturin develop  # Build Rust extension
 ```
 
 ## Basic Workflow
 
 SOLWEIG calculates Mean Radiant Temperature (Tmrt) and thermal comfort indices (UTCI, PET) from urban surface data and weather conditions.
 
-### Step 1: Prepare Your Data
+### Step 1: Prepare Surface Data
 
-You'll need:
-
-- **DSM** (Digital Surface Model) - GeoTIFF showing building and ground heights
-- **Weather data** - EPW file with hourly temperature, humidity, radiation, wind
-- **Pre-computed preprocessing** - Wall heights/aspects and Sky View Factor (see below)
-
-### Step 2: Preprocess (One-time Setup)
-
-Preprocessing generates wall geometries and sky view factors. This is done once per DSM:
+Use `SurfaceData.prepare()` to load GeoTIFFs and auto-compute walls/SVF:
 
 ```python
 import solweig
 
-# Generate wall heights and aspects (~30 seconds for 500x500 grid)
-solweig.walls.generate_wall_hts(
-    dsm_path="path/to/dsm.tif",
-    out_dir="preprocessed/walls/"
-)
-
-# Generate Sky View Factor (~3 minutes for 500x500 grid)
-solweig.svf.generate_svf(
-    dsm_path="path/to/dsm.tif",
-    cdsm_path="path/to/cdsm.tif",  # Optional: vegetation heights
-    out_dir="preprocessed/svf/",
-    trans_veg_perc=3,  # Vegetation transmissivity %
+# Load DSM and optional vegetation, compute walls/SVF automatically
+surface = solweig.SurfaceData.prepare(
+    dsm="data/dsm.tif",
+    working_dir="cache/",       # Walls/SVF cached here for reuse
+    cdsm="data/cdsm.tif",       # Optional: vegetation heights
+    bbox=[476800, 4205850, 477200, 4206250],  # Optional: crop extent
+    pixel_size=1.0,             # Optional: resolution in meters
 )
 ```
 
-**Performance estimates:**
+**What `prepare()` does:**
 
-| Grid Size | Wall Generation | SVF Generation | Total Time |
-| --------- | --------------- | -------------- | ---------- |
-| 250×250   | ~5 sec          | ~30 sec        | ~1 min     |
-| 500×500   | ~15 sec         | ~3 min         | ~3-4 min   |
-| 1000×1000 | ~45 sec         | ~15 min        | ~15-20 min |
+- Loads and validates DSM (required) and optional CDSM/DEM/land cover
+- Computes wall heights and aspects (cached to `working_dir/walls/`)
+- Computes Sky View Factor (cached to `working_dir/svf/`)
+- Aligns all rasters to common extent and resolution
 
-_With GPU acceleration. CPU-only may be 2-3x slower._
+**Performance:** First run computes walls/SVF (slow). Subsequent runs reuse cached data (fast).
+
+### Step 2: Load Weather Data
+
+Load weather from an EPW file:
+
+```python
+# Load 3 days of weather data
+weather_list = solweig.Weather.from_epw(
+    "data/weather.epw",
+    start="2023-07-01",
+    end="2023-07-03",
+)
+
+print(f"Loaded {len(weather_list)} timesteps")
+```
 
 ### Step 3: Calculate Tmrt
 
-Once preprocessing is complete, calculating Tmrt is fast:
-
 ```python
-import solweig
-from datetime import datetime
-
-# Load surface data (returns tuple: surface, precomputed)
-surface, precomputed = solweig.SurfaceData.from_geotiff(
-    dsm="path/to/dsm.tif",
-    cdsm="path/to/cdsm.tif",  # Optional: vegetation
-    walls_dir="preprocessed/walls/",
-    svf_dir="preprocessed/svf/",
-)
-
-# Auto-extract location from DSM
-location = solweig.Location.from_dsm_crs("path/to/dsm.tif", utc_offset=2)
-
-# Load weather data
-weather_list = solweig.Weather.from_epw(
-    "path/to/weather.epw",
-    start="2023-07-01",
-    end="2023-07-01",
-    hours=[12, 13, 14, 15],  # Optional: specific hours only
-)
-
 # Calculate timeseries with auto-save
 results = solweig.calculate_timeseries(
     surface=surface,
-    location=location,
     weather_series=weather_list,
-    precomputed=precomputed,
-    output_dir="output/",  # Auto-saves results incrementally
-    outputs=["tmrt", "utci"],  # Which outputs to save
+    output_dir="output/",           # Auto-saves Tmrt rasters
+    outputs=["tmrt", "shadow"],     # Which outputs to save
 )
 
-# Access results (NumPy arrays) - files already saved!
+print(f"Processed {len(results)} timesteps")
 print(f"Mean Tmrt: {results[0].tmrt.mean():.1f}°C")
-print(f"Mean UTCI: {results[0].utci.mean():.1f}°C")
 ```
 
-**For single timestep (no auto-save):**
+### Step 4: Post-process Thermal Comfort (Optional)
+
+UTCI and PET are computed separately for better performance:
 
 ```python
-# Single timestep - use calculate() instead
+# Compute UTCI (fast polynomial, ~1 second)
+n_utci = solweig.compute_utci(
+    tmrt_dir="output/",
+    weather_series=weather_list,
+    output_dir="output_utci/",
+)
+
+# Compute PET (slower iterative solver, optional)
+# n_pet = solweig.compute_pet(
+#     tmrt_dir="output/",
+#     weather_series=weather_list,
+#     output_dir="output_pet/",
+# )
+```
+
+## Complete Example
+
+See [demos/athens-demo.py](../../demos/athens-demo.py) for a complete working example.
+
+```python
+import solweig
+from pathlib import Path
+
+# Setup paths
+input_path = Path("demos/data/athens")
+output_path = Path("temp/athens")
+output_path.mkdir(parents=True, exist_ok=True)
+
+# Step 1: Prepare surface (walls/SVF auto-computed and cached)
+surface = solweig.SurfaceData.prepare(
+    dsm=str(input_path / "DSM.tif"),
+    working_dir=str(output_path / "working"),
+    cdsm=str(output_path / "CDSM.tif"),  # Optional vegetation
+)
+
+# Step 2: Load weather
+weather_list = solweig.Weather.from_epw(
+    str(input_path / "athens_2023.epw"),
+    start="2023-07-01",
+    end="2023-07-01",
+)
+
+# Step 3: Calculate
+results = solweig.calculate_timeseries(
+    surface=surface,
+    weather_series=weather_list,
+    output_dir=str(output_path / "output"),
+)
+
+print(f"Done! Processed {len(results)} timesteps")
+```
+
+## Single Timestep Calculation
+
+For quick single-timestep calculations without file I/O:
+
+```python
+import numpy as np
+from datetime import datetime
+import solweig
+
+# Create surface from arrays (no files needed)
+dsm = np.ones((200, 200), dtype=np.float32) * 10.0
+dsm[50:100, 50:100] = 25.0  # Add a building
+
+surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)
+location = solweig.Location(latitude=37.98, longitude=23.73)
+weather = solweig.Weather(
+    datetime=datetime(2024, 7, 15, 12, 0),
+    ta=30.0,      # Air temperature (°C)
+    rh=50.0,      # Relative humidity (%)
+    global_rad=800.0,  # Global radiation (W/m²)
+)
+
+# Calculate (SVF computed on first call, cached for subsequent calls)
+result = solweig.calculate(surface, location, weather)
+print(f"Tmrt: {result.tmrt.mean():.1f}°C")
+```
+
+## Key Classes
+
+| Class | Purpose |
+|---|---|
+| `SurfaceData` | Terrain data (DSM, CDSM, walls, SVF) |
+| `Location` | Geographic coordinates (lat, lon, UTC offset) |
+| `Weather` | Weather conditions (temp, humidity, radiation) |
+| `HumanParams` | Human body parameters (optional customization) |
+| `SolweigResult` | Calculation output (Tmrt, shadow, radiation) |
+
+## Common Options
+
+### Custom Human Parameters
+
+```python
 result = solweig.calculate(
     surface=surface,
     location=location,
-    weather=weather_list[0],
-    precomputed=precomputed,
+    weather=weather,
+    human=solweig.HumanParams(
+        abs_k=0.7,        # Shortwave absorption (0-1)
+        abs_l=0.97,       # Longwave absorption (0-1)
+        posture="standing",  # or "sitting"
+        weight=75,        # kg
+        height=1.80,      # m
+    ),
 )
-
-# Manually save if needed
-result.to_geotiff(output_dir="output/", outputs=["tmrt", "utci"], surface=surface)
 ```
 
-## Complete Example (4 Lines)
-
-Once preprocessing is done, the core workflow is just 4 lines:
+### Anisotropic Sky Model
 
 ```python
-import solweig
-
-surface = solweig.SurfaceData.from_geotiff(dsm="dsm.tif", walls_dir="walls/", svf_dir="svf/")
-weather = solweig.Weather.from_epw("weather.epw", start="2023-07-01", end="2023-07-01")
-result = solweig.calculate(surface, weather)
-result.to_geotiff("output/")
-```
-
-## Project API (Even Simpler)
-
-For complete workflows, the Project API manages everything automatically:
-
-```python
-import solweig
-
-# Create project - auto-discovers preprocessing in cache_dir
-project = solweig.Project(
-    dsm="data/dsm.tif",
-    weather="data/weather.epw",
-    cache_dir="data/cache/",  # Preprocessing goes here
-)
-
-# Check status
-project.print_status()
-
-# Calculate (auto-prepares if needed)
-results = project.calculate(
-    start="2023-07-01",
-    end="2023-07-01",
-    auto_prepare=True,  # Generates preprocessing if missing
+results = solweig.calculate_timeseries(
+    surface=surface,
+    weather_series=weather_list,
+    use_anisotropic_sky=True,  # More accurate but slower
 )
 ```
-
-**Benefits:**
-
-- Automatic path management and discovery
-- Auto-preparation of missing preprocessing
-- Status checking: `project.print_status()`
-- Save/load project configuration
-
-**With explicit paths:**
-
-```python
-project = solweig.Project(
-    dsm="data/dsm.tif",
-    weather="data/weather.epw",
-    walls_dir="preprocessed/walls/",  # Explicit override
-    svf_dir="preprocessed/svf/",      # Explicit override
-)
-```
-
-## Working with Sample Data
-
-Download pre-computed demo data to get started instantly:
-
-```python
-import solweig
-
-# Download Athens demo with pre-computed preprocessing
-solweig.download_sample_data(output_dir="demo/")
-
-# Use it immediately (no preprocessing needed!)
-surface = solweig.SurfaceData.from_geotiff(
-    dsm="demo/dsm.tif",
-    walls_dir="demo/preprocessed/walls/",
-    svf_dir="demo/preprocessed/svf/",
-)
-weather = solweig.Weather.from_epw("demo/weather.epw", start="2023-07-15", end="2023-07-15")
-result = solweig.calculate(surface, weather)
-```
-
-## Next Steps
-
-- **[User Guide](../user-guide/preprocessing.md)** - Detailed preprocessing instructions
-- **[Model Options](../user-guide/model-options.md)** - Configure anisotropic sky, vegetation schemes
-- **[API Reference](../api/reference.md)** - Complete API documentation
-- **[QGIS Plugin](../qgis/installation.md)** - Use SOLWEIG in QGIS with GUI
 
 ## Common Issues
 
 ### "SVF data not found"
 
-You need to run preprocessing first. SVF generation takes 3-20 minutes depending on grid size.
+SVF is computed automatically on first run. If using `SurfaceData.prepare()`, ensure `working_dir` is writable.
 
-### "No module named 'rasterio'"
+### Slow first calculation
 
-Install the full package: `pip install solweig[full]`
-
-Or use GDAL backend: `export UMEP_USE_GDAL=1`
+First `calculate()` call computes SVF (expensive). Subsequent calls reuse cached SVF and are ~200× faster.
 
 ### GPU not available
 
-The package automatically falls back to CPU. GPU acceleration is optional.
-
-Check GPU status:
+The package automatically falls back to CPU. Check status:
 
 ```python
-import solweig
 print(f"GPU available: {solweig.is_gpu_available()}")
-print(f"Using backend: {solweig.get_compute_backend()}")
+print(f"Backend: {solweig.get_compute_backend()}")
 ```
 
-## Getting Help
+## Next Steps
 
-- **GitHub Issues**: [github.com/UMEP-dev/solweig/issues](https://github.com/UMEP-dev/solweig/issues)
-- **Documentation**: [umep-docs.readthedocs.io](https://umep-docs.readthedocs.io)
-- **Mailing List**: <umep-dev@googlegroups.com>
+- See [demos/athens-demo.py](../../demos/athens-demo.py) for a complete example
+- Check [specs/](../../specs/) for physics documentation
+- Run `pytest tests/` to verify installation

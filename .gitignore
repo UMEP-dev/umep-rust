@@ -1,6 +1,9 @@
 # mac
 .DS_Store
 
+# Claude
+.claude/
+
 # demo data
 demos/data/athens/shadow*
 demos/data/athens/svf*

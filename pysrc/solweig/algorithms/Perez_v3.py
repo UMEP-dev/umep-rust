@@ -1,17 +1,18 @@
-from __future__ import division
 import numpy as np
+
 from .create_patches import create_patches
+
 
 def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
     """
     This function calculates distribution of luminance on the skyvault based on
     Perez luminince distribution model.
-    
+
     ALL-WEATHER MODEL FOR SKY LUMINANCE DISTRIBUTION
     PRELIMINARY CONFIGURATION AND VALIDATION
     R. PEREZ, R. SEALS, and J. MICHALSKY
-    Solar Energy Vol. 50, No, 3, pp. 235-245, 1993 
-    
+    Solar Energy Vol. 50, No, 3, pp. 235-245, 1993
+
     Abstract--This article reports the development and evaluation of a new model for describing, from routine
     irradiance measurements, the mean instantaneous sky luminance angular distribution patterns for all sky
     conditions from overcast to clear, through partly cloudy, skies.
@@ -20,17 +21,17 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
     Fredrik Lindberg 20120527, fredrikl@gvc.gu.se
     Gothenburg University, Sweden
     Urban Climte Group
-    
+
     Input parameters:
      - zen:     Zenith angle of the Sun (in degrees)
      - azimuth: Azimuth angle of the Sun (in degrees)
      - radD:    Horizontal diffuse radiation (W m-2)
      - radI:    Direct radiation perpendicular to the Sun beam (W m-2)
      - jday:    Day of year
-    
+
     Output parameters:
      - lv:   Relative luminance map (same dimensions as theta. gamma)
-    
+
 
     acoeff=[1.353 -0.258 -0.269 -1.437
            -1.222 -0.773 1.415 1.102
@@ -40,7 +41,7 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
            -1.016 -0.367 1.008 1.405
            -1.000 0.021 0.503 -0.512
            -1.050 0.029 0.426 0.359];
-    
+
     bcoeff=[-0.767 0.001 1.273 -0.123
             -0.205 0.037 -3.913 0.916
              0.278 -0.181 -4.500 1.177
@@ -49,7 +50,7 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
              0.288 -0.533 -3.850 3.375
             -0.300 0.192 0.702 -1.632
             -0.325 0.116 0.778 0.003];
-    
+
     ccoeff=[2.800 0.600 1.238 1.000
             6.975 0.177 6.448 -0.124
             24.22 -13.08 -37.70 34.84
@@ -58,7 +59,7 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
             14.00 -0.999 -7.14 7.547
             19.00 -5.000 1.243 -1.91
             31.06 -14.50 -46.11 55.37];
-    
+
     dcoeff=[1.874 0.630 0.974 0.281
            -1.580 -0.508 -1.781 0.108
            -5.00 1.522 3.923 -2.62
@@ -67,7 +68,7 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
            -3.40 -0.108 -1.075 1.57
            -4.00 0.025 0.384 0.266
            -7.23 0.405 13.35 0.623];
-    
+
     ecoeff=[0.035 -0.125 -0.572 0.994
             0.262 0.067 -0.219 -0.428
            -0.016 0.160 0.420 -0.556
@@ -106,16 +107,16 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
     m_e2 = np.array([-0.1246, 0.0672, 0.1597, -0.3296, 0.0766, 0.4016, -0.3788, -0.6426])
     m_e3 = np.array([-0.5718, -0.2190, 0.4199, -0.0876, -0.0656, 0.3017, -2.4517, 1.8564])
     m_e4 = np.array([0.9938, -0.4285, -0.5562, -0.0329, -0.1294, -0.4844, 1.4656, 0.5636])
-    
+
     acoeff = np.transpose(np.atleast_2d([m_a1, m_a2, m_a3, m_a4]))
     bcoeff = np.transpose(np.atleast_2d([m_b1, m_b2, m_b3, m_b4]))
     ccoeff = np.transpose(np.atleast_2d([m_c1, m_c2, m_c3, m_c4]))
     dcoeff = np.transpose(np.atleast_2d([m_d1, m_d2, m_d3, m_d4]))
     ecoeff = np.transpose(np.atleast_2d([m_e1, m_e2, m_e3, m_e4]))
 
-    deg2rad = np.pi/180
-    rad2deg = 180/np.pi
-    altitude = 90-zen
+    deg2rad = np.pi / 180
+    rad2deg = 180 / np.pi
+    altitude = 90 - zen
     zen = zen * deg2rad
     azimuth = azimuth * deg2rad
     altitude = altitude * deg2rad
@@ -126,31 +127,36 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
     # Skyclearness
     PerezClearness = ((Idh + Ibn) / Idh + 1.041 * np.power(zen, 3)) / (1 + 1.041 * np.power(zen, 3))
     # Extra terrestrial radiation
-    day_angle = jday*2*np.pi/365
-    #I0=1367*(1+0.033*np.cos((2*np.pi*jday)/365))
-    I0 = 1367*(1.00011+0.034221*np.cos(day_angle) + 0.00128*np.sin(day_angle)+0.000719 *
-               np.cos(2*day_angle)+0.000077*np.sin(2*day_angle))    # New from robinsson
+    day_angle = jday * 2 * np.pi / 365
+    # I0=1367*(1+0.033*np.cos((2*np.pi*jday)/365))
+    I0 = 1367 * (
+        1.00011
+        + 0.034221 * np.cos(day_angle)
+        + 0.00128 * np.sin(day_angle)
+        + 0.000719 * np.cos(2 * day_angle)
+        + 0.000077 * np.sin(2 * day_angle)
+    )  # New from robinsson
 
     # Optical air mass
     # m=1/altitude; old
-    if altitude >= 10*deg2rad:
-        AirMass = 1/np.sin(altitude)
-    elif altitude < 0:   # below equation becomes complex
-        AirMass = 1/np.sin(altitude)+0.50572*np.power(180*complex(altitude)/np.pi+6.07995, -1.6364)
+    if altitude >= 10 * deg2rad:
+        AirMass = 1 / np.sin(altitude)
+    elif altitude < 0:  # below equation becomes complex
+        AirMass = 1 / np.sin(altitude) + 0.50572 * np.power(180 * complex(altitude) / np.pi + 6.07995, -1.6364)
     else:
         # Added brackets to denominator: np.sin(0) was giving zero hence division by zero = infinity
         AirMass = 1 / (np.sin(altitude) + 0.50572 * np.power(180 * altitude / np.pi + 6.07995, -1.6364))
 
     # Skybrightness
     # if altitude*rad2deg+6.07995>=0
-    PerezBrightness = (AirMass*radD)/I0
+    PerezBrightness = (AirMass * radD) / I0
     if Idh <= 10:
         # m_a=0;m_b=0;m_c=0;m_d=0;m_e=0;
         PerezBrightness = 0
-    #if altitude < 0:
-        #print("Airmass")
-        #print(AirMass)
-        #print(PerezBrightness)
+    # if altitude < 0:
+    # print("Airmass")
+    # print(AirMass)
+    # print(PerezBrightness)
     # sky clearness bins
     if PerezClearness < 1.065:
         intClearness = 0
@@ -169,18 +175,48 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
     if PerezClearness > 6.200:
         intClearness = 7
 
-    m_a = acoeff[intClearness,  0] + acoeff[intClearness,  1] * zen + PerezBrightness * (acoeff[intClearness,  2] + acoeff[intClearness,  3] * zen)
-    m_b = bcoeff[intClearness,  0] + bcoeff[intClearness,  1] * zen + PerezBrightness * (bcoeff[intClearness,  2] + bcoeff[intClearness,  3] * zen)
-    m_e = ecoeff[intClearness,  0] + ecoeff[intClearness,  1] * zen + PerezBrightness * (ecoeff[intClearness,  2] + ecoeff[intClearness,  3] * zen)
+    m_a = (
+        acoeff[intClearness, 0]
+        + acoeff[intClearness, 1] * zen
+        + PerezBrightness * (acoeff[intClearness, 2] + acoeff[intClearness, 3] * zen)
+    )
+    m_b = (
+        bcoeff[intClearness, 0]
+        + bcoeff[intClearness, 1] * zen
+        + PerezBrightness * (bcoeff[intClearness, 2] + bcoeff[intClearness, 3] * zen)
+    )
+    m_e = (
+        ecoeff[intClearness, 0]
+        + ecoeff[intClearness, 1] * zen
+        + PerezBrightness * (ecoeff[intClearness, 2] + ecoeff[intClearness, 3] * zen)
+    )
 
     if intClearness > 0:
-        m_c = ccoeff[intClearness, 0] + ccoeff[intClearness, 1] * zen + PerezBrightness * (ccoeff[intClearness, 2] + ccoeff[intClearness, 3] * zen)
-        m_d = dcoeff[intClearness, 0] + dcoeff[intClearness, 1] * zen + PerezBrightness * (dcoeff[intClearness, 2] + dcoeff[intClearness, 3] * zen)
+        m_c = (
+            ccoeff[intClearness, 0]
+            + ccoeff[intClearness, 1] * zen
+            + PerezBrightness * (ccoeff[intClearness, 2] + ccoeff[intClearness, 3] * zen)
+        )
+        m_d = (
+            dcoeff[intClearness, 0]
+            + dcoeff[intClearness, 1] * zen
+            + PerezBrightness * (dcoeff[intClearness, 2] + dcoeff[intClearness, 3] * zen)
+        )
     else:
         # different equations for c & d in clearness bin no. 1,  from Robinsson
-        m_c = np.exp(np.power(PerezBrightness * (ccoeff[intClearness, 0] + ccoeff[intClearness, 1] * zen), ccoeff[intClearness, 2]))-1
-        m_d = -np.exp(PerezBrightness * (dcoeff[intClearness, 0] + dcoeff[intClearness, 1] * zen)) + dcoeff[intClearness, 2] + \
-            PerezBrightness * dcoeff[intClearness, 3]
+        m_c = (
+            np.exp(
+                np.power(
+                    PerezBrightness * (ccoeff[intClearness, 0] + ccoeff[intClearness, 1] * zen), ccoeff[intClearness, 2]
+                )
+            )
+            - 1
+        )
+        m_d = (
+            -np.exp(PerezBrightness * (dcoeff[intClearness, 0] + dcoeff[intClearness, 1] * zen))
+            + dcoeff[intClearness, 2]
+            + PerezBrightness * dcoeff[intClearness, 3]
+        )
 
     # print 'a = ', m_a
     # print 'b = ', m_b
@@ -192,12 +228,12 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
         skyvaultalt = np.atleast_2d([])
         skyvaultazi = np.atleast_2d([])
         # Creating skyvault at one degree intervals
-        skyvaultalt = np.ones([90, 361], dtype=np.float32)*90
+        skyvaultalt = np.ones([90, 361], dtype=np.float32) * 90
         skyvaultazi = np.empty((90, 361), dtype=np.float32)
         for j in range(90):
-            skyvaultalt[j, :] = 91-j
+            skyvaultalt[j, :] = 91 - j
             skyvaultazi[j, :] = range(361)
-            
+
     elif patchchoice == 1:
         # Creating skyvault of patches of constant radians (Tregeneza and Sharples, 1993)
         skyvaultalt, skyvaultazi, _, _, _, _, _ = create_patches(patch_option)
@@ -207,8 +243,9 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
     skyvaultazi = skyvaultazi * deg2rad
 
     # Angular distance from the sun from Robinsson
-    cosSkySunAngle = np.sin(skyvaultalt) * np.sin(altitude) + \
-                     np.cos(altitude) * np.cos(skyvaultalt) * np.cos(np.abs(skyvaultazi-azimuth))
+    cosSkySunAngle = np.sin(skyvaultalt) * np.sin(altitude) + np.cos(altitude) * np.cos(skyvaultalt) * np.cos(
+        np.abs(skyvaultazi - azimuth)
+    )
 
     cos_zen = np.cos(skyvaultzen)
     exp_arg_h = m_b / cos_zen
@@ -235,10 +272,10 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
     # pause(1)
 
     if patchchoice == 1:
-        #x = np.atleast_2d([])
-        #lv = np.transpose(np.append(np.append(np.append(x, skyvaultalt*rad2deg), skyvaultazi*rad2deg), lv))
-        x = np.transpose(np.atleast_2d(skyvaultalt*rad2deg))
-        y = np.transpose(np.atleast_2d(skyvaultazi*rad2deg))
+        # x = np.atleast_2d([])
+        # lv = np.transpose(np.append(np.append(np.append(x, skyvaultalt*rad2deg), skyvaultazi*rad2deg), lv))
+        x = np.transpose(np.atleast_2d(skyvaultalt * rad2deg))
+        y = np.transpose(np.atleast_2d(skyvaultazi * rad2deg))
         z = np.transpose(np.atleast_2d(lv))
         lv = np.append(np.append(x, y, axis=1), z, axis=1)
     return lv, PerezClearness, PerezBrightness

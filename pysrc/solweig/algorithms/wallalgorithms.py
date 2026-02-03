@@ -1,6 +1,3 @@
-from builtins import range
-
-# -*- coding: utf-8 -*-
 __author__ = "xlinfr"
 
 import math
@@ -63,10 +60,8 @@ def filter1Goodwin_as_aspect_v3(walls, scale, a):
     filtersize = np.floor((scale + 0.0000000001) * 9)
     if filtersize <= 2:
         filtersize = 3
-    else:
-        if filtersize != 9:
-            if filtersize % 2 == 0:
-                filtersize = filtersize + 1
+    elif filtersize != 9 and filtersize % 2 == 0:
+        filtersize = filtersize + 1
 
     filthalveceil = int(np.ceil(filtersize / 2.0))
     filthalvefloor = int(np.floor(filtersize / 2.0))
@@ -84,7 +79,9 @@ def filter1Goodwin_as_aspect_v3(walls, scale, a):
     x = np.zeros((row, col), dtype=np.float32)  # building side
     walls[walls > 0.5] = 1
 
-    for h in progress(range(0, 180), desc="Computing wall aspects"):  # =0:1:180 #%increased resolution to 1 deg 20140911
+    for h in progress(
+        range(0, 180), desc="Computing wall aspects"
+    ):  # =0:1:180 #%increased resolution to 1 deg 20140911
         filtmatrix1temp = sc.rotate(filtmatrix, h, order=1, reshape=False, mode="nearest")  # bilinear
         filtmatrix1 = np.round(filtmatrix1temp)
         # filtmatrix1temp = sc.imrotate(filtmatrix, h, 'bilinear')

@@ -6,10 +6,10 @@ import json
 from datetime import datetime as dt
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .models import SurfaceData, Location, Weather, HumanParams
+    from .models import HumanParams, Location, SurfaceData, Weather
 
 
 def create_run_metadata(

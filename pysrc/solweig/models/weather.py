@@ -12,11 +12,10 @@ import numpy as np
 from ..algorithms import sun_position as sp
 from ..algorithms.clearnessindex_2013b import clearnessindex_2013b
 from ..algorithms.diffusefraction import diffusefraction
-from ..constants import MIN_SUN_ELEVATION_DEG
 from ..logging import get_logger
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
+    from .surface import SurfaceData
 
 logger = get_logger(__name__)
 
@@ -63,12 +62,12 @@ class Location:
         Example:
             location = Location.from_dsm_crs("dsm.tif", utc_offset=2)
         """
-        from . import io
+        from .. import io
 
         try:
             from pyproj import Transformer
-        except ImportError:
-            raise ImportError("pyproj is required for CRS extraction. Install with: pip install pyproj")
+        except ImportError as err:
+            raise ImportError("pyproj is required for CRS extraction. Install with: pip install pyproj") from err
 
         # Load DSM to get CRS and bounds
         _, transform, crs_wkt, _ = io.load_raster(str(dsm_path))
@@ -122,8 +121,8 @@ class Location:
         """
         try:
             from pyproj import Transformer
-        except ImportError:
-            raise ImportError("pyproj is required for CRS extraction. Install with: pip install pyproj")
+        except ImportError as err:
+            raise ImportError("pyproj is required for CRS extraction. Install with: pip install pyproj") from err
 
         # Check if geotransform and CRS are available
         if not hasattr(surface, "_geotransform") or surface._geotransform is None:
@@ -160,7 +159,6 @@ class Location:
             "longitude": self.longitude,
             "altitude": self.altitude,
         }
-
 
 
 @dataclass
@@ -302,7 +300,9 @@ class Weather:
                     sun_step = sp.sun_position(time_dict_step, location_dict)
                     zenith_step = sun_step["zenith"]
                     zenith_val = (
-                        float(np.asarray(zenith_step).flat[0]) if hasattr(zenith_step, "__iter__") else float(zenith_step)
+                        float(np.asarray(zenith_step).flat[0])
+                        if hasattr(zenith_step, "__iter__")
+                        else float(zenith_step)
                     )
                     alt_step = 90.0 - zenith_val
                     if alt_step > sunmaximum:
@@ -394,7 +394,7 @@ class Weather:
             # TMY file (year-agnostic)
             weather_list = Weather.from_epw("tmy.epw", start="07-15", end="07-15")
         """
-        from . import io as common
+        from .. import io as common
 
         # Parse EPW file
         df, epw_info = common.read_epw(path)
@@ -475,9 +475,6 @@ class Weather:
         # Create Weather objects
         weather_list = []
         for timestamp, row in df_filtered.iterrows():
-            # Get timezone offset from EPW info
-            tz_offset = int(epw_info.get("tz_offset", 0))
-
             # Create Weather object with available data
             # EPW has dni/dhi which we can use as measured values
             w = cls(
@@ -504,5 +501,3 @@ class Weather:
             logger.warning(f"No timesteps found in EPW file for date range {start_dt} to {end_dt}")
 
         return weather_list
-
-

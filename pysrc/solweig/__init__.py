@@ -44,56 +44,53 @@ logger = logging.getLogger(__name__)
 __version__ = "0.0.1a1"
 
 # Import simplified API (Phase 2 modernization)
-from .api import (
-    SurfaceData,
-    PrecomputedData,
-    Location,
-    Weather,
+# Import utility modules
+from . import io, progress, walls  # noqa: E402
+from .api import (  # noqa: E402
     HumanParams,
+    Location,
     ModelConfig,
+    PrecomputedData,
     SolweigResult,
+    SurfaceData,
+    TileSpec,
+    Weather,
     calculate,
-    calculate_timeseries,
-    calculate_tiled,
-    load_params,
-    load_physics,
-    load_materials,
     # Tiled processing helpers
     calculate_buffer_distance,
-    TileSpec,
-    generate_tiles,
+    calculate_tiled,
+    calculate_timeseries,
+    compute_pet,
+    compute_pet_grid,
     # Post-processing: Thermal comfort indices
     compute_utci,
-    compute_pet,
     compute_utci_grid,
-    compute_pet_grid,
     # Run metadata/provenance
     create_run_metadata,
-    save_run_metadata,
+    generate_tiles,
+    load_materials,
+    load_params,
+    load_physics,
     load_run_metadata,
+    save_run_metadata,
 )
 
 # Import data bundles (Phase 5 refactoring)
-from .bundles import (
+from .bundles import (  # noqa: E402
     DirectionalArrays,
-    SvfBundle,
-    ShadowBundle,
     GroundBundle,
     GvfBundle,
     LupBundle,
     RadiationBundle,
-    WallBundle,
+    ShadowBundle,
+    SvfBundle,
     VegetationBundle,
+    WallBundle,
 )
-
-# Import utility modules
-from . import io
-from . import walls
-from . import progress
 
 # Try to import Rust algorithms
 try:
-    from .rustalgos import GPU_ENABLED, shadowing, skyview, gvf, sky, vegetation, utci, pet, ground
+    from .rustalgos import GPU_ENABLED, gvf, pet, shadowing, sky, skyview, utci, vegetation
 
     # Enable GPU by default if available
     if GPU_ENABLED:

@@ -6,7 +6,6 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from solweig.progress import ProgressReporter, get_progress_iterator, progress
 
 
@@ -17,7 +16,7 @@ class TestProgressReporter:
         """Test basic ProgressReporter usage."""
         reporter = ProgressReporter(total=10, desc="Test", disable=True)
 
-        for i in range(10):
+        for _i in range(10):
             reporter.update(1)
 
         reporter.close()
@@ -62,8 +61,9 @@ class TestProgressReporter:
     def test_progress_reporter_with_tqdm(self):
         """Test ProgressReporter with tqdm backend."""
         try:
-            from tqdm import tqdm
+            from tqdm import tqdm  # noqa: F401
 
+            del tqdm  # Silence unused import warning
             reporter = ProgressReporter(total=10, desc="Test with tqdm")
 
             # Should have tqdm bar
@@ -143,7 +143,7 @@ class TestProgressIterator:
         items = range(10)
         count = 0
 
-        for item in get_progress_iterator(items, desc="Test", disable=True):
+        for _item in get_progress_iterator(items, desc="Test", disable=True):
             count += 1
 
         assert count == 10
@@ -177,8 +177,7 @@ class TestProgressIterator:
         """Test progress iterator with generator."""
 
         def gen():
-            for i in range(5):
-                yield i
+            yield from range(5)
 
         result = []
         for item in get_progress_iterator(gen(), desc="Test", total=5, disable=True):
@@ -206,7 +205,7 @@ class TestProgressFunction:
         items = range(10)
         count = 0
 
-        for item in progress(items, desc="Test", disable=True):
+        for _item in progress(items, desc="Test", disable=True):
             count += 1
 
         assert count == 10
@@ -245,13 +244,13 @@ class TestProgressQGISIntegration:
     def test_tqdm_environment_detection(self):
         """Test that tqdm environment is detected."""
         try:
-            from tqdm import tqdm
-
             # Reimport to trigger detection
             from importlib import reload
 
             import solweig.progress
+            from tqdm import tqdm  # noqa: F401
 
+            del tqdm  # Silence unused import warning
             reload(solweig.progress)
 
             # Should detect tqdm

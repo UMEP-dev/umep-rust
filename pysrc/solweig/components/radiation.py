@@ -29,8 +29,8 @@ from ..bundles import DirectionalArrays, RadiationBundle
 from ..constants import F_SIDE_SITTING, F_SIDE_STANDING, F_UP_SITTING, F_UP_STANDING, KELVIN_OFFSET, SBC
 
 if TYPE_CHECKING:
-    from ..api import HumanParams, PrecomputedData, SvfBundle, Weather
-    from ..bundles import GvfBundle, LupBundle, ShadowBundle
+    from ..api import HumanParams, PrecomputedData, Weather
+    from ..bundles import GvfBundle, LupBundle, ShadowBundle, SvfBundle
 
 
 def compute_radiation(
@@ -93,12 +93,12 @@ def compute_radiation(
     # View factors (from SOLWEIG parameters - depends on posture)
     cyl = human.posture == "standing"
     if cyl:
-        f_up = F_UP_STANDING
-        f_side = F_SIDE_STANDING
+        _f_up = F_UP_STANDING  # Reserved for future cylindric body model
+        _f_side = F_SIDE_STANDING  # Reserved for future cylindric body model
         # f_cyl = F_CYL_STANDING  # Cylindrical projection factor for direct beam (not used here)
     else:
-        f_up = F_UP_SITTING
-        f_side = F_SIDE_SITTING
+        _f_up = F_UP_SITTING  # Reserved for future cylindric body model  # noqa: F841
+        _f_side = F_SIDE_SITTING  # Reserved for future cylindric body model  # noqa: F841
         # f_cyl = 0.2
 
     # Shortwave radiation components
@@ -154,6 +154,9 @@ def compute_radiation(
 
     # Compute diffuse radiation and directional shortwave
     if use_aniso:
+        # Type narrowing - precomputed and shadow_matrices are not None when use_aniso is True
+        assert precomputed is not None
+        assert precomputed.shadow_matrices is not None
         # Anisotropic Diffuse Radiation after Perez et al. 1993
         shadow_mats = precomputed.shadow_matrices
         patch_option = shadow_mats.patch_option
@@ -171,7 +174,7 @@ def compute_radiation(
         )
 
         # Get diffuse shadow matrix (accounts for vegetation transmissivity)
-        diffsh = shadow_mats.diffsh(psi, use_veg=psi < 0.5)
+        diffsh = shadow_mats.diffsh(psi, use_vegetation=psi < 0.5)
 
         # Total relative luminance from sky patches into each cell
         ani_lum = np.zeros((rows, cols), dtype=np.float32)

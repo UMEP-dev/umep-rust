@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 from .logging import get_logger
-from .models import HumanParams, Location, ThermalState
 from .metadata import create_run_metadata, save_run_metadata
+from .models import HumanParams, Location, ThermalState
 
 logger = get_logger(__name__)
 
@@ -33,8 +32,10 @@ def _precompute_weather(weather_series: list, location: Location) -> None:
     if not weather_series:
         return
 
-    import numpy as np
     from datetime import timedelta
+
+    import numpy as np
+
     from .algorithms import sun_position as sp
 
     location_dict = location.to_sun_position_dict()
@@ -64,9 +65,7 @@ def _precompute_weather(weather_series: list, location: Location) -> None:
                 sun_step = sp.sun_position(time_dict_step, location_dict)
                 zenith_step = sun_step["zenith"]
                 zenith_val = (
-                    float(np.asarray(zenith_step).flat[0])
-                    if hasattr(zenith_step, "__iter__")
-                    else float(zenith_step)
+                    float(np.asarray(zenith_step).flat[0]) if hasattr(zenith_step, "__iter__") else float(zenith_step)
                 )
                 altitude_step = 90.0 - zenith_val
                 if altitude_step > sunmaximum:
@@ -83,6 +82,7 @@ def _precompute_weather(weather_series: list, location: Location) -> None:
     for weather in weather_series:
         if not weather._derived_computed:
             weather.compute_derived(location)
+
 
 if TYPE_CHECKING:
     from .models import (
@@ -207,9 +207,9 @@ def calculate_timeseries(
     logger.info("Starting SOLWEIG timeseries calculation")
     logger.info(f"  Grid size: {surface.dsm.shape[1]}×{surface.dsm.shape[0]} pixels")
     logger.info(f"  Timesteps: {len(weather_series)}")
-    logger.info(
-        f"  Period: {weather_series[0].datetime.strftime('%Y-%m-%d %H:%M')} → {weather_series[-1].datetime.strftime('%Y-%m-%d %H:%M')}"
-    )
+    start_str = weather_series[0].datetime.strftime("%Y-%m-%d %H:%M")
+    end_str = weather_series[-1].datetime.strftime("%Y-%m-%d %H:%M")
+    logger.info(f"  Period: {start_str} → {end_str}")
     logger.info(f"  Location: {location.latitude:.2f}°N, {location.longitude:.2f}°E")
 
     options = []

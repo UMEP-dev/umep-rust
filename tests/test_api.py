@@ -9,7 +9,6 @@ from datetime import datetime
 
 import numpy as np
 import pytest
-
 from solweig.api import (
     HumanParams,
     Location,
@@ -17,8 +16,8 @@ from solweig.api import (
     SurfaceData,
     Weather,
     calculate,
-    calculate_tiled,
     calculate_buffer_distance,
+    calculate_tiled,
     generate_tiles,
 )
 
@@ -145,9 +144,7 @@ class TestWeather:
     def test_with_optional_fields(self):
         """Weather accepts optional wind speed and pressure."""
         dt_obj = datetime(2024, 7, 15, 12, 0)
-        weather = Weather(
-            datetime=dt_obj, ta=25.0, rh=50.0, global_rad=800.0, ws=3.5, pressure=1020.0
-        )
+        weather = Weather(datetime=dt_obj, ta=25.0, rh=50.0, global_rad=800.0, ws=3.5, pressure=1020.0)
 
         assert weather.ws == 3.5
         assert weather.pressure == 1020.0
@@ -219,16 +216,12 @@ class TestWeather:
         location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
 
         # Noon
-        weather_day = Weather(
-            datetime=datetime(2024, 7, 15, 12, 0), ta=25.0, rh=50.0, global_rad=800.0
-        )
+        weather_day = Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=25.0, rh=50.0, global_rad=800.0)
         weather_day.compute_derived(location)
         assert weather_day.is_daytime is True
 
         # Midnight
-        weather_night = Weather(
-            datetime=datetime(2024, 7, 15, 0, 0), ta=15.0, rh=80.0, global_rad=0.0
-        )
+        weather_night = Weather(datetime=datetime(2024, 7, 15, 0, 0), ta=15.0, rh=80.0, global_rad=0.0)
         weather_night.compute_derived(location)
         assert weather_night.is_daytime is False
 
@@ -249,9 +242,7 @@ class TestHumanParams:
 
     def test_custom_values(self):
         """HumanParams accepts custom values."""
-        human = HumanParams(
-            posture="sitting", abs_k=0.6, abs_l=0.95, age=45, weight=80.0, height=1.80
-        )
+        human = HumanParams(posture="sitting", abs_k=0.6, abs_l=0.95, age=45, weight=80.0, height=1.80)
 
         assert human.posture == "sitting"
         assert human.abs_k == 0.6
@@ -364,7 +355,7 @@ class TestCalculateIntegration:
 
     def test_shadows_exist(self):
         """Shadows are cast by buildings during daytime."""
-# Tall building that should cast shadows
+        # Tall building that should cast shadows
         dsm = np.zeros((40, 40), dtype=np.float32)
         dsm[15:25, 15:25] = 20.0  # 20m building
 
@@ -414,12 +405,8 @@ class TestCalculateIntegration:
         )
 
         # Different postures should give slightly different results
-        result_standing = calculate(
-            surface, location, weather, human=HumanParams(posture="standing")
-        )
-        result_sitting = calculate(
-            surface, location, weather, human=HumanParams(posture="sitting")
-        )
+        result_standing = calculate(surface, location, weather, human=HumanParams(posture="standing"))
+        result_sitting = calculate(surface, location, weather, human=HumanParams(posture="sitting"))
 
         # Results should exist and be valid
         assert result_standing.tmrt is not None
@@ -431,7 +418,7 @@ class TestTiledProcessing:
 
     def test_calculate_buffer_distance_basic(self):
         """Buffer distance scales with building height."""
-# 10m building at 3° sun elevation: buffer = 10 / tan(3°) ≈ 191m
+        # 10m building at 3° sun elevation: buffer = 10 / tan(3°) ≈ 191m
         buffer = calculate_buffer_distance(10.0)
         assert 180 < buffer < 200
 
@@ -454,7 +441,7 @@ class TestTiledProcessing:
 
     def test_generate_tiles_basic(self):
         """generate_tiles creates correct tile specs."""
-# generate_tiles takes rows, cols, tile_size, overlap
+        # generate_tiles takes rows, cols, tile_size, overlap
         tiles = generate_tiles(rows=100, cols=100, tile_size=50, overlap=10)
 
         # 100x100 with tile_size=50 should give 4 tiles (2x2 grid)
@@ -486,7 +473,7 @@ class TestTiledProcessing:
 
     def test_generate_tiles_single_tile(self):
         """Small raster generates single tile."""
-# 30x30 raster smaller than tile_size should give 1 tile
+        # 30x30 raster smaller than tile_size should give 1 tile
         tiles = generate_tiles(rows=30, cols=30, tile_size=256, overlap=10)
 
         assert len(tiles) == 1
@@ -494,7 +481,7 @@ class TestTiledProcessing:
 
     def test_tiled_vs_nontiled_parity(self):
         """Tiled calculation produces same results as non-tiled."""
-# Create a test DSM with a building
+        # Create a test DSM with a building
         dsm = np.zeros((60, 60), dtype=np.float32)
         dsm[20:40, 20:40] = 15.0  # 15m building
 
@@ -523,14 +510,12 @@ class TestTiledProcessing:
         assert max_diff < 0.1, f"Max Tmrt diff {max_diff:.4f}°C exceeds tolerance"
 
         # Compare shadow (should be identical)
-        shadow_match = np.allclose(
-            result_tiled.shadow, result_nontiled.shadow, equal_nan=True
-        )
+        shadow_match = np.allclose(result_tiled.shadow, result_nontiled.shadow, equal_nan=True)
         assert shadow_match, "Shadow grids differ between tiled and non-tiled"
 
     def test_calculate_tiled_with_building(self):
         """Tiled calculation handles buildings correctly."""
-# DSM with a tall building that casts shadows
+        # DSM with a tall building that casts shadows
         dsm = np.zeros((80, 80), dtype=np.float32)
         dsm[30:50, 30:50] = 20.0  # 20m building
 
@@ -558,7 +543,7 @@ class TestTiledProcessing:
 
     def test_calculate_tiled_fallback_to_nontiled(self):
         """Small rasters fall back to non-tiled calculation."""
-# Small DSM that fits in a single tile
+        # Small DSM that fits in a single tile
         dsm = np.ones((40, 40), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0)
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
@@ -602,7 +587,7 @@ class TestPreprocessing:
         """CDSM is boosted to absolute height using DEM as base."""
         dsm = np.ones((10, 10), dtype=np.float32) * 110.0  # DSM includes building
         dem = np.ones((10, 10), dtype=np.float32) * 100.0  # Ground level
-        cdsm = np.ones((10, 10), dtype=np.float32) * 8.0   # 8m relative veg height
+        cdsm = np.ones((10, 10), dtype=np.float32) * 8.0  # 8m relative veg height
 
         surface = SurfaceData(dsm=dsm, cdsm=cdsm, dem=dem)
         surface.preprocess()
@@ -613,7 +598,7 @@ class TestPreprocessing:
     def test_cdsm_boosting_without_dem(self):
         """CDSM is boosted using DSM as base when DEM not provided."""
         dsm = np.ones((10, 10), dtype=np.float32) * 105.0
-        cdsm = np.ones((10, 10), dtype=np.float32) * 6.0   # 6m relative veg height
+        cdsm = np.ones((10, 10), dtype=np.float32) * 6.0  # 6m relative veg height
 
         surface = SurfaceData(dsm=dsm, cdsm=cdsm)
         surface.preprocess()
@@ -632,8 +617,8 @@ class TestPreprocessing:
 
         # Values below 0.1m should be zeroed
         assert surface.cdsm[0, 0] == 0.0  # Was 0.05, below threshold
-        assert surface.cdsm[0, 1] > 0.0   # Was 0.5, above threshold
-        assert surface.cdsm[1, 0] > 0.0   # Was 1.0, above threshold
+        assert surface.cdsm[0, 1] > 0.0  # Was 0.5, above threshold
+        assert surface.cdsm[1, 0] > 0.0  # Was 1.0, above threshold
         assert surface.cdsm[1, 1] == 0.0  # Was 0.0, below threshold
 
     def test_preprocess_idempotent(self):

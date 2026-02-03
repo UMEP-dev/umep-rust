@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
-from zipfile import ZipFile
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
@@ -98,6 +97,37 @@ class SvfArrays:
         return np.clip(self.svf + self.svf_veg - 1.0, 0.0, 1.0)
 
     @classmethod
+    def from_bundle(cls, bundle) -> SvfArrays:
+        """
+        Create SvfArrays from a SvfBundle (computation result).
+
+        This enables caching fresh-computed SVF back to surface.svf for reuse.
+
+        Args:
+            bundle: SvfBundle from resolve_svf() or skyview.calculate_svf()
+
+        Returns:
+            SvfArrays instance suitable for caching on SurfaceData.svf
+        """
+        return cls(
+            svf=bundle.svf,
+            svf_north=bundle.svf_directional.north,
+            svf_east=bundle.svf_directional.east,
+            svf_south=bundle.svf_directional.south,
+            svf_west=bundle.svf_directional.west,
+            svf_veg=bundle.svf_veg,
+            svf_veg_north=bundle.svf_veg_directional.north,
+            svf_veg_east=bundle.svf_veg_directional.east,
+            svf_veg_south=bundle.svf_veg_directional.south,
+            svf_veg_west=bundle.svf_veg_directional.west,
+            svf_aveg=bundle.svf_aveg,
+            svf_aveg_north=bundle.svf_aveg_directional.north,
+            svf_aveg_east=bundle.svf_aveg_directional.east,
+            svf_aveg_south=bundle.svf_aveg_directional.south,
+            svf_aveg_west=bundle.svf_aveg_directional.west,
+        )
+
+    @classmethod
     def from_zip(cls, zip_path: str | Path, use_vegetation: bool = True) -> SvfArrays:
         """
         Load SVF arrays from SOLWEIG svfs.zip format.
@@ -116,7 +146,7 @@ class SvfArrays:
         import tempfile
         import zipfile
 
-        from . import io as common
+        from .. import io as common
 
         zip_path = Path(zip_path)
         if not zip_path.exists():
@@ -213,9 +243,21 @@ class SvfArrays:
 
         # Save each array as .npy file
         array_names = [
-            "svf", "svf_north", "svf_east", "svf_south", "svf_west",
-            "svf_veg", "svf_veg_north", "svf_veg_east", "svf_veg_south", "svf_veg_west",
-            "svf_aveg", "svf_aveg_north", "svf_aveg_east", "svf_aveg_south", "svf_aveg_west",
+            "svf",
+            "svf_north",
+            "svf_east",
+            "svf_south",
+            "svf_west",
+            "svf_veg",
+            "svf_veg_north",
+            "svf_veg_east",
+            "svf_veg_south",
+            "svf_veg_west",
+            "svf_aveg",
+            "svf_aveg_north",
+            "svf_aveg_east",
+            "svf_aveg_south",
+            "svf_aveg_west",
         ]
 
         for name in array_names:
@@ -226,7 +268,7 @@ class SvfArrays:
         return directory
 
     @classmethod
-    def from_memmap(cls, directory: str | Path, mode: str = "r") -> "SvfArrays":
+    def from_memmap(cls, directory: str | Path, mode: Literal["r", "r+", "c"] = "r") -> SvfArrays:
         """
         Load SVF arrays as memory-mapped files for efficient large-raster processing.
 
@@ -423,7 +465,6 @@ class ShadowArrays:
         )
 
 
-
 @dataclass
 class PrecomputedData:
     """
@@ -505,7 +546,7 @@ class PrecomputedData:
             # Nothing prepared (all computed on-the-fly)
             precomputed = PrecomputedData.prepare()
         """
-        from . import io
+        from .. import io
 
         wall_height_arr = None
         wall_aspect_arr = None
@@ -555,5 +596,3 @@ class PrecomputedData:
             svf=svf_arrays,
             shadow_matrices=shadow_arrays,
         )
-
-

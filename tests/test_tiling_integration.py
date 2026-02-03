@@ -4,13 +4,13 @@ These tests use larger synthetic rasters to actually exercise multi-tile
 processing rather than falling back to single-tile mode.
 """
 
-import numpy as np
-import pytest
 from datetime import datetime
 
+import numpy as np
+import pytest
 from solweig import (
-    SurfaceData,
     Location,
+    SurfaceData,
     Weather,
     calculate,
     calculate_tiled,
@@ -41,7 +41,7 @@ class TestMultiTileProcessing:
         for _ in range(15):
             x, y = np.random.randint(50, size - 50, 2)
             w, h = np.random.randint(15, 30, 2)
-            dsm[y:y+h, x:x+w] = 15.0  # 5m above ground
+            dsm[y : y + h, x : x + w] = 15.0  # 5m above ground
 
         # Create land cover (grass=5, buildings=2)
         land_cover = np.ones((size, size), dtype=np.int32) * 5
@@ -74,6 +74,7 @@ class TestMultiTileProcessing:
     def test_multitile_actually_tiles(self, large_urban_surface, location_gothenburg, weather_noon, caplog):
         """Verify that large raster is actually processed in multiple tiles."""
         import logging
+
         caplog.set_level(logging.INFO)
 
         # With 5m buildings: buffer ≈ 95m = 95px
@@ -88,8 +89,9 @@ class TestMultiTileProcessing:
 
         # Check that tiled processing was used (not fallback)
         log_lower = caplog.text.lower()
-        assert "tiled processing" in log_lower and "tiles" in log_lower, \
+        assert "tiled processing" in log_lower and "tiles" in log_lower, (
             f"Expected tiled processing message, got: {caplog.text}"
+        )
 
         # Verify output shape matches input
         assert result.tmrt.shape == large_urban_surface.shape
@@ -112,7 +114,7 @@ class TestMultiTileProcessing:
         # Add a few small buildings
         for _ in range(5):
             x, y = np.random.randint(50, size - 50, 2)
-            dsm[y:y+20, x:x+20] = 15.0
+            dsm[y : y + 20, x : x + 20] = 15.0
 
         surface = SurfaceData(dsm=dsm, pixel_size=2.0)  # 2m pixels = 800m extent
 
@@ -124,7 +126,9 @@ class TestMultiTileProcessing:
         # So tile_size=256 with buffer 143 means core is only 113px, which is too small
         # Use tile_size=512 to ensure meaningful core
         result_tiled = calculate_tiled(
-            surface, location_gothenburg, weather_noon,
+            surface,
+            location_gothenburg,
+            weather_noon,
             tile_size=512,
         )
 
@@ -149,7 +153,9 @@ class TestMultiTileProcessing:
         surface = SurfaceData(dsm=dsm, pixel_size=1.0)
 
         result = calculate_tiled(
-            surface, location_gothenburg, weather_noon,
+            surface,
+            location_gothenburg,
+            weather_noon,
             tile_size=256,
         )
 
@@ -166,7 +172,7 @@ class TestMultiTileProcessing:
         def track_progress(tile_idx, total_tiles):
             progress_calls.append((tile_idx, total_tiles))
 
-        result = calculate_tiled(
+        _result = calculate_tiled(
             large_urban_surface,
             location_gothenburg,
             weather_noon,
@@ -197,7 +203,9 @@ class TestTilingMemoryBehavior:
         location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
-            ta=25.0, rh=50.0, global_rad=800.0,
+            ta=25.0,
+            rh=50.0,
+            global_rad=800.0,
         )
 
         _ = calculate_tiled(surface, location, weather, tile_size=256)

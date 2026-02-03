@@ -9,9 +9,7 @@ import math
 
 import numpy as np
 import pytest
-
 from solweig import rustalgos
-
 
 # =============================================================================
 # Test Fixtures
@@ -97,7 +95,7 @@ class TestShadowProperties:
         for i in range(len(altitudes) - 1):
             assert shadow_areas[i] < shadow_areas[i + 1], (
                 f"Shadow at {altitudes[i]}° ({shadow_areas[i]}) should be less than "
-                f"at {altitudes[i+1]}° ({shadow_areas[i+1]})"
+                f"at {altitudes[i + 1]}° ({shadow_areas[i + 1]})"
             )
 
     def test_property_4_shadows_opposite_sun_south(self):
@@ -152,10 +150,7 @@ class TestShadowProperties:
         shadow_north = shadow[:50, 45:55]
         shadow_rows = np.where(np.any(shadow_north > 0, axis=1))[0]
 
-        if len(shadow_rows) > 0:
-            measured_length = 50 - shadow_rows[0]
-        else:
-            measured_length = 0
+        measured_length = 50 - shadow_rows[0] if len(shadow_rows) > 0 else 0
 
         tolerance = expected_length * 0.15 + 3  # 15% or 3 pixels
         assert abs(measured_length - expected_length) <= tolerance, (

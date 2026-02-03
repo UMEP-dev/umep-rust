@@ -9,21 +9,19 @@ ta and rh are scalars applied to the whole grid.
 
 import numpy as np
 import pytest
-
 from solweig.rustalgos import pet
-
 
 # =============================================================================
 # Test Fixtures - Default Human Parameters
 # =============================================================================
 
 DEFAULT_PERSON = {
-    "mbody": 75.0,    # kg
-    "age": 35,        # years
-    "height": 1.75,   # m
-    "activity": 80.0, # W/m² (light walking)
-    "clo": 0.9,       # clothing insulation
-    "sex": 1,         # 1=male
+    "mbody": 75.0,  # kg
+    "age": 35,  # years
+    "height": 1.75,  # m
+    "activity": 80.0,  # W/m² (light walking)
+    "clo": 0.9,  # clothing insulation
+    "sex": 1,  # 1=male
 }
 
 
@@ -32,7 +30,10 @@ def calculate_pet(ta, rh, tmrt, va, person=None):
     if person is None:
         person = DEFAULT_PERSON
     return pet.pet_calculate(
-        ta, rh, tmrt, va,
+        ta,
+        rh,
+        tmrt,
+        va,
         person["mbody"],
         person["age"],
         person["height"],
@@ -80,9 +81,7 @@ class TestPetProperties:
         result = calculate_pet(ta, rh, tmrt, va)
 
         # In reference conditions, PET should be close to Ta
-        assert abs(result - ta) < 5.0, (
-            f"PET ({result:.1f}) should be close to Ta ({ta}) in reference conditions"
-        )
+        assert abs(result - ta) < 5.0, f"PET ({result:.1f}) should be close to Ta ({ta}) in reference conditions"
 
     def test_property_3_higher_tmrt_higher_pet(self):
         """Property 3: Higher Tmrt → higher PET."""
@@ -96,9 +95,7 @@ class TestPetProperties:
         # Sunlit (high Tmrt)
         pet_sun = calculate_pet(ta, rh, tmrt=ta + 30, va=va)
 
-        assert pet_sun > pet_shade, (
-            f"Sunlit PET ({pet_sun:.1f}) should be > shaded ({pet_shade:.1f})"
-        )
+        assert pet_sun > pet_shade, f"Sunlit PET ({pet_sun:.1f}) should be > shaded ({pet_shade:.1f})"
 
     def test_property_5_activity_increases_pet(self):
         """Property 5: Higher activity → higher PET in warm conditions."""
@@ -116,9 +113,7 @@ class TestPetProperties:
         pet_active = calculate_pet(ta, rh, tmrt, va, active_person)
 
         # Higher activity should increase heat stress (higher PET)
-        assert pet_active > pet_rest, (
-            f"Active PET ({pet_active:.1f}) should be > resting ({pet_rest:.1f})"
-        )
+        assert pet_active > pet_rest, f"Active PET ({pet_active:.1f}) should be > resting ({pet_rest:.1f})"
 
     def test_property_8_wind_generally_reduces_pet(self):
         """Property 8: Wind generally reduces PET."""
@@ -132,9 +127,7 @@ class TestPetProperties:
         # Windy
         pet_windy = calculate_pet(ta, rh, tmrt, va=5.0)
 
-        assert pet_windy < pet_calm, (
-            f"Wind should reduce PET: calm={pet_calm:.1f}, windy={pet_windy:.1f}"
-        )
+        assert pet_windy < pet_calm, f"Wind should reduce PET: calm={pet_calm:.1f}, windy={pet_windy:.1f}"
 
 
 class TestPetComfortCategories:
@@ -162,9 +155,7 @@ class TestPetComfortCategories:
         result = calculate_pet(ta, rh, tmrt, va)
 
         # Comfort zone is 18-23°C for PET
-        assert 15 <= result <= 30, (
-            f"Comfortable conditions should give PET near comfort range, got {result:.1f}"
-        )
+        assert 15 <= result <= 30, f"Comfortable conditions should give PET near comfort range, got {result:.1f}"
 
     def test_cold_conditions(self):
         """PET should indicate cold stress in cold conditions."""
@@ -194,7 +185,10 @@ class TestPetGrid:
         va = np.full(shape, 1.0, dtype=np.float32)
 
         result = pet.pet_grid(
-            ta, rh, tmrt, va,
+            ta,
+            rh,
+            tmrt,
+            va,
             DEFAULT_PERSON["mbody"],
             DEFAULT_PERSON["age"],
             DEFAULT_PERSON["height"],
@@ -217,7 +211,10 @@ class TestPetGrid:
         va = np.full(shape, 1.0, dtype=np.float32)
 
         result = pet.pet_grid(
-            ta, rh, tmrt, va,
+            ta,
+            rh,
+            tmrt,
+            va,
             DEFAULT_PERSON["mbody"],
             DEFAULT_PERSON["age"],
             DEFAULT_PERSON["height"],
@@ -231,8 +228,7 @@ class TestPetGrid:
         valid_values = result[valid_mask]
         if len(valid_values) > 1:
             np.testing.assert_allclose(
-                valid_values, valid_values[0], rtol=1e-4,
-                err_msg="Uniform inputs should produce uniform output"
+                valid_values, valid_values[0], rtol=1e-4, err_msg="Uniform inputs should produce uniform output"
             )
 
 

@@ -84,8 +84,7 @@ def _setup_geospatial_backend() -> bool:
             return True
         else:
             raise ImportError(
-                "UMEP_USE_GDAL is set but GDAL could not be imported. "
-                "Install GDAL or unset UMEP_USE_GDAL."
+                "UMEP_USE_GDAL is set but GDAL could not be imported. Install GDAL or unset UMEP_USE_GDAL."
             )
 
     # In OSGeo4W/QGIS: prefer GDAL to avoid DLL conflicts
@@ -128,7 +127,7 @@ GDAL_ENV = _setup_geospatial_backend()
 
 # Now do the actual imports based on the backend
 if GDAL_ENV:
-    from osgeo import gdal, osr
+    from osgeo import gdal
 else:
     import pyproj
     import rasterio
@@ -250,7 +249,7 @@ def rasterise_gdf(gdf, geom_col, ht_col, bbox=None, pixel_size: int = 1):
     # Create a blank array for the raster
     raster = np.zeros((height, width), dtype=np.float32)
     # Burn geometries into the raster
-    shapes = ((geom, value) for geom, value in zip(gdf[geom_col], gdf[ht_col], strict=True))
+    shapes = ((geom, value) for geom, value in zip(gdf[geom_col], gdf[ht_col]))
     raster = rasterize(shapes, out_shape=raster.shape, transform=transform, fill=0, dtype=np.float32)
 
     return raster, transform
@@ -263,7 +262,9 @@ def check_path(path_str: str | Path, make_dir: bool = False) -> Path:
         if make_dir:
             path.parent.mkdir(parents=True, exist_ok=True)
         else:
-            raise OSError(f"Parent directory {path.parent} does not exist for path {path}. Set make_dir=True to create it.")
+            raise OSError(
+                f"Parent directory {path.parent} does not exist for path {path}. Set make_dir=True to create it."
+            )
     if not path.exists() and not path.suffix:
         if make_dir:
             path.mkdir(parents=True, exist_ok=True)
@@ -272,9 +273,7 @@ def check_path(path_str: str | Path, make_dir: bool = False) -> Path:
     return path
 
 
-def _generate_preview_png(
-    data_arr: np.ndarray, out_path: Path, max_size: int = 512, colormap: str = "turbo"
-) -> None:
+def _generate_preview_png(data_arr: np.ndarray, out_path: Path, max_size: int = 512, colormap: str = "turbo") -> None:
     """
     Generate a color PNG preview image from raster data.
 
@@ -342,7 +341,7 @@ def save_raster(
     out_path_str: str,
     data_arr: np.ndarray,
     trf_arr: list[float],
-    crs_wkt: str,
+    crs_wkt: str | None,
     no_data_val: float = -9999,
     coerce_f64_to_f32: bool = True,
     use_cog: bool = True,
@@ -554,12 +553,7 @@ def read_raster_window(path_str: str | Path, window: tuple[slice, slice], band: 
             c_start = col_slice.start if col_slice.start is not None else 0
             c_stop = col_slice.stop if col_slice.stop is not None else src.width
 
-            win = Window(
-                col_off=c_start,
-                row_off=r_start,
-                width=c_stop - c_start,
-                height=r_stop - r_start,
-            )
+            win = Window(c_start, r_start, c_stop - c_start, r_stop - r_start)  # type: ignore[too-many-positional-arguments]
             return src.read(band, window=win)
     else:
         ds = gdal.Open(str(path))
@@ -753,8 +747,8 @@ def create_empty_raster(
             crs=crs,
             transform=trf,
             nodata=nodata,
-        ) as dst:
-            pass  # Just create
+        ):
+            pass  # Just create empty raster
     else:
         driver = gdal.GetDriverByName("GTiff")
         # Map numpy dtype to GDAL type
@@ -792,10 +786,10 @@ def write_raster_window(path_str: str | Path, data: np.ndarray, window: tuple[sl
 
         with rasterio.open(path, "r+") as dst:
             win = Window(
-                col_off=col_slice.start,
-                row_off=row_slice.start,
-                width=col_slice.stop - col_slice.start,
-                height=row_slice.stop - row_slice.start,
+                col_slice.start,  # type: ignore[too-many-positional-arguments]
+                row_slice.start,
+                col_slice.stop - col_slice.start,
+                row_slice.stop - row_slice.start,
             )
             dst.write(data, band, window=win)
     else:
@@ -805,8 +799,6 @@ def write_raster_window(path_str: str | Path, data: np.ndarray, window: tuple[sl
 
         xoff = col_slice.start
         yoff = row_slice.start
-        xsize = col_slice.stop - col_slice.start
-        ysize = row_slice.stop - row_slice.start
 
         ds.GetRasterBand(band).WriteArray(data, xoff, yoff)
         ds = None
@@ -943,9 +935,7 @@ def read_epw(path: str | Path) -> tuple:
     # Create datetime index
     # EPW uses 1-24 hour format where hour N represents the period ending at hour N
     # Keep as-is for pandas (hour 24 will automatically roll to next day at 00:00)
-    df["datetime"] = pd.to_datetime(
-        df[["year", "month", "day", "hour", "minute"]], errors="coerce"
-    )
+    df["datetime"] = pd.to_datetime(df[["year", "month", "day", "hour", "minute"]], errors="coerce")
     df = df.set_index("datetime")
 
     # Keep only essential columns
@@ -965,9 +955,6 @@ def read_epw(path: str | Path) -> tuple:
     if df.empty:
         raise ValueError("EPW file contains no valid data rows")
 
-    logger.info(
-        f"Loaded EPW file: {metadata['city']}, "
-        f"{len(df)} timesteps from {df.index.min()} to {df.index.max()}"
-    )
+    logger.info(f"Loaded EPW file: {metadata['city']}, {len(df)} timesteps from {df.index.min()} to {df.index.max()}")
 
     return df, metadata

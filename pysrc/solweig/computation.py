@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .rustalgos import ground as ground_rust
 from .bundles import LupBundle
 from .components.ground import compute_ground_temperature
 from .components.gvf import compute_gvf
@@ -23,6 +22,7 @@ from .components.shadows import compute_shadows
 from .components.svf_resolution import resolve_svf
 from .components.tmrt import compute_tmrt
 from .constants import KELVIN_OFFSET, SBC
+from .rustalgos import ground as ground_rust
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -305,6 +305,13 @@ def calculate_core(
             psi=shadow_bundle.psi,
             use_veg=use_veg,
         )
+
+    # Cache fresh-computed SVF back to surface for subsequent calculate() calls
+    # This avoids re-computing SVF on every timestep
+    if needs_psi_adjustment and surface.svf is None:
+        from .models.precomputed import SvfArrays
+
+        surface.svf = SvfArrays.from_bundle(svf_bundle)
 
     # Step 3: Ground Temperature Model (TgMaps with land cover parameterization)
     ground_bundle = compute_ground_temperature(

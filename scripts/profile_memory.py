@@ -9,7 +9,6 @@ Usage:
 """
 
 import argparse
-import sys
 import tracemalloc
 from datetime import datetime
 
@@ -42,7 +41,7 @@ def create_synthetic_surface(size: int):
         x, y = np.random.randint(10, size - 10, 2)
         w, h = np.random.randint(5, 15, 2)
         height = np.random.uniform(15, 40)
-        dsm[y:y+h, x:x+w] = height
+        dsm[y : y + h, x : x + w] = height
 
     # Create vegetation DSM (relative heights)
     cdsm = np.zeros((size, size), dtype=np.float32)
@@ -52,20 +51,15 @@ def create_synthetic_surface(size: int):
         if dsm[y, x] < 12:  # Only place trees on ground
             r = np.random.randint(2, 5)
             h = np.random.uniform(3, 8)
-            y1, y2 = max(0, y-r), min(size, y+r)
-            x1, x2 = max(0, x-r), min(size, x+r)
+            y1, y2 = max(0, y - r), min(size, y + r)
+            x1, x2 = max(0, x - r), min(size, x + r)
             cdsm[y1:y2, x1:x2] = np.maximum(cdsm[y1:y2, x1:x2], h)
 
     # Create land cover (integer array)
     land_cover = np.ones((size, size), dtype=np.int32) * 5  # Default grass
     land_cover[dsm > 12] = 2  # Buildings (ID 2 in UMEP standard)
 
-    surface = SurfaceData(
-        dsm=dsm,
-        cdsm=cdsm,
-        land_cover=land_cover,
-        pixel_size=1.0
-    )
+    surface = SurfaceData(dsm=dsm, cdsm=cdsm, land_cover=land_cover, pixel_size=1.0)
 
     location = Location(latitude=37.98, longitude=23.73)  # Athens
 
@@ -86,13 +80,7 @@ def profile_calculation(size: int) -> dict:
     after_surface = tracemalloc.get_traced_memory()
 
     # Create weather for noon
-    weather = Weather(
-        datetime=datetime(2024, 7, 21, 12, 0),
-        ta=30.0,
-        rh=50.0,
-        global_rad=800.0,
-        ws=2.0
-    )
+    weather = Weather(datetime=datetime(2024, 7, 21, 12, 0), ta=30.0, rh=50.0, global_rad=800.0, ws=2.0)
 
     # Run calculation
     result = calculate(surface, location, weather)
@@ -129,21 +117,21 @@ def main():
 
     results = []
     for size in sizes:
-        print(f"\nTesting {size}x{size} grid ({size*size:,} pixels)...")
+        print(f"\nTesting {size}x{size} grid ({size * size:,} pixels)...")
         try:
             result = profile_calculation(size)
             results.append(result)
 
-            print(f"  Surface creation:")
+            print("  Surface creation:")
             print(f"    Current: {format_size(result['surface_current'])}")
             print(f"    Peak:    {format_size(result['surface_peak'])}")
-            print(f"  After calculation:")
+            print("  After calculation:")
             print(f"    Current: {format_size(result['calc_current'])}")
             print(f"    Peak:    {format_size(result['calc_peak'])}")
             print(f"  Tmrt mean: {result['tmrt_mean']:.1f}°C")
 
             # Estimate bytes per pixel
-            bytes_per_pixel = result['calc_peak'] / (size * size)
+            bytes_per_pixel = result["calc_peak"] / (size * size)
             print(f"  Peak memory per pixel: {bytes_per_pixel:.1f} bytes")
 
         except MemoryError:
@@ -161,13 +149,13 @@ def main():
         print(f"{'Size':>8} {'Pixels':>12} {'Peak Mem':>12} {'Per Pixel':>12}")
         print("-" * 46)
         for r in results:
-            bpp = r['calc_peak'] / r['pixels']
+            bpp = r["calc_peak"] / r["pixels"]
             print(f"{r['size']:>8} {r['pixels']:>12,} {format_size(r['calc_peak']):>12} {bpp:>10.1f} B")
 
         # Extrapolate to 10k x 10k
         if len(results) >= 2:
             last = results[-1]
-            bpp = last['calc_peak'] / last['pixels']
+            bpp = last["calc_peak"] / last["pixels"]
             est_10k = bpp * 10000 * 10000
             print(f"\nEstimated memory for 10k×10k: {format_size(est_10k)}")
 

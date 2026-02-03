@@ -8,10 +8,15 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import numpy as np
+from affine import Affine as AffineClass
 
+from .. import io
+from .. import walls as walls_module
 from ..config import get_lc_properties_from_params
 from ..logging import get_logger
+from ..rustalgos import skyview
 from ..utils import extract_bounds, intersect_bounds, resample_to_grid
+from .precomputed import SvfArrays
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -215,9 +220,7 @@ class SurfaceData:
 
         # Load preprocessing data (walls, SVF)
         working_path = Path(working_dir)
-        preprocess_data = cls._load_preprocessing_data(
-            wall_height, wall_aspect, svf_dir, working_path, force_recompute
-        )
+        preprocess_data = cls._load_preprocessing_data(wall_height, wall_aspect, svf_dir, working_path, force_recompute)
 
         # Compute extent, validate bbox, and resample all rasters
         aligned_rasters = cls._align_rasters(
@@ -255,9 +258,7 @@ class SurfaceData:
         return surface_data
 
     @staticmethod
-    def _load_and_validate_dsm(
-        dsm: str | Path, pixel_size: float | None
-    ) -> tuple:
+    def _load_and_validate_dsm(dsm: str | Path, pixel_size: float | None) -> tuple:
         """
         Load DSM raster and validate CRS.
 
@@ -452,7 +453,7 @@ class SurfaceData:
             # Prefer memmap (more efficient for large rasters)
             if memmap_dir.exists() and (memmap_dir / "svf.npy").exists():
                 svf_data = SvfArrays.from_memmap(memmap_dir)
-                logger.info(f"  ✓ SVF loaded from memmap (memory-efficient)")
+                logger.info("  ✓ SVF loaded from memmap (memory-efficient)")
                 return svf_data
             elif svf_zip_path.exists():
                 svf_data = SvfArrays.from_zip(str(svf_zip_path))
@@ -539,24 +540,15 @@ class SurfaceData:
             bounds_list.append(extract_bounds(terrain_rasters["dem_transform"], terrain_rasters["dem_arr"].shape))
         if terrain_rasters["tdsm_arr"] is not None and terrain_rasters["tdsm_transform"] is not None:
             bounds_list.append(extract_bounds(terrain_rasters["tdsm_transform"], terrain_rasters["tdsm_arr"].shape))
-        if (
-            terrain_rasters["land_cover_arr"] is not None
-            and terrain_rasters["land_cover_transform"] is not None
-        ):
+        if terrain_rasters["land_cover_arr"] is not None and terrain_rasters["land_cover_transform"] is not None:
             bounds_list.append(
                 extract_bounds(terrain_rasters["land_cover_transform"], terrain_rasters["land_cover_arr"].shape)
             )
-        if (
-            preprocess_data["wall_height_arr"] is not None
-            and preprocess_data["wall_height_transform"] is not None
-        ):
+        if preprocess_data["wall_height_arr"] is not None and preprocess_data["wall_height_transform"] is not None:
             bounds_list.append(
                 extract_bounds(preprocess_data["wall_height_transform"], preprocess_data["wall_height_arr"].shape)
             )
-        if (
-            preprocess_data["wall_aspect_arr"] is not None
-            and preprocess_data["wall_aspect_transform"] is not None
-        ):
+        if preprocess_data["wall_aspect_arr"] is not None and preprocess_data["wall_aspect_transform"] is not None:
             bounds_list.append(
                 extract_bounds(preprocess_data["wall_aspect_transform"], preprocess_data["wall_aspect_arr"].shape)
             )
@@ -634,10 +626,7 @@ class SurfaceData:
                     method="bilinear",
                     src_crs=dsm_crs,
                 )
-            if (
-                terrain_rasters["land_cover_arr"] is not None
-                and terrain_rasters["land_cover_transform"] is not None
-            ):
+            if terrain_rasters["land_cover_arr"] is not None and terrain_rasters["land_cover_transform"] is not None:
                 # Use nearest neighbor for categorical data
                 terrain_rasters["land_cover_arr"], _ = resample_to_grid(
                     terrain_rasters["land_cover_arr"],
@@ -649,10 +638,7 @@ class SurfaceData:
                 )
 
             # Resample preprocessing data
-            if (
-                preprocess_data["wall_height_arr"] is not None
-                and preprocess_data["wall_height_transform"] is not None
-            ):
+            if preprocess_data["wall_height_arr"] is not None and preprocess_data["wall_height_transform"] is not None:
                 preprocess_data["wall_height_arr"], _ = resample_to_grid(
                     preprocess_data["wall_height_arr"],
                     preprocess_data["wall_height_transform"],
@@ -661,10 +647,7 @@ class SurfaceData:
                     method="bilinear",
                     src_crs=dsm_crs,
                 )
-            if (
-                preprocess_data["wall_aspect_arr"] is not None
-                and preprocess_data["wall_aspect_transform"] is not None
-            ):
+            if preprocess_data["wall_aspect_arr"] is not None and preprocess_data["wall_aspect_transform"] is not None:
                 preprocess_data["wall_aspect_arr"], _ = resample_to_grid(
                     preprocess_data["wall_aspect_arr"],
                     preprocess_data["wall_aspect_transform"],
@@ -777,8 +760,6 @@ class SurfaceData:
             aligned_rasters: Dictionary with aligned raster data.
             working_path: Working directory for caching.
         """
-        from .. import io, walls as walls_module
-        from affine import Affine as AffineClass
 
         logger.info("Computing walls from DSM and caching to working_dir...")
         walls_cache_dir = working_path / "walls"
@@ -832,88 +813,89 @@ class SurfaceData:
             working_path: Working directory for caching.
             trunk_ratio: Trunk ratio for SVF computation.
         """
-        from .. import io, svf as svf_module
-        from .precomputed import ShadowArrays, SvfArrays
-        from affine import Affine as AffineClass
 
-        if aligned_rasters["tdsm_arr"] is not None:
-            logger.info("Computing SVF from DSM/CDSM/TDSM and caching to working_dir...")
-        else:
-            logger.info("Computing SVF from DSM/CDSM and caching to working_dir...")
-        svf_cache_dir = working_path / "svf"
-
-        # Save resampled DSM if not already saved
-        resampled_dir = working_path / "resampled"
-        resampled_dir.mkdir(parents=True, exist_ok=True)
-        resampled_dsm_path = resampled_dir / "dsm_resampled.tif"
-
-        dsm_transform = aligned_rasters["dsm_transform"]
         dsm_arr = aligned_rasters["dsm_arr"]
+        cdsm_arr = aligned_rasters["cdsm_arr"]
+        tdsm_arr = aligned_rasters["tdsm_arr"]
+        pixel_size = aligned_rasters.get("pixel_size", 1.0)
 
-        if not resampled_dsm_path.exists():
-            io.save_raster(
-                str(resampled_dsm_path),
-                dsm_arr,
-                list(dsm_transform.to_gdal()) if isinstance(dsm_transform, AffineClass) else dsm_transform,
-                aligned_rasters["dsm_crs"],
-            )
+        use_veg = cdsm_arr is not None
+        if use_veg:
+            logger.info("Computing SVF from DSM/CDSM/TDSM...")
+        else:
+            logger.info("Computing SVF from DSM...")
 
-        # Save resampled CDSM if present
-        resampled_cdsm_path = None
-        if aligned_rasters["cdsm_arr"] is not None:
-            resampled_cdsm_path = resampled_dir / "cdsm_resampled.tif"
-            io.save_raster(
-                str(resampled_cdsm_path),
-                aligned_rasters["cdsm_arr"],
-                list(dsm_transform.to_gdal()) if isinstance(dsm_transform, AffineClass) else dsm_transform,
-                aligned_rasters["dsm_crs"],
-            )
+        # Prepare vegetation arrays (Rust requires all three or none)
+        if use_veg:
+            cdsm_for_svf = cdsm_arr.astype(np.float32)
+            # Auto-generate TDSM if not provided
+            if tdsm_arr is not None:
+                tdsm_for_svf = tdsm_arr.astype(np.float32)
+            else:
+                tdsm_for_svf = (cdsm_arr * trunk_ratio).astype(np.float32)
+        else:
+            cdsm_for_svf = np.zeros_like(dsm_arr, dtype=np.float32)
+            tdsm_for_svf = np.zeros_like(dsm_arr, dtype=np.float32)
 
-        # Save resampled TDSM if present (user-provided)
-        resampled_tdsm_path = None
-        if aligned_rasters["tdsm_arr"] is not None:
-            resampled_tdsm_path = resampled_dir / "tdsm_resampled.tif"
-            io.save_raster(
-                str(resampled_tdsm_path),
-                aligned_rasters["tdsm_arr"],
-                list(dsm_transform.to_gdal()) if isinstance(dsm_transform, AffineClass) else dsm_transform,
-                aligned_rasters["dsm_crs"],
-            )
+        # Compute max height for SVF calculation
+        max_height = float(np.nanmax(dsm_arr))
+        if use_veg and cdsm_arr is not None:
+            veg_max = float(np.nanmax(cdsm_arr))
+            max_height = max(max_height, veg_max)
 
-        # Generate SVF using the svf module
-        minx, miny, maxx, maxy = extract_bounds(dsm_transform, dsm_arr.shape)
-        resampled_bbox = [int(minx), int(miny), int(maxx), int(maxy)]
-
-        svf_module.generate_svf(
-            dsm_path=str(resampled_dsm_path),
-            bbox=resampled_bbox,
-            out_dir=str(svf_cache_dir),
-            cdsm_path=str(resampled_cdsm_path) if resampled_cdsm_path else None,
-            tdsm_path=str(resampled_tdsm_path) if resampled_tdsm_path else None,
-            trans_veg_perc=3.0,  # Default parameter
-            trunk_ratio_perc=trunk_ratio * 100,  # Match prepare() trunk_ratio
+        # Compute SVF using Rust module
+        svf_result = skyview.calculate_svf(
+            dsm_arr.astype(np.float32),
+            cdsm_for_svf,
+            tdsm_for_svf,
+            pixel_size,
+            use_veg,
+            max_height,
+            2,  # patch_option (153 patches)
+            3.0,  # min_sun_elev_deg
+            None,  # progress callback
         )
 
-        # Load the generated SVF back into surface_data
-        svf_zip_path = svf_cache_dir / "svfs.zip"
-        shadow_npz_path = svf_cache_dir / "shadowmats.npz"
+        # Create SvfArrays from result
+        svf_data = SvfArrays(
+            svf=np.array(svf_result.svf),
+            svf_north=np.array(svf_result.svf_north),
+            svf_east=np.array(svf_result.svf_east),
+            svf_south=np.array(svf_result.svf_south),
+            svf_west=np.array(svf_result.svf_west),
+            svf_veg=np.array(svf_result.svf_veg) if use_veg else np.ones_like(dsm_arr, dtype=np.float32),
+            svf_veg_north=np.array(svf_result.svf_veg_north) if use_veg else np.ones_like(dsm_arr, dtype=np.float32),
+            svf_veg_east=np.array(svf_result.svf_veg_east) if use_veg else np.ones_like(dsm_arr, dtype=np.float32),
+            svf_veg_south=np.array(svf_result.svf_veg_south) if use_veg else np.ones_like(dsm_arr, dtype=np.float32),
+            svf_veg_west=np.array(svf_result.svf_veg_west) if use_veg else np.ones_like(dsm_arr, dtype=np.float32),
+            svf_aveg=np.array(svf_result.svf_veg_blocks_bldg_sh)
+            if use_veg
+            else np.ones_like(dsm_arr, dtype=np.float32),
+            svf_aveg_north=np.array(svf_result.svf_veg_blocks_bldg_sh_north)
+            if use_veg
+            else np.ones_like(dsm_arr, dtype=np.float32),
+            svf_aveg_east=np.array(svf_result.svf_veg_blocks_bldg_sh_east)
+            if use_veg
+            else np.ones_like(dsm_arr, dtype=np.float32),
+            svf_aveg_south=np.array(svf_result.svf_veg_blocks_bldg_sh_south)
+            if use_veg
+            else np.ones_like(dsm_arr, dtype=np.float32),
+            svf_aveg_west=np.array(svf_result.svf_veg_blocks_bldg_sh_west)
+            if use_veg
+            else np.ones_like(dsm_arr, dtype=np.float32),
+        )
 
-        if svf_zip_path.exists():
-            svf_data = SvfArrays.from_zip(str(svf_zip_path))
+        # Cache to working_dir for future reuse
+        svf_cache_dir = working_path / "svf"
+        svf_cache_dir.mkdir(parents=True, exist_ok=True)
 
-            # Also save as memmap for efficient large-raster access
-            memmap_dir = svf_cache_dir / "memmap"
-            svf_data.to_memmap(memmap_dir)
+        # Save as memmap for efficient large-raster access
+        memmap_dir = svf_cache_dir / "memmap"
+        svf_data.to_memmap(memmap_dir)
 
-            surface_data.svf = svf_data
-            logger.info(f"  ✓ SVF computed and cached to {svf_cache_dir}")
-
-            if shadow_npz_path.exists():
-                shadow_data = ShadowArrays.from_npz(str(shadow_npz_path))
-                surface_data.shadow_matrices = shadow_data
-                logger.info("  ✓ Shadow matrices also generated (anisotropic sky enabled)")
-        else:
-            logger.warning("  ⚠ SVF generation completed but files not found")
+        # Store on surface_data for immediate use
+        surface_data.svf = svf_data
+        logger.info(f"  ✓ SVF computed and cached to {svf_cache_dir}")
 
     def preprocess(self) -> None:
         """
@@ -997,7 +979,8 @@ class SurfaceData:
     @property
     def shape(self) -> tuple[int, int]:
         """Return DSM shape (rows, cols)."""
-        return self.dsm.shape
+        rows, cols = self.dsm.shape
+        return (rows, cols)
 
     @property
     def crs(self) -> str | None:
@@ -1027,10 +1010,7 @@ class SurfaceData:
 
         # Also check if CDSM values are typical vegetation heights (0-50m range)
         # while DSM has larger values
-        if cdsm_max < 60 and dsm_min > cdsm_max + 20:
-            return True
-
-        return False
+        return bool(cdsm_max < 60 and dsm_min > cdsm_max + 20)
 
     def _check_preprocessing_needed(self) -> None:
         """
@@ -1041,15 +1021,14 @@ class SurfaceData:
         if self.cdsm is None:
             return
 
-        if self.relative_heights and not self._preprocessed:
-            if self._looks_like_relative_heights():
-                logger.warning(
-                    f"CDSM appears to contain relative vegetation heights "
-                    f"(max CDSM={np.nanmax(self.cdsm):.1f}m < min DSM={np.nanmin(self.dsm):.1f}m), "
-                    f"but preprocess() was not called. "
-                    f"Call surface.preprocess() to convert to absolute heights, "
-                    f"or set relative_heights=False if CDSM already contains absolute elevations."
-                )
+        if self.relative_heights and not self._preprocessed and self._looks_like_relative_heights():
+            logger.warning(
+                f"CDSM appears to contain relative vegetation heights "
+                f"(max CDSM={np.nanmax(self.cdsm):.1f}m < min DSM={np.nanmin(self.dsm):.1f}m), "
+                f"but preprocess() was not called. "
+                f"Call surface.preprocess() to convert to absolute heights, "
+                f"or set relative_heights=False if CDSM already contains absolute elevations."
+            )
 
     def get_land_cover_properties(
         self,

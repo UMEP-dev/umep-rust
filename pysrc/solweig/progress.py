@@ -47,12 +47,13 @@ except ImportError:
     pass
 
 # Check for tqdm
+_tqdm: type | None = None
 try:
     from tqdm import tqdm as _tqdm
 
     _TQDM_AVAILABLE = True
 except ImportError:
-    _tqdm = None
+    pass
 
 
 class ProgressReporter:
@@ -101,7 +102,7 @@ class ProgressReporter:
             return
 
         # Use tqdm if available
-        if _TQDM_AVAILABLE:
+        if _tqdm is not None:
             self._tqdm_bar = _tqdm(total=total, desc=desc)
             return
 

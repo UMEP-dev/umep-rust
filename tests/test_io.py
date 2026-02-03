@@ -2,14 +2,11 @@
 Tests for I/O functionality including EPW parser.
 """
 
-import tempfile
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
-
 from solweig import io
 
 
@@ -21,6 +18,7 @@ class TestEPWParser:
         """Create a minimal valid EPW file content."""
         # EPW header (8 lines) + data
         # Timezone offset must be between -24 and +24 hours (field 8)
+        # EPW data lines must preserve exact format - long lines are intentional
         return """LOCATION,Athens,GRC,NA,Shiny Weather Data,NA,37.90,23.73,2.0,107.0
 DESIGN CONDITIONS,1,Climate Design Data 2009 ASHRAE Handbook,,Heating,1,-2.1,-0.3,0.6,2.8,10.7,2.3,3.5,3.4,12.2,11.2,3.1,11.4,2.5,340,Cooling,8,35.2,23.7,33.2,23.3,31.4,23.0,29.7,24.1,27.2,32.8,26.1,31.1,25.2,29.6,4.2,330,23.5,18.5,27.8,22.7,17.8,27.1,22.0,17.2,26.4,68.2,32.9,64.8,31.2,62.0,29.7,951,Extremes,11.6,10.2,9.0,25.3,-3.9,37.5,2.7,1.7,-5.5,38.9,-7.0,39.9,-8.4,40.8,-10.1,42.2
 TYPICAL/EXTREME PERIODS,6,Summer - Week Nearest Max Temperature For Period,Extreme,7/ 9,7/15,Summer - Week Nearest Average Temperature For Period,Typical,7/30,8/ 5,Winter - Week Nearest Min Temperature For Period,Extreme,1/28,2/ 3,Winter - Week Nearest Average Temperature For Period,Typical,1/21,1/27,Autumn - Week Nearest Average Temperature For Period,Typical,11/11,11/17,Spring - Week Nearest Average Temperature For Period,Typical,4/22,4/28
@@ -145,7 +143,9 @@ class TestRasterIO:
         """Test that UMEP_USE_GDAL environment variable works."""
         # Skip if GDAL is not available
         try:
-            from osgeo import gdal
+            from osgeo import gdal  # noqa: F401
+
+            del gdal  # Silence unused import warning
         except ImportError:
             pytest.skip("GDAL not available")
 

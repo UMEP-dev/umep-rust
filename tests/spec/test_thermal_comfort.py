@@ -11,7 +11,6 @@ References:
 """
 
 import numpy as np
-import pytest
 
 
 class TestUTCIPolynomial:
@@ -86,9 +85,7 @@ class TestUTCIPolynomial:
         utci_sunny = utci_calculator(Ta, RH, 65.0, va)
         utci_shade = utci_calculator(Ta, RH, 40.0, va)
 
-        assert utci_shade < utci_sunny, (
-            f"Shade UTCI ({utci_shade:.1f}) should be less than sun ({utci_sunny:.1f})"
-        )
+        assert utci_shade < utci_sunny, f"Shade UTCI ({utci_shade:.1f}) should be less than sun ({utci_sunny:.1f})"
 
     def test_utci_wind_cooling(self):
         """
@@ -106,8 +103,7 @@ class TestUTCIPolynomial:
         utci_high_wind = utci_calculator(Ta, RH, Tmrt, 5.0)
 
         assert utci_high_wind < utci_low_wind, (
-            f"High wind UTCI ({utci_high_wind:.1f}) should be less than "
-            f"low wind ({utci_low_wind:.1f})"
+            f"High wind UTCI ({utci_high_wind:.1f}) should be less than low wind ({utci_low_wind:.1f})"
         )
 
     def test_utci_humidity_effect(self):
@@ -125,9 +121,7 @@ class TestUTCIPolynomial:
         utci_dry = utci_calculator(Ta, 30.0, Tmrt, va)
         utci_humid = utci_calculator(Ta, 80.0, Tmrt, va)
 
-        assert utci_humid > utci_dry, (
-            f"Humid UTCI ({utci_humid:.1f}) should be greater than dry ({utci_dry:.1f})"
-        )
+        assert utci_humid > utci_dry, f"Humid UTCI ({utci_humid:.1f}) should be greater than dry ({utci_dry:.1f})"
 
     def test_utci_stress_categories(self):
         """
@@ -139,9 +133,7 @@ class TestUTCIPolynomial:
 
         # Test that comfortable conditions give no thermal stress (9-26°C)
         utci_comfort = utci_calculator(22.0, 50.0, 22.0, 1.0)
-        assert 9.0 < utci_comfort < 26.0, (
-            f"Comfortable conditions should give UTCI 9-26°C, got {utci_comfort:.1f}°C"
-        )
+        assert 9.0 < utci_comfort < 26.0, f"Comfortable conditions should give UTCI 9-26°C, got {utci_comfort:.1f}°C"
 
     def test_utci_reference_values(self):
         """
@@ -209,7 +201,7 @@ class TestPETCalculations:
 
     def test_pet_import(self):
         """Verify PET module can be imported."""
-        from solweig.algorithms.PET_calculations import _PET, PET_person
+        from solweig.algorithms.PET_calculations import _PET
 
         assert callable(_PET)
 
@@ -228,12 +220,10 @@ class TestPETCalculations:
         weight = 75.0
 
         # DuBois formula
-        A_body = 0.203 * (weight ** 0.425) * (height ** 0.725)
+        A_body = 0.203 * (weight**0.425) * (height**0.725)
 
         # Expected ~1.90 m² for this person
-        assert 1.85 < A_body < 1.95, (
-            f"DuBois body surface area for 1.75m/75kg should be ~1.90 m², got {A_body:.3f}"
-        )
+        assert 1.85 < A_body < 1.95, f"DuBois body surface area for 1.75m/75kg should be ~1.90 m², got {A_body:.3f}"
 
     def test_pet_neutral_conditions(self):
         """
@@ -260,9 +250,7 @@ class TestPETCalculations:
         pet = _PET(Ta, RH, Tmrt, va, mbody, age, height, activity, clo, sex)
 
         # Comfortable range is 18-23°C
-        assert 15.0 < pet < 28.0, (
-            f"Neutral conditions PET should be comfortable, got {pet:.1f}°C"
-        )
+        assert 15.0 < pet < 28.0, f"Neutral conditions PET should be comfortable, got {pet:.1f}°C"
 
     def test_pet_radiation_effect(self):
         """
@@ -301,9 +289,7 @@ class TestPETCalculations:
         # Comfortable conditions should be 18-23°C
         pet_comfort = _PET(22.0, 50.0, 22.0, 0.5, mbody, age, height, activity, clo, sex)
         # Allow wider range due to activity level
-        assert 15.0 < pet_comfort < 30.0, (
-            f"Comfortable PET should be moderate, got {pet_comfort:.1f}°C"
-        )
+        assert 15.0 < pet_comfort < 30.0, f"Comfortable PET should be moderate, got {pet_comfort:.1f}°C"
 
 
 class TestPETPETComparison:
@@ -363,9 +349,7 @@ class TestPETPETComparison:
 
         # UTCI should be noticeably faster (polynomial vs iterative)
         # Allow some variance, but UTCI should be at least 2x faster typically
-        assert utci_time < pet_time * 5, (
-            f"UTCI ({utci_time:.4f}s) expected faster than PET ({pet_time:.4f}s)"
-        )
+        assert utci_time < pet_time * 5, f"UTCI ({utci_time:.4f}s) expected faster than PET ({pet_time:.4f}s)"
 
 
 class TestThermalComfortDefaults:

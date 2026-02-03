@@ -1,8 +1,6 @@
 """Tests for buffer pool functionality."""
 
 import numpy as np
-import pytest
-
 from solweig.buffers import BufferPool, TimestepBuffers, ensure_float32_inplace
 
 
@@ -218,8 +216,7 @@ class TestBufferPoolPerformance:
         # But we use a generous margin since timing can vary
         # The main benefit is reducing GC pressure, which is hard to measure
         assert pool_time < alloc_time * 10.0, (
-            f"Pool ({pool_time:.4f}s) should not be dramatically slower than "
-            f"allocation ({alloc_time:.4f}s)"
+            f"Pool ({pool_time:.4f}s) should not be dramatically slower than allocation ({alloc_time:.4f}s)"
         )
 
     def test_ensure_float32_avoids_copy_when_possible(self):
@@ -247,7 +244,4 @@ class TestBufferPoolPerformance:
         copy_time = time.perf_counter() - start
 
         # No-copy should be much faster
-        assert no_copy_time < copy_time, (
-            f"No-copy ({no_copy_time:.4f}s) should be faster than "
-            f"copy ({copy_time:.4f}s)"
-        )
+        assert no_copy_time < copy_time, f"No-copy ({no_copy_time:.4f}s) should be faster than copy ({copy_time:.4f}s)"

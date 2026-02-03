@@ -95,7 +95,7 @@ class SolweigResult:
             ...     crs_wkt="EPSG:32633",
             ... )
         """
-        from . import io
+        from .. import io
 
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)

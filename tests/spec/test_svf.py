@@ -6,9 +6,7 @@ Tests derived from specs/svf.md properties.
 
 import numpy as np
 import pytest
-
 from solweig import rustalgos
-
 
 # =============================================================================
 # Test Fixtures
