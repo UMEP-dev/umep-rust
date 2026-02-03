@@ -1,61 +1,108 @@
-# UMEP Core
+# SOLWEIG
 
-## Setup
+High-performance urban microclimate model for computing Mean Radiant Temperature (Tmrt) and thermal comfort indices (UTCI, PET).
 
-- Make sure you have a Python installation on your system
-- Install `vscode` and `github` apps.
-- Install `uv` package manager (e.g. `pip install uv`).
-- Clone repo.
-- Run `uv sync` from the directory where `pyproject.toml` in located to install `.venv` and packages.
-- Select `.venv` Python environment.
-- FYI: Recommended settings and extensions are included in the repo. Proceed if prompted to install extensions.
-- Develop and commit to Github often!
+**Rust + Python** via [maturin](https://github.com/PyO3/maturin) for performance-critical algorithms.
 
-## Demo
+## Installation
 
-See the demo notebook file at [/demo.py](/demo.py).
+```bash
+# Clone and install
+git clone https://github.com/UMEP-dev/solweig.git
+cd solweig
+uv sync                  # Install Python dependencies
+maturin develop          # Build Rust extension
+```
 
-Also, a test with GBG data is found in [/solweig_gbg_test.py](/solweig_gbg_test.py)
+## Quick Start
 
-The demo and the test uses the datasets included in the tests folder
+```python
+import solweig
+from datetime import datetime
 
-## Original code
+# Create surface from DSM array
+surface = solweig.SurfaceData(dsm=my_dsm_array, pixel_size=1.0)
 
-The code reproduced in the `umep` folder is adapted from the original GPLv3-licensed code by Fredrik Lindberg, Ting Sun, Sue Grimmond, Yihao Tang, Nils Wallenberg.
+# Define location and weather
+location = solweig.Location(latitude=57.7, longitude=12.0)
+weather = solweig.Weather(
+    datetime=datetime(2024, 7, 15, 12, 0),
+    ta=25.0,        # Air temperature (°C)
+    rh=50.0,        # Relative humidity (%)
+    global_rad=800.0  # Global radiation (W/m²)
+)
 
-The original code has been modified to work without QGIS to facilitate Python workflows.
+# Calculate Tmrt
+result = solweig.calculate(surface, location, weather)
+print(f"Tmrt: {result.tmrt.mean():.1f}°C")
+```
 
-The original code can be found at: [UMEP-processing](https://github.com/UMEP-dev/UMEP-processing).
+## Loading from GeoTIFFs
 
-This modified code is licensed under the GNU General Public License v3.0.
+```python
+import solweig
 
-See the LICENSE file for details.
+# Load and prepare surface data (auto-computes walls/SVF)
+surface = solweig.SurfaceData.prepare(
+    dsm="data/dsm.tif",
+    working_dir="cache/",       # Walls/SVF cached here
+    cdsm="data/cdsm.tif",       # Optional: vegetation
+)
 
-Please give all credit for UMEP code to the original authors and cite accordingly.
+# Load weather from EPW file
+weather_list = solweig.Weather.from_epw(
+    "data/weather.epw",
+    start="2023-07-01",
+    end="2023-07-03",
+)
 
-© Copyright 2018 - 2020, Fredrik Lindberg, Ting Sun, Sue Grimmond, Yihao Tang, Nils Wallenberg.
+# Calculate timeseries
+results = solweig.calculate_timeseries(
+    surface=surface,
+    weather_series=weather_list,
+    output_dir="output/",
+)
+```
 
-Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel- Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services. Environmental Modelling and Software.99, 70-87 https://doi.org/10.1016/j.envsoft.2017.09.020
+## Post-Processing (UTCI/PET)
 
-## Demo Data
+Thermal comfort indices are computed separately:
 
-Two seprated demo dataset are included
+```python
+# Fast polynomial (~1 second)
+solweig.compute_utci(tmrt_dir="output/", weather_series=weather_list)
 
-### ATENS (vector data)
+# Slower iterative solver (optional)
+solweig.compute_pet(tmrt_dir="output/", weather_series=weather_list)
+```
 
-#### Tree Canopies
+## Demos
 
-Copernicus
+Complete working examples are in the [demos/](demos/) folder:
 
-#### Trees
+- [demos/athens-demo.py](demos/athens-demo.py) - Full workflow with GeoTIFFs
+- [demos/solweig_gbg_test.py](demos/solweig_gbg_test.py) - Gothenburg test data
 
-https://walkable.cityofathens.gr/home
+## Documentation
 
-#### Buildings
+- [Quick Start Guide](docs/getting-started/quick-start.md) - Detailed tutorial
+- [Physics Specifications](specs/) - Scientific documentation
+- [ROADMAP.md](ROADMAP.md) - Development priorities
 
-http://gis.cityofathens.gr/layers/athens_geonode_data:geonode:c40solarmap
+## Build & Test
 
-### Gothenburg (raster data)
+```bash
+maturin develop          # Build Rust extension
+pytest tests/            # Run tests
+poe verify_project       # Full verification (format, lint, test)
+```
 
-Standard dataset used in tutorials (https://umep-docs.readthedocs.io/en/latest/Tutorials.html)
+## Original Code
 
+This package is adapted from the GPLv3-licensed [UMEP-processing](https://github.com/UMEP-dev/UMEP-processing) by Fredrik Lindberg, Ting Sun, Sue Grimmond, Yihao Tang, and Nils Wallenberg.
+
+Licensed under GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
+
+**Citation:**
+
+> Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services. Environmental Modelling and Software 99, 70-87 [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
