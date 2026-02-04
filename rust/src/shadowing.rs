@@ -129,6 +129,24 @@ pub(crate) fn calculate_shadows_rust(
     let num_cols = shape[1];
     let dim = (num_rows, num_cols);
 
+    // Handle zenith case (altitude >= 89.5°): no shadows cast from directly overhead.
+    // This avoids tan(90°) = infinity which breaks the shadow propagation loop.
+    // For SVF calculations, zenith patches represent looking straight up - all points
+    // can see the sky in this direction (no obstruction).
+    if altitude_deg >= 89.5 {
+        return ShadowingResultRust {
+            bldg_sh: Array2::<f32>::ones(dim),
+            veg_sh: Array2::<f32>::ones(dim),
+            veg_blocks_bldg_sh: Array2::<f32>::ones(dim),
+            wall_sh: walls_view_opt.map(|_| Array2::<f32>::zeros(dim)),
+            wall_sun: walls_view_opt.map(|w| w.to_owned()),
+            wall_sh_veg: walls_view_opt.map(|_| Array2::<f32>::zeros(dim)),
+            face_sh: walls_view_opt.map(|_| Array2::<f32>::zeros(dim)),
+            face_sun: walls_view_opt.map(|w| w.mapv(|v| if v > 0.0 { 1.0 } else { 0.0 })),
+            sh_on_wall: walls_scheme_view_opt.map(|_| Array2::<f32>::zeros(dim)),
+        };
+    }
+
     // GPU acceleration path: use GPU if available for all shadow types
     #[cfg(feature = "gpu")]
     {
