@@ -12,6 +12,7 @@ import pytest
 from solweig.api import (
     HumanParams,
     Location,
+    ModelConfig,
     SolweigResult,
     SurfaceData,
     Weather,
@@ -297,6 +298,214 @@ class TestSolweigResult:
         assert result.kdown is not None
         assert result.utci is not None
         assert result.pet is not None
+
+
+class TestSolweigResultMethods:
+    """Tests for SolweigResult.compute_utci() and compute_pet() methods."""
+
+    def test_compute_utci_with_weather_object(self):
+        """compute_utci() works with Weather object."""
+        tmrt = np.ones((10, 10), dtype=np.float32) * 35.0
+        result = SolweigResult(tmrt=tmrt)
+
+        weather = Weather(
+            datetime=datetime(2024, 7, 15, 12, 0),
+            ta=25.0,
+            rh=50.0,
+            global_rad=800.0,
+            ws=2.0,
+        )
+
+        utci = result.compute_utci(weather)
+
+        assert utci.shape == (10, 10)
+        # UTCI should be in reasonable range for these conditions
+        assert np.all(utci > 20) and np.all(utci < 50)
+
+    def test_compute_utci_with_individual_values(self):
+        """compute_utci() works with individual values."""
+        tmrt = np.ones((10, 10), dtype=np.float32) * 35.0
+        result = SolweigResult(tmrt=tmrt)
+
+        utci = result.compute_utci(25.0, rh=50.0, wind=2.0)
+
+        assert utci.shape == (10, 10)
+        assert np.all(utci > 20) and np.all(utci < 50)
+
+    def test_compute_utci_default_wind(self):
+        """compute_utci() uses default wind speed of 1.0 m/s."""
+        tmrt = np.ones((10, 10), dtype=np.float32) * 35.0
+        result = SolweigResult(tmrt=tmrt)
+
+        # No wind provided - should default to 1.0
+        utci = result.compute_utci(25.0, rh=50.0)
+
+        assert utci.shape == (10, 10)
+        assert np.all(np.isfinite(utci))
+
+    def test_compute_utci_requires_rh_with_float(self):
+        """compute_utci() raises ValueError when rh not provided with float ta."""
+        tmrt = np.ones((10, 10), dtype=np.float32) * 35.0
+        result = SolweigResult(tmrt=tmrt)
+
+        with pytest.raises(ValueError, match="rh is required"):
+            result.compute_utci(25.0)
+
+    def test_compute_pet_with_weather_object(self):
+        """compute_pet() works with Weather object."""
+        tmrt = np.ones((5, 5), dtype=np.float32) * 35.0  # Smaller grid for speed
+        result = SolweigResult(tmrt=tmrt)
+
+        weather = Weather(
+            datetime=datetime(2024, 7, 15, 12, 0),
+            ta=25.0,
+            rh=50.0,
+            global_rad=800.0,
+            ws=2.0,
+        )
+
+        pet = result.compute_pet(weather)
+
+        assert pet.shape == (5, 5)
+        # PET should be in reasonable range
+        assert np.all(pet > 10) and np.all(pet < 50)
+
+    def test_compute_pet_with_individual_values(self):
+        """compute_pet() works with individual values."""
+        tmrt = np.ones((5, 5), dtype=np.float32) * 35.0
+        result = SolweigResult(tmrt=tmrt)
+
+        pet = result.compute_pet(25.0, rh=50.0, wind=2.0)
+
+        assert pet.shape == (5, 5)
+        assert np.all(np.isfinite(pet))
+
+    def test_compute_pet_with_custom_human_params(self):
+        """compute_pet() accepts custom HumanParams."""
+        tmrt = np.ones((5, 5), dtype=np.float32) * 35.0
+        result = SolweigResult(tmrt=tmrt)
+
+        weather = Weather(
+            datetime=datetime(2024, 7, 15, 12, 0),
+            ta=25.0,
+            rh=50.0,
+            global_rad=800.0,
+        )
+
+        pet = result.compute_pet(weather, human=HumanParams(weight=60, height=1.60))
+
+        assert pet.shape == (5, 5)
+        assert np.all(np.isfinite(pet))
+
+    def test_compute_pet_requires_rh_with_float(self):
+        """compute_pet() raises ValueError when rh not provided with float ta."""
+        tmrt = np.ones((5, 5), dtype=np.float32) * 35.0
+        result = SolweigResult(tmrt=tmrt)
+
+        with pytest.raises(ValueError, match="rh is required"):
+            result.compute_pet(25.0)
+
+
+class TestConfigPrecedence:
+    """Tests for config precedence - explicit parameters override config values."""
+
+    def test_explicit_anisotropic_overrides_config(self):
+        """Explicit use_anisotropic_sky=False overrides config.use_anisotropic_sky=True."""
+
+        dsm = np.ones((20, 20), dtype=np.float32) * 5.0
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
+        weather = Weather(
+            datetime=datetime(2024, 7, 15, 12, 0),
+            ta=25.0,
+            rh=50.0,
+            global_rad=800.0,
+        )
+
+        # Config says use anisotropic, but explicit param says don't
+        # This should NOT raise MissingPrecomputedData since explicit False wins
+        config = ModelConfig(use_anisotropic_sky=True)
+        result = calculate(
+            surface,
+            location,
+            weather,
+            config=config,
+            use_anisotropic_sky=False,  # Explicit wins
+        )
+
+        assert result.tmrt is not None
+
+    def test_explicit_human_overrides_config(self):
+        """Explicit human params override config.human."""
+
+        dsm = np.ones((20, 20), dtype=np.float32) * 5.0
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
+        weather = Weather(
+            datetime=datetime(2024, 7, 15, 12, 0),
+            ta=25.0,
+            rh=50.0,
+            global_rad=800.0,
+        )
+
+        config_human = HumanParams(posture="sitting", abs_k=0.6)
+        explicit_human = HumanParams(posture="standing", abs_k=0.8)
+
+        config = ModelConfig(human=config_human)
+        result = calculate(
+            surface,
+            location,
+            weather,
+            config=config,
+            human=explicit_human,  # Should use standing, abs_k=0.8
+        )
+
+        # Result should exist (test doesn't crash)
+        assert result.tmrt is not None
+
+    def test_none_param_uses_config_value(self):
+        """When explicit param is None, config value is used."""
+
+        dsm = np.ones((20, 20), dtype=np.float32) * 5.0
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
+        weather = Weather(
+            datetime=datetime(2024, 7, 15, 12, 0),
+            ta=25.0,
+            rh=50.0,
+            global_rad=800.0,
+        )
+
+        config_human = HumanParams(posture="sitting")
+        config = ModelConfig(human=config_human)
+
+        # human=None means use config's human
+        result = calculate(
+            surface,
+            location,
+            weather,
+            config=config,
+            human=None,  # Should fall back to config.human
+        )
+
+        assert result.tmrt is not None
+
+    def test_no_config_uses_defaults(self):
+        """When no config provided, defaults are used."""
+        dsm = np.ones((20, 20), dtype=np.float32) * 5.0
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
+        weather = Weather(
+            datetime=datetime(2024, 7, 15, 12, 0),
+            ta=25.0,
+            rh=50.0,
+            global_rad=800.0,
+        )
+
+        # No config, no explicit params - should use defaults
+        result = calculate(surface, location, weather)
+
+        assert result.tmrt is not None
 
 
 class TestCalculateIntegration:

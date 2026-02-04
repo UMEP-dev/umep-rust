@@ -143,7 +143,14 @@ dsm = np.ones((200, 200), dtype=np.float32) * 10.0
 dsm[50:100, 50:100] = 25.0  # Add a building
 
 surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)
-location = solweig.Location(latitude=37.98, longitude=23.73)
+
+# IMPORTANT: Always specify UTC offset for correct sun position calculations
+location = solweig.Location(
+    latitude=37.98,    # Athens, Greece
+    longitude=23.73,
+    utc_offset=2,      # Eastern European Time (UTC+2)
+)
+
 weather = solweig.Weather(
     datetime=datetime(2024, 7, 15, 12, 0),
     ta=30.0,      # Air temperature (°C)
@@ -154,6 +161,25 @@ weather = solweig.Weather(
 # Calculate (SVF computed on first call, cached for subsequent calls)
 result = solweig.calculate(surface, location, weather)
 print(f"Tmrt: {result.tmrt.mean():.1f}°C")
+
+# Compute thermal comfort indices from the result
+utci = result.compute_utci(weather)  # Fast polynomial
+pet = result.compute_pet(weather)    # Slower iterative solver
+print(f"UTCI: {utci.mean():.1f}°C, PET: {pet.mean():.1f}°C")
+```
+
+### Location from GeoTIFF
+
+When loading data from GeoTIFFs, you can extract the location automatically:
+
+```python
+surface = solweig.SurfaceData.prepare(dsm="data/dsm.tif", working_dir="cache/")
+
+# Auto-extract location from CRS (requires explicit UTC offset!)
+location = solweig.Location.from_surface(surface, utc_offset=2)
+
+# Warning: If you omit utc_offset, it defaults to 0 with a warning
+# This can cause incorrect sun position calculations!
 ```
 
 ## Key Classes
@@ -193,6 +219,24 @@ results = solweig.calculate_timeseries(
     weather_series=weather_list,
     use_anisotropic_sky=True,  # More accurate but slower
 )
+```
+
+## Input Validation
+
+Validate inputs before expensive calculations:
+
+```python
+try:
+    # Preflight check - catches errors before SVF computation
+    warnings = solweig.validate_inputs(surface, location, weather)
+    for w in warnings:
+        print(f"Warning: {w}")
+
+    result = solweig.calculate(surface, location, weather)
+except solweig.GridShapeMismatch as e:
+    print(f"Grid mismatch: {e.field} expected {e.expected}, got {e.got}")
+except solweig.MissingPrecomputedData as e:
+    print(f"Missing data: {e}")
 ```
 
 ## Common Issues

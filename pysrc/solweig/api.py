@@ -31,6 +31,14 @@ from .computation import calculate_core
 
 # Import from extracted modules
 from .config import load_materials, load_params, load_physics
+from .errors import (
+    ConfigurationError,
+    GridShapeMismatch,
+    InvalidSurfaceData,
+    MissingPrecomputedData,
+    SolweigError,
+    WeatherDataError,
+)
 from .metadata import create_run_metadata, load_run_metadata, save_run_metadata
 from .models import (
     HumanParams,
@@ -67,6 +75,112 @@ if TYPE_CHECKING:
     pass
 
 
+def validate_inputs(
+    surface: SurfaceData,
+    location: Location | None = None,
+    weather: Weather | list[Weather] | None = None,
+    use_anisotropic_sky: bool = False,
+    precomputed: PrecomputedData | None = None,
+) -> list[str]:
+    """
+    Validate inputs before calculation (preflight check).
+
+    Call this before expensive operations to catch errors early.
+    Raises exceptions for fatal errors, returns warnings for potential issues.
+
+    Args:
+        surface: Surface data to validate.
+        location: Location to validate (optional).
+        weather: Weather data to validate (optional, can be single or list).
+        use_anisotropic_sky: Whether anisotropic sky will be used.
+        precomputed: Precomputed data to validate.
+
+    Returns:
+        List of warning messages (empty if all valid).
+
+    Raises:
+        GridShapeMismatch: If surface grid shapes don't match DSM.
+        MissingPrecomputedData: If required precomputed data is missing.
+        WeatherDataError: If weather data is invalid.
+
+    Example:
+        try:
+            warnings = solweig.validate_inputs(surface, location, weather)
+            for w in warnings:
+                print(f"Warning: {w}")
+            result = solweig.calculate(surface, location, weather)
+        except solweig.GridShapeMismatch as e:
+            print(f"Grid mismatch: {e.field} expected {e.expected}, got {e.got}")
+        except solweig.MissingPrecomputedData as e:
+            print(f"Missing data: {e}")
+    """
+    warnings = []
+    dsm_shape = surface.dsm.shape
+
+    # Check grid shapes match DSM
+    grids_to_check = [
+        ("cdsm", surface.cdsm),
+        ("dem", surface.dem),
+        ("tdsm", surface.tdsm),
+        ("wall_height", surface.wall_height),
+        ("wall_aspect", surface.wall_aspect),
+        ("land_cover", surface.land_cover),
+        ("albedo", surface.albedo),
+        ("emissivity", surface.emissivity),
+    ]
+    for name, grid in grids_to_check:
+        if grid is not None and grid.shape != dsm_shape:
+            raise GridShapeMismatch(name, dsm_shape, grid.shape)
+
+    # Check SVF arrays if present
+    if surface.svf is not None:
+        svf_grids = [
+            ("svf.svf", surface.svf.svf),
+            ("svf.svf_north", surface.svf.svf_north),
+            ("svf.svf_east", surface.svf.svf_east),
+            ("svf.svf_south", surface.svf.svf_south),
+            ("svf.svf_west", surface.svf.svf_west),
+        ]
+        for name, grid in svf_grids:
+            if grid is not None and grid.shape != dsm_shape:
+                raise GridShapeMismatch(name, dsm_shape, grid.shape)
+
+    # Check anisotropic sky requirements
+    if use_anisotropic_sky:
+        has_shadow_matrices = (precomputed is not None and precomputed.shadow_matrices is not None) or (
+            surface.shadow_matrices is not None
+        )
+        if not has_shadow_matrices:
+            raise MissingPrecomputedData(
+                "shadow_matrices required for anisotropic sky model",
+                "Either set use_anisotropic_sky=False, or provide shadow matrices via "
+                "precomputed=PrecomputedData(shadow_matrices=...) or surface.shadow_matrices",
+            )
+
+    # Check for potential issues (warnings, not errors)
+    if surface.cdsm is not None and not surface._preprocessed and surface.relative_heights:
+        warnings.append(
+            "CDSM provided with relative_heights=True but preprocess() not called. "
+            "Vegetation heights may be incorrect. Call surface.preprocess() first."
+        )
+
+    # Validate weather if provided
+    if weather is not None:
+        weather_list = weather if isinstance(weather, list) else [weather]
+        for i, w in enumerate(weather_list):
+            # Basic range checks (Weather.__post_init__ catches some, but we add more)
+            if w.ta < -100 or w.ta > 60:
+                warnings.append(
+                    f"Weather[{i}].ta={w.ta}°C is outside typical range [-100, 60]. Verify this is correct."
+                )
+            if w.global_rad > 1400:
+                warnings.append(
+                    f"Weather[{i}].global_rad={w.global_rad} W/m² exceeds solar constant. Verify this is correct."
+                )
+
+    return warnings
+
+
 def calculate(
     surface: SurfaceData,
     location: Location,
@@ -74,7 +188,7 @@ def calculate(
     config: ModelConfig | None = None,
     human: HumanParams | None = None,
     precomputed: PrecomputedData | None = None,
-    use_anisotropic_sky: bool = False,
+    use_anisotropic_sky: bool | None = None,
     conifer: bool = False,
     poi_coords: list[tuple[int, int]] | None = None,
     state: ThermalState | None = None,
@@ -90,17 +204,18 @@ def calculate(
         surface: Surface/terrain data (DSM required, CDSM/DEM optional).
         location: Geographic location (lat, lon, UTC offset).
         weather: Weather data (datetime, temperature, humidity, radiation).
-        config: Model configuration object. If provided, overrides individual parameters
-            (use_anisotropic_sky, human, physics, materials).
+        config: Model configuration object providing base settings.
+            Explicit parameters (human, use_anisotropic_sky, etc.) override
+            config values when provided.
         human: Human body parameters (absorption, posture, weight, height, etc.).
-            If None, uses HumanParams defaults. Overridden by config.human if config provided.
+            If None, uses config.human or HumanParams defaults.
         precomputed: Pre-computed preprocessing data (walls, SVF, shadow matrices). Optional.
             When provided, skips expensive preprocessing computations.
             Use PrecomputedData.load() to load from directories.
-        use_anisotropic_sky: Use anisotropic sky model for radiation. Default False.
+        use_anisotropic_sky: Use anisotropic sky model for radiation.
+            If None, uses config.use_anisotropic_sky or defaults to False.
             Requires precomputed.shadow_matrices to be provided.
             Uses Perez diffuse model and patch-based longwave calculation.
-            Overridden by config.use_anisotropic_sky if config provided.
         conifer: Treat vegetation as evergreen conifers (always leaf-on). Default False.
             When False, uses seasonal leaf on/off logic (deciduous trees).
             When True, vegetation always has leaves (transmissivity constant).
@@ -112,11 +227,10 @@ def calculate(
             thermal inertia modeling (TsWaveDelay). The returned result
             will include updated state for the next timestep.
         physics: Physics parameters (Tree_settings, Posture geometry) from load_physics().
-            Site-independent scientific constants. If None, uses bundled defaults.
-            Overridden by config.physics if config provided.
+            Site-independent scientific constants. If None, uses config.physics or bundled defaults.
         materials: Material properties (albedo, emissivity per landcover class) from load_materials().
             Site-specific landcover parameters. Only needed if surface has land_cover grid.
-            Overridden by config.materials if config provided.
+            If None, uses config.materials.
 
     Returns:
         SolweigResult with Tmrt and optionally UTCI/PET grids.
@@ -145,23 +259,60 @@ def calculate(
             human=HumanParams(abs_k=0.65, weight=70, height=1.65),
         )
 
-        # With custom physics (e.g., different tree transmissivity)
-        physics = load_physics("custom_trees.json")
-        result = calculate(surface, location, weather, physics=physics)
-
-        # With landcover materials (requires land_cover grid in surface)
-        materials = load_materials("site_materials.json")
-        result = calculate(surface, location, weather, materials=materials)
+        # With config as base, explicit param override
+        config = ModelConfig(use_anisotropic_sky=True)
+        result = calculate(
+            surface, location, weather,
+            config=config,
+            use_anisotropic_sky=False,  # Explicit param wins
+        )
     """
-    # Apply config if provided (overrides individual parameters)
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Build effective configuration: explicit params override config
+    # Config provides base values, explicit params take precedence
+    effective_aniso = use_anisotropic_sky
+    effective_human = human
+    effective_physics = physics
+    effective_materials = materials
+
     if config is not None:
-        use_anisotropic_sky = config.use_anisotropic_sky
-        if config.human is not None:
-            human = config.human
-        if config.physics is not None:
-            physics = config.physics
-        if config.materials is not None:
-            materials = config.materials
+        # Use config values as fallback for None parameters
+        if effective_aniso is None:
+            effective_aniso = config.use_anisotropic_sky
+        if effective_human is None:
+            effective_human = config.human
+        if effective_physics is None:
+            effective_physics = config.physics
+        if effective_materials is None:
+            effective_materials = config.materials
+
+        # Debug log when explicit params override config
+        overrides = []
+        if use_anisotropic_sky is not None and use_anisotropic_sky != config.use_anisotropic_sky:
+            overrides.append(f"use_anisotropic_sky={use_anisotropic_sky}")
+        if human is not None and config.human is not None:
+            overrides.append("human")
+        if physics is not None and config.physics is not None:
+            overrides.append("physics")
+        if materials is not None and config.materials is not None:
+            overrides.append("materials")
+        if overrides:
+            logger.debug(f"Explicit params override config: {', '.join(overrides)}")
+
+    # Apply defaults for anything still None
+    if effective_aniso is None:
+        effective_aniso = False
+    if effective_human is None:
+        effective_human = HumanParams()
+
+    # Assign back to use in the rest of the function
+    use_anisotropic_sky = effective_aniso
+    human = effective_human
+    physics = effective_physics
+    materials = effective_materials
 
     # Use default human params if not provided
     if human is None:
@@ -203,6 +354,7 @@ __all__ = [
     "calculate",
     "calculate_timeseries",
     "calculate_tiled",
+    "validate_inputs",
     # Dataclasses - Core inputs
     "SurfaceData",
     "Location",
@@ -218,6 +370,13 @@ __all__ = [
     "ShadowArrays",
     # Results
     "SolweigResult",
+    # Errors
+    "SolweigError",
+    "InvalidSurfaceData",
+    "GridShapeMismatch",
+    "MissingPrecomputedData",
+    "WeatherDataError",
+    "ConfigurationError",
     # Post-processing
     "compute_utci",
     "compute_pet",

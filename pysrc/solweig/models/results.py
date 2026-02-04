@@ -14,8 +14,10 @@ from ..logging import get_logger
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
+    from ..models import HumanParams
     from .state import ThermalState
     from .surface import SurfaceData
+    from .weather import Weather
 
 logger = get_logger(__name__)
 
@@ -160,6 +162,100 @@ class SolweigResult:
                 no_data_val=np.nan,
             )
             logger.debug(f"Saved {name} to {filepath}")
+
+    def compute_utci(
+        self,
+        weather_or_ta: Weather | float,
+        rh: float | None = None,
+        wind: float | None = None,
+    ) -> NDArray[np.floating]:
+        """
+        Compute UTCI (Universal Thermal Climate Index) from this result's Tmrt.
+
+        Can be called with either a Weather object or individual values:
+            utci = result.compute_utci(weather)
+            utci = result.compute_utci(ta=25.0, rh=50.0, wind=2.0)
+
+        Args:
+            weather_or_ta: Either a Weather object, or air temperature in °C.
+            rh: Relative humidity in % (required if weather_or_ta is float).
+            wind: Wind speed at 10m height in m/s. Default 1.0 if not provided.
+
+        Returns:
+            UTCI grid (°C) with same shape as tmrt.
+
+        Example:
+            result = solweig.calculate(surface, location, weather)
+
+            # Pattern A: Pass weather object (convenient)
+            utci = result.compute_utci(weather)
+
+            # Pattern B: Pass individual values (explicit)
+            utci = result.compute_utci(25.0, rh=50.0, wind=2.0)
+        """
+        from ..postprocess import compute_utci_grid
+        from .weather import Weather as WeatherClass
+
+        # Check if first argument is a Weather object
+        if isinstance(weather_or_ta, WeatherClass):
+            return compute_utci_grid(self.tmrt, weather_or_ta.ta, weather_or_ta.rh, weather_or_ta.ws)
+        else:
+            # Individual values
+            ta = float(weather_or_ta)
+            if rh is None:
+                raise ValueError("rh is required when ta is provided as a float")
+            return compute_utci_grid(self.tmrt, ta, rh, wind if wind is not None else 1.0)
+
+    def compute_pet(
+        self,
+        weather_or_ta: Weather | float,
+        rh: float | None = None,
+        wind: float | None = None,
+        human: HumanParams | None = None,
+    ) -> NDArray[np.floating]:
+        """
+        Compute PET (Physiological Equivalent Temperature) from this result's Tmrt.
+
+        Can be called with either a Weather object or individual values:
+            pet = result.compute_pet(weather)
+            pet = result.compute_pet(ta=25.0, rh=50.0, wind=2.0)
+
+        Args:
+            weather_or_ta: Either a Weather object, or air temperature in °C.
+            rh: Relative humidity in % (required if weather_or_ta is float).
+            wind: Wind speed at 10m height in m/s. Default 1.0 if not provided.
+            human: Human body parameters. Uses defaults if not provided.
+
+        Returns:
+            PET grid (°C) with same shape as tmrt.
+
+        Note:
+            PET uses an iterative solver and is ~50× slower than UTCI.
+
+        Example:
+            result = solweig.calculate(surface, location, weather)
+
+            # Pattern A: Pass weather object (convenient)
+            pet = result.compute_pet(weather)
+
+            # Pattern B: Pass individual values with custom human params
+            pet = result.compute_pet(
+                25.0, rh=50.0, wind=2.0,
+                human=HumanParams(weight=70, height=1.65)
+            )
+        """
+        from ..postprocess import compute_pet_grid
+        from .weather import Weather as WeatherClass
+
+        # Check if first argument is a Weather object
+        if isinstance(weather_or_ta, WeatherClass):
+            return compute_pet_grid(self.tmrt, weather_or_ta.ta, weather_or_ta.rh, weather_or_ta.ws, human)
+        else:
+            # Individual values
+            ta = float(weather_or_ta)
+            if rh is None:
+                raise ValueError("rh is required when ta is provided as a float")
+            return compute_pet_grid(self.tmrt, ta, rh, wind if wind is not None else 1.0, human)
 
 
 @dataclass
