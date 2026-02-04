@@ -18,6 +18,8 @@ References:
   Solar Energy 115 369–378
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 from . import io as common

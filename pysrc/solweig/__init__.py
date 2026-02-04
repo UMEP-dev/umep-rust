@@ -73,6 +73,8 @@ from .api import (  # noqa: E402
     load_physics,
     load_run_metadata,
     save_run_metadata,
+    # Validation
+    validate_inputs,
 )
 
 # Import data bundles (Phase 5 refactoring)
@@ -87,6 +89,7 @@ from .bundles import (  # noqa: E402
     VegetationBundle,
     WallBundle,
 )
+from .errors import SolweigError  # noqa: E402
 
 # Try to import Rust algorithms
 try:
@@ -155,9 +158,11 @@ __all__ = [
     "HumanParams",
     "ModelConfig",
     "SolweigResult",
+    "SolweigError",
     "calculate",
     "calculate_timeseries",
     "calculate_tiled",
+    "validate_inputs",
     "load_params",
     "load_physics",
     "load_materials",

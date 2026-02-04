@@ -1,0 +1,151 @@
+name: Build QGIS Plugin
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version for the release'
+        required: true
+        default: '0.1.0'
+
+jobs:
+  build-wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 (manylinux for broad compatibility)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform_tag: linux_x86_64
+            manylinux: '2_17'
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform_tag: windows_x86_64
+          # macOS x86_64 (Intel)
+          - os: macos-13
+            target: x86_64-apple-darwin
+            platform_tag: macos_x86_64
+          # macOS ARM64 (Apple Silicon)
+          - os: macos-14
+            target: aarch64-apple-darwin
+            platform_tag: macos_aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Use official maturin-action for building wheels
+      # See: https://github.com/PyO3/maturin-action
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          sccache: 'true'
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.platform_tag }}
+          path: dist/*.whl
+
+  build-plugin:
+    name: Build QGIS Plugin Package
+    needs: build-wheels
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - platform_tag: linux_x86_64
+            artifact_name: wheel-linux_x86_64
+          - platform_tag: windows_x86_64
+            artifact_name: wheel-windows_x86_64
+          - platform_tag: macos_x86_64
+            artifact_name: wheel-macos_x86_64
+          - platform_tag: macos_aarch64
+            artifact_name: wheel-macos_aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: dist/
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            # Extract version from tag (e.g., v0.1.0 -> 0.1.0)
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build plugin package
+        run: |
+          # Create bundle directory structure: _bundled/solweig/
+          # This allows `import solweig` to work when _bundled is in sys.path
+          mkdir -p qgis_plugin/solweig_qgis/_bundled/solweig
+
+          # Extract wheel
+          cd dist
+          WHEEL=$(ls *.whl | head -1)
+          unzip -o "$WHEEL" -d extracted
+
+          # Copy entire solweig package from wheel to _bundled/solweig/
+          if [ -d "extracted/solweig" ]; then
+            cp -r extracted/solweig/* ../qgis_plugin/solweig_qgis/_bundled/solweig/
+          fi
+
+          cd ..
+
+          # Create ZIP package
+          cd qgis_plugin
+          zip -r ../solweig-qgis-${{ steps.version.outputs.version }}-${{ matrix.platform_tag }}.zip solweig_qgis/
+
+      - name: Upload plugin package
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ matrix.platform_tag }}
+          path: solweig-qgis-*.zip
+
+  create-release:
+    name: Create Release
+    needs: build-plugin
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/plugin-*/*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

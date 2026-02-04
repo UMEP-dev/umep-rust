@@ -3,9 +3,9 @@ __author__ = "xlinfr"
 import math
 
 import numpy as np
-import scipy.ndimage.interpolation as sc
 
 from ..progress import progress
+from .morphology import rotate_array
 
 
 def findwalls(a, walllimit):
@@ -82,12 +82,9 @@ def filter1Goodwin_as_aspect_v3(walls, scale, a):
     for h in progress(
         range(0, 180), desc="Computing wall aspects"
     ):  # =0:1:180 #%increased resolution to 1 deg 20140911
-        filtmatrix1temp = sc.rotate(filtmatrix, h, order=1, reshape=False, mode="nearest")  # bilinear
+        filtmatrix1temp = rotate_array(filtmatrix, h, order=1, reshape=False, mode="nearest")  # bilinear
         filtmatrix1 = np.round(filtmatrix1temp)
-        # filtmatrix1temp = sc.imrotate(filtmatrix, h, 'bilinear')
-        # filtmatrix1 = np.round(filtmatrix1temp / 255.)
-        # filtmatrixbuildtemp = sc.imrotate(buildfilt, h, 'nearest')
-        filtmatrixbuildtemp = sc.rotate(buildfilt, h, order=0, reshape=False, mode="nearest")  # Nearest neighbor
+        filtmatrixbuildtemp = rotate_array(buildfilt, h, order=0, reshape=False, mode="nearest")  # Nearest neighbor
         # filtmatrixbuild = np.round(filtmatrixbuildtemp / 127.)
         filtmatrixbuild = np.round(filtmatrixbuildtemp)
         index = 270 - h

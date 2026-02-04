@@ -7,9 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
-from .logging import get_logger
 from .metadata import create_run_metadata, save_run_metadata
 from .models import HumanParams, Location, ThermalState
+from .solweig_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -278,6 +278,9 @@ def calculate_timeseries(
 
     # Progress reporting interval (log every N timesteps)
     report_interval = max(1, len(weather_series) // 10) if len(weather_series) > 20 else 1
+
+    # Pre-create buffer pool for array reuse across timesteps
+    _ = surface.get_buffer_pool()
 
     # Start timing
     start_time = time.time()

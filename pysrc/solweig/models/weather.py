@@ -12,7 +12,7 @@ import numpy as np
 from ..algorithms import sun_position as sp
 from ..algorithms.clearnessindex_2013b import clearnessindex_2013b
 from ..algorithms.diffusefraction import diffusefraction
-from ..logging import get_logger
+from ..solweig_logging import get_logger
 
 if TYPE_CHECKING:
     from .surface import SurfaceData

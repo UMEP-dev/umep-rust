@@ -12,9 +12,11 @@ from affine import Affine as AffineClass
 
 from .. import io
 from .. import walls as walls_module
+from ..buffers import BufferPool
+from ..cache import CacheMetadata, clear_stale_cache, validate_cache
 from ..config import get_lc_properties_from_params
-from ..logging import get_logger
 from ..rustalgos import skyview
+from ..solweig_logging import get_logger
 from ..utils import extract_bounds, intersect_bounds, resample_to_grid
 from .precomputed import SvfArrays
 
@@ -124,6 +126,7 @@ class SurfaceData:
     _preprocessed: bool = field(default=False, init=False, repr=False)
     _geotransform: list[float] | None = field(default=None, init=False, repr=False)  # GDAL geotransform
     _crs_wkt: str | None = field(default=None, init=False, repr=False)  # CRS as WKT string
+    _buffer_pool: BufferPool | None = field(default=None, init=False, repr=False)  # Reusable array pool
 
     def __post_init__(self):
         # Ensure dsm is float32 for memory efficiency
@@ -266,6 +269,19 @@ class SurfaceData:
             trunk_ratio,
             relative_heights,
         )
+
+        # Validate cached SVF against current inputs (if SVF was loaded)
+        if preprocess_data["svf_data"] is not None and not force_recompute:
+            svf_cache_dir = working_path / "svf" / "memmap"
+            dsm_arr = aligned_rasters["dsm_arr"]
+            cdsm_arr = aligned_rasters.get("cdsm_arr")
+
+            if not validate_cache(svf_cache_dir, dsm_arr, pixel_size, cdsm_arr):
+                logger.info("  → Cache stale, clearing and recomputing SVF...")
+                clear_stale_cache(svf_cache_dir)
+                preprocess_data["svf_data"] = None
+                preprocess_data["compute_svf"] = True
+                surface_data.svf = None
 
         # Compute and cache walls if needed
         if preprocess_data["compute_walls"]:
@@ -915,9 +931,12 @@ class SurfaceData:
         svf_cache_dir = working_path / "svf"
         svf_cache_dir.mkdir(parents=True, exist_ok=True)
 
+        # Create cache metadata for validation on reload
+        metadata = CacheMetadata.from_arrays(dsm_arr, pixel_size, cdsm_arr)
+
         # Save as memmap for efficient large-raster access
         memmap_dir = svf_cache_dir / "memmap"
-        svf_data.to_memmap(memmap_dir)
+        svf_data.to_memmap(memmap_dir, metadata=metadata)
 
         # Store on surface_data for immediate use
         surface_data.svf = svf_data
@@ -1012,6 +1031,35 @@ class SurfaceData:
     def crs(self) -> str | None:
         """Return CRS as WKT string, or None if not set."""
         return self._crs_wkt
+
+    def get_buffer_pool(self) -> BufferPool:
+        """Get or create a buffer pool for this surface.
+
+        The buffer pool provides pre-allocated numpy arrays that can be
+        reused across timesteps during timeseries calculations. This
+        reduces memory allocation overhead and GC pressure.
+
+        Returns:
+            BufferPool sized to this surface's grid dimensions.
+
+        Example:
+            pool = surface.get_buffer_pool()
+            temp = pool.get_zeros("ani_lum")  # First call allocates
+            temp = pool.get_zeros("ani_lum")  # Second call reuses same memory
+        """
+        if self._buffer_pool is None:
+            self._buffer_pool = BufferPool(self.shape)
+        return self._buffer_pool
+
+    def clear_buffers(self) -> None:
+        """Clear the buffer pool to free memory.
+
+        Call this after completing a timeseries calculation to release
+        the pre-allocated arrays.
+        """
+        if self._buffer_pool is not None:
+            self._buffer_pool.clear()
+            self._buffer_pool = None
 
     def _looks_like_relative_heights(self) -> bool:
         """

@@ -21,6 +21,8 @@ Usage:
     progress.close()
 """
 
+from __future__ import annotations
+
 import logging
 import sys
 from collections.abc import Iterable, Iterator
@@ -157,7 +159,7 @@ class _ProgressIterator(Iterator[T]):
         self._iterator = iter(iterable)
         self._reporter = reporter
 
-    def __iter__(self) -> "_ProgressIterator[T]":
+    def __iter__(self) -> _ProgressIterator[T]:
         return self
 
     def __next__(self) -> T:

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..logging import get_logger
+from ..solweig_logging import get_logger
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

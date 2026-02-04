@@ -8,7 +8,8 @@ from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from ..logging import get_logger
+from ..cache import CacheMetadata
+from ..solweig_logging import get_logger
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -215,7 +216,7 @@ class SvfArrays:
             svf_aveg_west=svf_aveg_w,
         )
 
-    def to_memmap(self, directory: str | Path) -> Path:
+    def to_memmap(self, directory: str | Path, metadata: CacheMetadata | None = None) -> Path:
         """
         Save SVF arrays as memory-mapped .npy files for efficient large-raster processing.
 
@@ -224,6 +225,8 @@ class SvfArrays:
 
         Args:
             directory: Directory to save memmap files. Created if doesn't exist.
+            metadata: Optional cache metadata for validation on reload.
+                When provided, enables automatic cache invalidation if inputs change.
 
         Returns:
             Path to the directory containing memmap files.
@@ -263,6 +266,10 @@ class SvfArrays:
         for name in array_names:
             arr = getattr(self, name)
             np.save(directory / f"{name}.npy", arr)
+
+        # Save metadata for cache validation
+        if metadata is not None:
+            metadata.save(directory)
 
         logger.info(f"Saved SVF memmap cache to {directory} ({len(array_names)} arrays)")
         return directory

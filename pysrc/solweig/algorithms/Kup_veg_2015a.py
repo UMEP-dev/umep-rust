@@ -20,24 +20,14 @@ def Kup_veg_2015a(
     gvfalbnoshW,
     gvfalbnoshN,
 ):
-    Kup = (gvfalb * radI * np.sin(altitude * (np.pi / 180.0))) + (
-        radD * svfbuveg + albedo_b * (1 - svfbuveg) * (radG * (1 - F_sh) + radD * F_sh)
-    ) * gvfalbnosh
+    # Pre-compute common terms once (2x speedup)
+    radI_sin_alt = radI * np.sin(altitude * (np.pi / 180.0))
+    common_term = radD * svfbuveg + albedo_b * (1 - svfbuveg) * (radG * (1 - F_sh) + radD * F_sh)
 
-    KupE = (gvfalbE * radI * np.sin(altitude * (np.pi / 180.0))) + (
-        radD * svfbuveg + albedo_b * (1 - svfbuveg) * (radG * (1 - F_sh) + radD * F_sh)
-    ) * gvfalbnoshE
-
-    KupS = (gvfalbS * radI * np.sin(altitude * (np.pi / 180.0))) + (
-        radD * svfbuveg + albedo_b * (1 - svfbuveg) * (radG * (1 - F_sh) + radD * F_sh)
-    ) * gvfalbnoshS
-
-    KupW = (gvfalbW * radI * np.sin(altitude * (np.pi / 180.0))) + (
-        radD * svfbuveg + albedo_b * (1 - svfbuveg) * (radG * (1 - F_sh) + radD * F_sh)
-    ) * gvfalbnoshW
-
-    KupN = (gvfalbN * radI * np.sin(altitude * (np.pi / 180.0))) + (
-        radD * svfbuveg + albedo_b * (1 - svfbuveg) * (radG * (1 - F_sh) + radD * F_sh)
-    ) * gvfalbnoshN
+    Kup = gvfalb * radI_sin_alt + common_term * gvfalbnosh
+    KupE = gvfalbE * radI_sin_alt + common_term * gvfalbnoshE
+    KupS = gvfalbS * radI_sin_alt + common_term * gvfalbnoshS
+    KupW = gvfalbW * radI_sin_alt + common_term * gvfalbnoshW
+    KupN = gvfalbN * radI_sin_alt + common_term * gvfalbnoshN
 
     return Kup, KupE, KupS, KupW, KupN

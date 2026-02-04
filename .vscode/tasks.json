@@ -1,0 +1,80 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Plugin Bundle (native)",
+      "type": "shell",
+      "command": "uv run python build_plugin.py",
+      "options": {
+        "cwd": "${workspaceFolder}/qgis_plugin"
+      },
+      "problemMatcher": [],
+      "detail": "Build abi3 wheel for native architecture"
+    },
+    {
+      "label": "Build Plugin Bundle (Intel Mac)",
+      "type": "shell",
+      "command": "uv run python build_plugin.py --target x86_64-apple-darwin",
+      "options": {
+        "cwd": "${workspaceFolder}/qgis_plugin"
+      },
+      "problemMatcher": [],
+      "detail": "Build abi3 wheel for Intel Mac (x86_64) - for Intel QGIS on Apple Silicon"
+    },
+    {
+      "label": "Setup QGIS Plugin (symlink)",
+      "type": "shell",
+      "command": "ln -sfn ${workspaceFolder}/qgis_plugin/solweig_qgis ~/Library/Application\\ Support/QGIS/QGIS3/profiles/default/python/plugins/solweig_qgis",
+      "problemMatcher": [],
+      "detail": "Create symlink to QGIS plugins folder for development"
+    },
+    {
+      "label": "Setup QGIS Development (Intel)",
+      "dependsOn": ["Build Plugin Bundle (Intel Mac)", "Setup QGIS Plugin (symlink)"],
+      "dependsOrder": "sequence",
+      "problemMatcher": [],
+      "detail": "Build x86_64 plugin and setup symlink for Intel QGIS",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Build Plugin Package (ZIP - native)",
+      "type": "shell",
+      "command": "uv run python build_plugin.py --package",
+      "options": {
+        "cwd": "${workspaceFolder}/qgis_plugin"
+      },
+      "problemMatcher": [],
+      "detail": "Build distributable plugin ZIP for native architecture"
+    },
+    {
+      "label": "Build Plugin Package (ZIP - Intel Mac)",
+      "type": "shell",
+      "command": "uv run python build_plugin.py --package --target x86_64-apple-darwin",
+      "options": {
+        "cwd": "${workspaceFolder}/qgis_plugin"
+      },
+      "problemMatcher": [],
+      "detail": "Build distributable plugin ZIP for Intel Mac (x86_64)"
+    },
+    {
+      "label": "Clean Plugin Build",
+      "type": "shell",
+      "command": "uv run python build_plugin.py --clean",
+      "options": {
+        "cwd": "${workspaceFolder}/qgis_plugin"
+      },
+      "problemMatcher": [],
+      "detail": "Clean build artifacts (_bundled/, dist/, ZIPs)"
+    },
+    {
+      "label": "Build Rust Extension (dev only)",
+      "type": "shell",
+      "command": "uv run maturin develop",
+      "problemMatcher": [],
+      "detail": "Build Rust extension for local Python (not for QGIS)"
+    }
+  ]
+}

@@ -256,7 +256,11 @@ def calculate_core(
     tdsm = surface.tdsm if use_veg else None
     # Bush layer: Create empty mask when vegetation present (no bushes assumed)
     # Rust validation requires all three vegetation inputs (cdsm, tdsm, bush) or none
-    bush = np.zeros_like(surface.dsm, dtype=np.float32) if use_veg else None
+    if use_veg:
+        pool = surface.get_buffer_pool()
+        bush = pool.get_zeros("bush")
+    else:
+        bush = None
 
     # Prepare wall inputs
     has_walls = surface.wall_height is not None and surface.wall_aspect is not None

@@ -23,14 +23,15 @@ This document outlines the development priorities for SOLWEIG.
 | 5   | ~~API cleanup (factories, docs)~~        | E.5     | LOW - polish                           | ✅ Complete |
 | 6   | Documentation update                     | D       | MEDIUM - user adoption                 | In progress |
 | 7   | POI Mode                                 | C       | HIGH - 10-100x speedup                 | Deferred    |
-| 8   | Cache validation (hashes)                | B.3     | LOW - safety feature                   | Deferred    |
+| 8   | ~~Cache validation (hashes)~~            | B.3     | LOW - safety feature                   | ✅ Complete |
 
-**Current status:** Phase E (API Improvements) complete. Focus on documentation (Phase D).
+**Current status:** Phase B (Memory & Computational) complete. Ready for QGIS plugin integration.
 
 ### Recently Completed
 
 | Task                                 | Section | Status      |
 | ------------------------------------ | ------- | ----------- |
+| Cache validation (hash-based)        | B.3     | ✅ Complete |
 | np.memmap for SVF caching            | B.1     | ✅ Complete |
 | Pre-allocated buffer pools           | B.1     | ✅ Complete |
 | Batch thermal delay (Rust)           | B.5     | ✅ Complete |
@@ -204,11 +205,12 @@ See: [tests/spec/test_thermal_comfort.py](tests/spec/test_thermal_comfort.py)
 
 | Optimization                     | Benefit                    | Approach                                       | Status                                     |
 | -------------------------------- | -------------------------- | ---------------------------------------------- | ------------------------------------------ |
-| Reduce Python/Rust crossings     | Less FFI overhead          | Batch operations in Rust                       | ⏳ Pending                                 |
+| ~~Reduce Python/Rust crossings~~ | ~~Less FFI overhead~~      | ~~Batch operations in Rust~~                   | Deferred (diminishing returns)             |
 | Lazy SVF loading                 | Faster startup             | Load on first access                           | ✅ Already implemented                     |
 | ~~Parallel timestep processing~~ | ~~Better CPU utilization~~ | ~~Process independent timesteps concurrently~~ | ❌ Not feasible (thermal state dependency) |
 | **Altmax caching**               | 17x faster timeseries      | Cache max sun altitude per day                 | ✅ Complete (Feb 2026)                     |
 | **SVF auto-caching**             | **210× faster repeats**    | Cache fresh-computed SVF on surface object     | ✅ Complete (Feb 2026)                     |
+| **Algorithm optimizations**      | 1.6-2x faster functions    | Vectorized numpy, pre-compute common terms     | ✅ Complete (Feb 2026)                     |
 
 **Completed optimizations:**
 
@@ -218,13 +220,17 @@ See: [tests/spec/test_thermal_comfort.py](tests/spec/test_thermal_comfort.py)
 
 - [x] **SVF lazy loading** - SVF resolution checks cached/precomputed sources before computing fresh (see [components/svf_resolution.py](pysrc/solweig/components/svf_resolution.py)).
 
-### B.3 Cache Validation (LOW priority)
+- [x] **Algorithm optimizations** (Feb 2026) - Optimized Python algorithms:
+  - `cylindric_wedge.py`: 1.6× faster via vectorized np.where and pre-computed trig values
+  - `Kup_veg_2015a.py`: 2× faster via pre-computing common terms (5 sin/multiply → 1)
 
-Working directory cache needs validation/invalidation strategy:
+### B.3 Cache Validation ✅ Complete
 
-- [ ] Store input hashes with cached data
-- [ ] Validate cache on load
-- [ ] Clear stale cache automatically
+Working directory cache now validates against input data:
+
+- [x] Store input hashes with cached data (via `cache.py` module)
+- [x] Validate cache on load (hash comparison of DSM/CDSM/pixel_size)
+- [x] Clear stale cache automatically (auto-clears and recomputes if inputs changed)
 
 ### B.4 Code Quality (LOW priority)
 

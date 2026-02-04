@@ -1,0 +1,41 @@
+[general]
+name=SOLWEIG
+qgisMinimumVersion=3.28
+description=Calculate Mean Radiant Temperature (Tmrt), UTCI, and PET thermal comfort indices using the SOLWEIG model.
+version=0.1.0
+author=SOLWEIG Development Team
+email=solweig@example.com
+
+about=SOLWEIG (Solar and Longwave Environmental Irradiance Geometry) is a high-performance urban microclimate model for calculating Mean Radiant Temperature and thermal comfort indices.
+
+    Features:
+    - Single timestep and timeseries Tmrt calculations
+    - UTCI (Universal Thermal Climate Index) computation
+    - PET (Physiological Equivalent Temperature) computation
+    - Sky View Factor (SVF) preprocessing
+    - EPW weather file import
+    - Support for large rasters via tiled processing
+
+    This plugin provides QGIS Processing algorithms that wrap the SOLWEIG Python library.
+
+tracker=https://github.com/UMEP-dev/SOLWEIG/issues
+repository=https://github.com/UMEP-dev/SOLWEIG
+homepage=https://umep-docs.readthedocs.io/
+
+hasProcessingProvider=yes
+tags=urban climate, thermal comfort, mean radiant temperature, UTCI, PET, microclimate, heat stress, urban planning
+
+category=Analysis
+icon=icon.png
+
+experimental=True
+deprecated=False
+
+changelog=
+    0.1.0 - Initial release
+    - Single timestep Tmrt calculation
+    - Timeseries Tmrt calculation with thermal state
+    - SVF preprocessing
+    - UTCI and PET post-processing
+    - EPW weather file import
+    - Tiled processing for large rasters

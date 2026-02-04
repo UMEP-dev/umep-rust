@@ -94,7 +94,7 @@ n_utci = solweig.compute_utci(
 
 ## Complete Example
 
-See [demos/athens-demo.py](../../demos/athens-demo.py) for a complete working example.
+See `demos/athens-demo.py` in the repository for a complete working example.
 
 ```python
 import solweig
@@ -260,6 +260,6 @@ print(f"Backend: {solweig.get_compute_backend()}")
 
 ## Next Steps
 
-- See [demos/athens-demo.py](../../demos/athens-demo.py) for a complete example
-- Check [specs/](../../specs/) for physics documentation
+- See `demos/athens-demo.py` in the repository for a complete example
+- Check the [Physics](../physics/index.md) section for detailed documentation
 - Run `pytest tests/` to verify installation

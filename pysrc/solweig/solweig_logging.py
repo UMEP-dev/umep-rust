@@ -7,13 +7,15 @@ Provides automatic environment detection and uses appropriate logging backend:
 - Fallback: Print to stdout
 
 Usage:
-    from solweig.logging import get_logger
+    from solweig.solweig_logging import get_logger
 
     logger = get_logger(__name__)
     logger.info("Surface data loaded: 400×400 pixels")
     logger.debug(f"Using {len(weather_list)} timesteps")
     logger.warning("SVF not provided, will compute on-the-fly (slow)")
 """
+
+from __future__ import annotations
 
 import logging
 import sys
@@ -160,7 +162,7 @@ def set_global_level(level: LogLevel | int) -> None:
         level: Minimum log level (DEBUG, INFO, WARNING, ERROR)
 
     Example:
-        >>> import solweig.logging as slog
+        >>> import solweig.solweig_logging as slog
         >>> slog.set_global_level(slog.LogLevel.DEBUG)  # Show debug messages
     """
     level = LogLevel(level) if isinstance(level, int) else level

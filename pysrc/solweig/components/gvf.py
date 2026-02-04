@@ -16,8 +16,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy import ndimage
 
+from ..algorithms.morphology import binary_dilation, generate_binary_structure
 from ..buffers import as_float32
 from ..bundles import GvfBundle
 from ..constants import KELVIN_OFFSET, SBC
@@ -66,9 +66,9 @@ def detect_building_mask(
         wall_mask = wall_height > 0
 
         # Dilate to capture building interiors (typical building width up to 50m)
-        struct = ndimage.generate_binary_structure(2, 2)  # 8-connectivity
+        struct = generate_binary_structure(2, 2)  # 8-connectivity
         iterations = int(25 / pixel_size) + 1
-        dilated = ndimage.binary_dilation(wall_mask, struct, iterations=iterations)
+        dilated = binary_dilation(wall_mask, struct, iterations=iterations)
 
         # Also detect elevated areas (building roofs)
         ground_level = np.nanpercentile(dsm[~wall_mask], 10) if np.any(~wall_mask) else np.nanmin(dsm)

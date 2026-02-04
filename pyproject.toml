@@ -37,11 +37,10 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
-    "numpy>=1.26.0",    # Allows OSGeo4W 1.26.4 AND NumPy 2.x
-    "pandas>=2.1.0",    # Allows OSGeo4W 2.2.2 AND newer
-    "pyproj>=3.6.0",    # Matches OSGeo4W 3.6.x minimum
-    "scipy>=1.13.0",    # Matches OSGeo4W 1.13.0
-    "shapely>=2.0.1",   # Matches OSGeo4W 2.0.x
+    "numpy>=1.26.0", # Allows OSGeo4W 2.2.2 AND newer
+    "pyproj>=3.6.0", # Matches OSGeo4W 3.6.x minimum
+    "scipy>=1.13.0", # Matches OSGeo4W 1.13.0
+    "shapely>=2.0.1", # Matches OSGeo4W 2.0.x
 ]
 
 [project.optional-dependencies]
@@ -68,7 +67,7 @@ build-backend = "maturin"
 manifest-path = "rust/Cargo.toml"
 python-source = "pysrc"
 module-name = 'solweig.rustalgos'
-features = ["pyo3/extension-module", "gpu"]
+features = ["pyo3/extension-module", "pyo3/abi3-py39", "gpu"]
 
 [tool.setuptools]
 packages = ["solweig"]
