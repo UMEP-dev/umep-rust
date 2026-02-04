@@ -101,7 +101,7 @@ def calculate_timeseries(
     config: ModelConfig | None = None,
     human: HumanParams | None = None,
     precomputed: PrecomputedData | None = None,
-    use_anisotropic_sky: bool = False,
+    use_anisotropic_sky: bool | None = None,
     conifer: bool = False,
     physics: SimpleNamespace | None = None,
     materials: SimpleNamespace | None = None,
@@ -123,24 +123,24 @@ def calculate_timeseries(
             The datetime of each Weather object determines the timestep size.
         location: Geographic location (lat, lon, UTC offset). If None, automatically
             extracted from surface's CRS metadata.
-        config: Model configuration object. If provided, overrides individual parameters
-            (use_anisotropic_sky, human, physics, materials, outputs).
+        config: Model configuration object providing base settings.
+            Explicit parameters override config values when provided.
         human: Human body parameters (absorption, posture, weight, height, etc.).
-            If None, uses HumanParams defaults. Overridden by config.human if config provided.
+            If None, uses config.human or HumanParams defaults.
         precomputed: Pre-computed SVF and/or shadow matrices. Optional.
-        use_anisotropic_sky: Use anisotropic sky model. Overridden by config if provided.
+        use_anisotropic_sky: Use anisotropic sky model.
+            If None, uses config.use_anisotropic_sky or defaults to False.
         conifer: Treat vegetation as evergreen conifers (always leaf-on). Default False.
         physics: Physics parameters (Tree_settings, Posture geometry) from load_physics().
-            Site-independent scientific constants. If None, uses bundled defaults.
-            Overridden by config.physics if config provided.
+            Site-independent scientific constants. If None, uses config.physics or bundled defaults.
         materials: Material properties (albedo, emissivity per landcover class) from load_materials().
             Site-specific landcover parameters. Only needed if surface has land_cover grid.
-            Overridden by config.materials if config provided.
+            If None, uses config.materials.
         output_dir: Directory to save results. If provided, results are saved
             incrementally as GeoTIFF files during calculation (recommended for
             long timeseries to avoid memory issues).
         outputs: Which outputs to save (e.g., ["tmrt", "shadow", "kdown"]).
-            Only used if output_dir is provided. Overridden by config.outputs if config provided.
+            Only used if output_dir is provided. If None, uses config.outputs or ["tmrt"].
 
     Returns:
         List of SolweigResult objects, one per timestep.
@@ -156,29 +156,13 @@ def calculate_timeseries(
             output_dir="output/",
         )
 
-        # With custom human parameters
+        # With config as base, explicit param override
+        config = ModelConfig(use_anisotropic_sky=True)
         results = calculate_timeseries(
             surface=surface,
             weather_series=weather_list,
-            human=HumanParams(abs_k=0.65, weight=70),
-            output_dir="output/",
-        )
-
-        # With custom physics (e.g., different tree transmissivity)
-        physics = load_physics("custom_trees.json")
-        results = calculate_timeseries(
-            surface=surface,
-            weather_series=weather_list,
-            physics=physics,
-            output_dir="output/",
-        )
-
-        # With landcover materials (requires land_cover grid in surface)
-        materials = load_materials("site_materials.json")
-        results = calculate_timeseries(
-            surface=surface,
-            weather_series=weather_list,
-            materials=materials,
+            config=config,
+            use_anisotropic_sky=False,  # Explicit param wins
             output_dir="output/",
         )
     """
@@ -187,20 +171,58 @@ def calculate_timeseries(
 
     # Auto-extract location from surface if not provided
     if location is None:
-        logger.info("Location not provided, auto-extracting from surface CRS...")
+        logger.warning(
+            "Location not provided - auto-extracting from surface CRS.\n"
+            "⚠️  UTC offset will default to 0 if not specified, which may cause incorrect sun positions.\n"
+            "   Recommend: provide location explicitly with correct UTC offset."
+        )
         location = Location.from_surface(surface)
 
-    # Apply config if provided (overrides individual parameters)
+    # Build effective configuration: explicit params override config
+    effective_aniso = use_anisotropic_sky
+    effective_human = human
+    effective_physics = physics
+    effective_materials = materials
+    effective_outputs = outputs
+
     if config is not None:
-        use_anisotropic_sky = config.use_anisotropic_sky
-        if config.human is not None:
-            human = config.human
-        if config.physics is not None:
-            physics = config.physics
-        if config.materials is not None:
-            materials = config.materials
-        if config.outputs:
-            outputs = config.outputs
+        # Use config values as fallback for None parameters
+        if effective_aniso is None:
+            effective_aniso = config.use_anisotropic_sky
+        if effective_human is None:
+            effective_human = config.human
+        if effective_physics is None:
+            effective_physics = config.physics
+        if effective_materials is None:
+            effective_materials = config.materials
+        if effective_outputs is None and config.outputs:
+            effective_outputs = config.outputs
+
+        # Debug log when explicit params override config
+        overrides = []
+        if use_anisotropic_sky is not None and use_anisotropic_sky != config.use_anisotropic_sky:
+            overrides.append(f"use_anisotropic_sky={use_anisotropic_sky}")
+        if human is not None and config.human is not None:
+            overrides.append("human")
+        if physics is not None and config.physics is not None:
+            overrides.append("physics")
+        if materials is not None and config.materials is not None:
+            overrides.append("materials")
+        if outputs is not None and config.outputs:
+            overrides.append("outputs")
+        if overrides:
+            logger.debug(f"Explicit params override config: {', '.join(overrides)}")
+
+    # Apply defaults for anything still None
+    if effective_aniso is None:
+        effective_aniso = False
+
+    # Assign back for use in the rest of the function
+    use_anisotropic_sky = effective_aniso
+    human = effective_human
+    physics = effective_physics
+    materials = effective_materials
+    outputs = effective_outputs
 
     # Log configuration summary
     logger.info("=" * 60)

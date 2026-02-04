@@ -64,6 +64,32 @@ class SurfaceData:
     Note:
         max_height is auto-computed from dsm as: np.nanmax(dsm) - np.nanmin(dsm)
 
+    Height Conventions:
+        SOLWEIG supports two conventions for CDSM/TDSM vegetation data:
+
+        **Relative Heights** (default, `relative_heights=True`):
+            - CDSM values represent vegetation height above ground (e.g., 6m tree)
+            - TDSM values represent trunk zone height above ground (e.g., 1.5m)
+            - Typical range: 0-40m for CDSM, 0-10m for TDSM
+            - Must call `preprocess()` before calculations
+
+        **Absolute Heights** (`relative_heights=False`):
+            - CDSM values are absolute elevations (same reference as DSM)
+            - TDSM values are absolute elevations
+            - Example: DSM=127m, CDSM=133m means 6m vegetation
+            - No preprocessing needed
+
+        The internal algorithms (Rust) always use **absolute heights**. The
+        `preprocess()` method converts relative → absolute using:
+            cdsm_absolute = base + cdsm_relative
+            tdsm_absolute = base + tdsm_relative
+        where `base = DEM` if available, else `base = DSM`.
+
+        **Important**: External tools may have different conventions:
+            - UMEP Python `svfForProcessing153` (installed pkg): expects RELATIVE
+            - UMEP-core `svfForProcessing153`: expects ABSOLUTE
+            - QGIS plugins: typically use RELATIVE
+
     Example:
         # With relative vegetation heights (common case):
         surface = SurfaceData(dsm=dsm, cdsm=cdsm_relative, relative_heights=True)

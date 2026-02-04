@@ -97,7 +97,7 @@ class Location:
         return cls(latitude=lat, longitude=lon, altitude=altitude, utc_offset=utc_offset)
 
     @classmethod
-    def from_surface(cls, surface: SurfaceData, utc_offset: int = 0, altitude: float = 0.0) -> Location:
+    def from_surface(cls, surface: SurfaceData, utc_offset: int | None = None, altitude: float = 0.0) -> Location:
         """
         Extract location from SurfaceData's CRS by converting center point to WGS84.
 
@@ -105,7 +105,8 @@ class Location:
 
         Args:
             surface: SurfaceData instance loaded from GeoTIFF.
-            utc_offset: UTC offset in hours. Default 0.
+            utc_offset: UTC offset in hours. If not provided, defaults to 0 with a warning.
+                Always provide this explicitly for correct sun position calculations.
             altitude: Altitude above sea level in meters. Default 0.
 
         Returns:
@@ -117,8 +118,10 @@ class Location:
 
         Example:
             surface = SurfaceData.from_geotiff("dsm.tif")
-            location = Location.from_surface(surface, utc_offset=2)
+            location = Location.from_surface(surface, utc_offset=2)  # Athens: UTC+2
         """
+        import warnings
+
         try:
             from pyproj import Transformer
         except ImportError as err:
@@ -148,6 +151,18 @@ class Location:
         # Convert to WGS84
         transformer = Transformer.from_crs(crs_wkt, "EPSG:4326", always_xy=True)
         lon, lat = transformer.transform(center_x, center_y)
+
+        # Warn if utc_offset not explicitly provided
+        if utc_offset is None:
+            warnings.warn(
+                f"UTC offset not specified for auto-extracted location ({lat:.4f}°N, {lon:.4f}°E).\n"
+                f"Defaulting to UTC+0, which may cause incorrect sun positions.\n"
+                f"Fix: Location.from_surface(surface, utc_offset=YOUR_OFFSET) or\n"
+                f"     Location(latitude={lat:.4f}, longitude={lon:.4f}, utc_offset=YOUR_OFFSET)",
+                UserWarning,
+                stacklevel=2,
+            )
+            utc_offset = 0
 
         logger.debug(f"Auto-extracted location: {lat:.4f}°N, {lon:.4f}°E (UTC{utc_offset:+d})")
         return cls(latitude=lat, longitude=lon, altitude=altitude, utc_offset=utc_offset)
@@ -347,6 +362,47 @@ class Weather:
     def is_daytime(self) -> bool:
         """Check if sun is above horizon."""
         return self.sun_altitude > 0
+
+    @classmethod
+    def from_values(
+        cls,
+        ta: float,
+        rh: float,
+        global_rad: float,
+        datetime: dt | None = None,
+        ws: float = 1.0,
+        **kwargs,
+    ) -> Weather:
+        """
+        Quick factory for creating Weather with minimal required values.
+
+        Useful for testing and single-timestep calculations where you
+        just need to specify the essential parameters.
+
+        Args:
+            ta: Air temperature in °C.
+            rh: Relative humidity in % (0-100).
+            global_rad: Global solar radiation in W/m².
+            datetime: Date and time. If None, uses current time.
+            ws: Wind speed in m/s. Default 1.0.
+            **kwargs: Additional Weather parameters (pressure, etc.)
+
+        Returns:
+            Weather object ready for calculation.
+
+        Example:
+            # Quick weather for testing
+            weather = Weather.from_values(ta=25, rh=50, global_rad=800)
+
+            # With specific datetime
+            weather = Weather.from_values(
+                ta=30, rh=60, global_rad=900,
+                datetime=datetime(2024, 7, 15, 14, 0)
+            )
+        """
+        if datetime is None:
+            datetime = dt.now()
+        return cls(datetime=datetime, ta=ta, rh=rh, global_rad=global_rad, ws=ws, **kwargs)
 
     @classmethod
     def from_epw(

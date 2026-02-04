@@ -66,14 +66,33 @@ results = solweig.calculate_timeseries(
 
 ## Post-Processing (UTCI/PET)
 
-Thermal comfort indices are computed separately:
+Thermal comfort indices can be computed directly from results:
 
 ```python
-# Fast polynomial (~1 second)
-solweig.compute_utci(tmrt_dir="output/", weather_series=weather_list)
+# Single timestep: compute directly from result
+result = solweig.calculate(surface, location, weather)
+utci = result.compute_utci(weather)  # Fast polynomial
+pet = result.compute_pet(weather)    # Slower iterative solver
 
-# Slower iterative solver (optional)
-solweig.compute_pet(tmrt_dir="output/", weather_series=weather_list)
+# Batch processing: from saved Tmrt files
+solweig.compute_utci(tmrt_dir="output/", weather_series=weather_list, output_dir="utci/")
+solweig.compute_pet(tmrt_dir="output/", weather_series=weather_list, output_dir="pet/")
+```
+
+## Input Validation
+
+Validate inputs before expensive calculations:
+
+```python
+try:
+    warnings = solweig.validate_inputs(surface, location, weather)
+    for w in warnings:
+        print(f"Warning: {w}")
+    result = solweig.calculate(surface, location, weather)
+except solweig.GridShapeMismatch as e:
+    print(f"Grid mismatch: {e.field}")
+except solweig.MissingPrecomputedData as e:
+    print(f"Missing data: {e}")
 ```
 
 ## Demos
