@@ -199,5 +199,59 @@ class TestConstantConsistency:
         # (the actual calculation happens without raising/returning all-1s)
 
 
+class TestCylindricWedgeRust:
+    """Tests that Rust cylindric_wedge matches Python reference implementation."""
+
+    def test_matches_python_reference(self):
+        """Rust output matches Python for a range of sun angles."""
+        from solweig.rustalgos import sky as rust_sky
+
+        rows, cols = 50, 50
+        rng = np.random.default_rng(42)
+        svfalfa = rng.uniform(0.1, 1.0, (rows, cols)).astype(np.float32)
+
+        for altitude in [5.0, 15.0, 30.0, 45.0, 60.0, 85.0]:
+            zen_rad = (90 - altitude) * (np.pi / 180)
+            py_result = cylindric_wedge(zen_rad, svfalfa, rows, cols)
+            rs_result = rust_sky.cylindric_wedge(float(zen_rad), svfalfa)
+
+            np.testing.assert_allclose(
+                rs_result,
+                py_result,
+                rtol=2e-5,
+                atol=1e-5,
+                err_msg=f"Rust/Python mismatch at altitude {altitude}°",
+            )
+
+    def test_low_sun_guard_matches(self):
+        """Rust returns all 1.0 below 3° threshold, same as Python."""
+        from solweig.rustalgos import sky as rust_sky
+
+        svfalfa = np.full((10, 10), 0.5, dtype=np.float32)
+
+        for altitude in [0.1, 1.0, 2.0, 2.9]:
+            zen_rad = (90 - altitude) * (np.pi / 180)
+            rs_result = rust_sky.cylindric_wedge(float(zen_rad), svfalfa)
+
+            assert np.allclose(rs_result, 1.0), f"Rust should return all 1.0 at altitude {altitude}°"
+
+    def test_boundary_at_3_degrees(self):
+        """Rust transition at 3° matches Python."""
+        from solweig.rustalgos import sky as rust_sky
+
+        svfalfa = np.full((10, 10), 0.5, dtype=np.float32)
+
+        # Just below threshold
+        zen_below = (90 - 2.99) * (np.pi / 180)
+        rs_below = rust_sky.cylindric_wedge(float(zen_below), svfalfa)
+        assert np.allclose(rs_below, 1.0)
+
+        # Just above threshold
+        zen_above = (90 - 3.01) * (np.pi / 180)
+        rs_above = rust_sky.cylindric_wedge(float(zen_above), svfalfa)
+        py_above = cylindric_wedge(zen_above, svfalfa, 10, 10)
+        np.testing.assert_allclose(rs_above, py_above, rtol=1e-5)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

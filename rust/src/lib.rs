@@ -91,6 +91,8 @@ fn register_sky_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     submodule.add_class::<sky::SurfaceParams>()?;
     submodule.add_class::<sky::SkyResult>()?;
     submodule.add_function(wrap_pyfunction!(sky::anisotropic_sky, &submodule)?)?;
+    submodule.add_function(wrap_pyfunction!(sky::cylindric_wedge, &submodule)?)?;
+    submodule.add_function(wrap_pyfunction!(sky::weighted_patch_sum, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }

@@ -8,6 +8,7 @@ use rayon::prelude::*;
 
 const PI: f32 = std::f32::consts::PI;
 const SBC: f32 = 5.67051e-8; // Stefan-Boltzmann constant
+const MIN_SUN_ELEVATION_RAD: f32 = 3.0 * PI / 180.0; // 3° threshold for low sun guard
 
 /// Sun position parameters
 #[pyclass]
@@ -567,4 +568,126 @@ pub fn anisotropic_sky(
         skyalt: skyalt.into_pyarray(py).unbind(),
     };
     Py::new(py, result)
+}
+
+/// Per-pixel cylindric wedge shadow fraction calculation.
+///
+/// Computes F_sh for a single pixel given pre-computed tan(zenith) and the
+/// SVF-weighted building angle for that pixel.
+#[allow(non_snake_case)]
+fn cylindric_wedge_pixel(tan_zen: f32, svfalfa_val: f32) -> f32 {
+    let tan_alfa = svfalfa_val.tan().max(1e-6);
+    let ba = 1.0 / tan_alfa;
+    let tan_product = (tan_alfa * tan_zen).max(1e-6);
+
+    let xa = 1.0 - 2.0 / tan_product;
+    let ha = 2.0 / tan_product;
+    let hkil = 2.0 * ba * ha;
+
+    let ukil = if xa < 0.0 {
+        let qa = tan_zen / 2.0;
+        let za = (ba * ba - qa * qa / 4.0).max(0.0).sqrt();
+        let phi = (za / qa.max(1e-10)).atan();
+        let cos_phi = phi.cos();
+        let sin_phi = phi.sin();
+        let denom = (1.0 - cos_phi).max(1e-10);
+        let a = (sin_phi - phi * cos_phi) / denom;
+        2.0 * ba * xa * a
+    } else {
+        0.0
+    };
+
+    let s_surf = hkil + ukil;
+    (2.0 * PI * ba - s_surf) / (2.0 * PI * ba)
+}
+
+/// Fraction of sunlit walls based on sun altitude and SVF-weighted building angles.
+///
+/// Args:
+///     zen: Sun zenith angle (radians, scalar)
+///     svfalfa: SVF-related angle grid (2D array, radians)
+///
+/// Returns:
+///     F_sh: Shadow fraction grid (0 = fully sunlit, 1 = fully shaded)
+///
+/// At very low sun altitudes (< 3°), returns F_sh = 1.0 to avoid
+/// numerical instability from tan(zen) approaching infinity.
+#[pyfunction]
+#[allow(non_snake_case)]
+pub fn cylindric_wedge(
+    py: Python,
+    zen: f32,
+    svfalfa: PyReadonlyArray2<f32>,
+) -> PyResult<Py<PyArray2<f32>>> {
+    let svfalfa = svfalfa.as_array();
+    let rows = svfalfa.shape()[0];
+    let cols = svfalfa.shape()[1];
+
+    // Guard against low sun angles where tan(zen) → infinity
+    let altitude_rad = PI / 2.0 - zen;
+    if altitude_rad < MIN_SUN_ELEVATION_RAD {
+        return Ok(Array2::<f32>::ones((rows, cols))
+            .into_pyarray(py)
+            .unbind());
+    }
+
+    let tan_zen = zen.tan();
+
+    // Parallel per-pixel computation using rayon
+    let pixel_results: Vec<f32> = (0..rows * cols)
+        .into_par_iter()
+        .map(|idx| {
+            let r = idx / cols;
+            let c = idx % cols;
+            cylindric_wedge_pixel(tan_zen, svfalfa[[r, c]])
+        })
+        .collect();
+
+    let result = Array2::from_shape_vec((rows, cols), pixel_results)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    Ok(result.into_pyarray(py).unbind())
+}
+
+/// Weighted sum over the patch dimension of a 3D array.
+///
+/// Computes: result[r, c] = sum_i(patches[r, c, i] * weights[i])
+///
+/// This replaces the Python loop:
+///   for idx in range(n_patches):
+///       ani_lum += diffsh[:,:,idx] * lv[idx, 2]
+///
+/// Args:
+///     patches: 3D array (rows, cols, n_patches) - e.g. diffuse shadow matrix
+///     weights: 1D array (n_patches,) - e.g. Perez luminance weights
+///
+/// Returns:
+///     2D array (rows, cols) - weighted sum
+#[pyfunction]
+pub fn weighted_patch_sum(
+    py: Python,
+    patches: PyReadonlyArray3<f32>,
+    weights: PyReadonlyArray1<f32>,
+) -> PyResult<Py<PyArray2<f32>>> {
+    let patches = patches.as_array();
+    let weights = weights.as_array();
+    let rows = patches.shape()[0];
+    let cols = patches.shape()[1];
+    let n_patches = patches.shape()[2];
+
+    let pixel_results: Vec<f32> = (0..rows * cols)
+        .into_par_iter()
+        .map(|idx| {
+            let r = idx / cols;
+            let c = idx % cols;
+            let mut sum = 0.0f32;
+            for i in 0..n_patches {
+                sum += patches[[r, c, i]] * weights[[i]];
+            }
+            sum
+        })
+        .collect();
+
+    let result = Array2::from_shape_vec((rows, cols), pixel_results)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    Ok(result.into_pyarray(py).unbind())
 }

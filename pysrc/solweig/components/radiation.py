@@ -23,10 +23,10 @@ import numpy as np
 from ..buffers import as_float32
 from ..bundles import DirectionalArrays, RadiationBundle
 from ..constants import F_SIDE_SITTING, F_SIDE_STANDING, F_UP_SITTING, F_UP_STANDING, KELVIN_OFFSET, SBC
-from ..physics.cylindric_wedge import cylindric_wedge
 from ..physics.Kup_veg_2015a import Kup_veg_2015a
 from ..physics.patch_radiation import patch_steradians
 from ..physics.Perez_v3 import Perez_v3
+from ..rustalgos import sky as _sky
 
 if TYPE_CHECKING:
     from ..api import HumanParams, PrecomputedData, Weather
@@ -127,8 +127,7 @@ def compute_radiation(
 
     # Compute F_sh (fraction shadow on building walls based on sun altitude and SVF)
     zen = weather.sun_zenith * (np.pi / 180.0)  # Convert to radians for cylindric_wedge
-    rows, cols = svf.shape
-    f_sh = cylindric_wedge(zen, svfalfa, rows, cols)
+    f_sh = _sky.cylindric_wedge(float(zen), as_float32(svfalfa))
     f_sh = np.nan_to_num(f_sh, nan=0.5)
 
     # Compute Kup (ground-reflected shortwave) using full directional model
@@ -177,9 +176,10 @@ def compute_radiation(
         diffsh = shadow_mats.diffsh(psi, use_vegetation=psi < 0.5)
 
         # Total relative luminance from sky patches into each cell
-        ani_lum = np.zeros((rows, cols), dtype=np.float32)
-        for idx in range(lv.shape[0]):
-            ani_lum += diffsh[:, :, idx] * lv[idx, 2]
+        ani_lum = _sky.weighted_patch_sum(
+            as_float32(diffsh),
+            as_float32(lv[:, 2]),
+        )
 
         drad = ani_lum * rad_d
 
