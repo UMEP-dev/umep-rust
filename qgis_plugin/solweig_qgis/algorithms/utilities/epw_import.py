@@ -1,7 +1,7 @@
 """
-EPW Import/Validation Algorithm
+EPW Weather File Tool
 
-Preview and validate EnergyPlus Weather (EPW) files.
+Download EPW files from PVGIS or preview/validate existing EPW files.
 """
 
 from __future__ import annotations
@@ -13,8 +13,12 @@ from qgis.core import (
     QgsProcessingContext,
     QgsProcessingException,
     QgsProcessingFeedback,
+    QgsProcessingOutputFile,
     QgsProcessingOutputHtml,
+    QgsProcessingParameterEnum,
     QgsProcessingParameterFile,
+    QgsProcessingParameterFileDestination,
+    QgsProcessingParameterNumber,
 )
 
 from ..base import SolweigAlgorithmBase
@@ -22,49 +26,52 @@ from ..base import SolweigAlgorithmBase
 
 class EpwImportAlgorithm(SolweigAlgorithmBase):
     """
-    Preview and validate EPW weather files.
+    Download EPW files from PVGIS or preview existing EPW files.
 
-    Displays location information, date range, and data statistics
-    to help users understand their weather data before running
-    calculations.
+    In download mode, fetches a Typical Meteorological Year (TMY) EPW
+    file from the EU PVGIS service for any location (no API key needed).
+
+    In preview mode, displays location, date range, and data statistics
+    for an existing EPW file.
     """
 
-    # Parameter names
-    EPW_FILE = "EPW_FILE"
+    # Mode enum values
+    MODE_DOWNLOAD = 0
+    MODE_PREVIEW = 1
 
     def name(self) -> str:
         return "epw_import"
 
     def displayName(self) -> str:
-        return self.tr("Import EPW Weather File")
+        return self.tr("Download / Preview EPW Weather File")
 
     def shortHelpString(self) -> str:
         return self.tr(
-            """Preview and validate EnergyPlus Weather (EPW) files.
+            """Download or preview EnergyPlus Weather (EPW) files.
 
-<b>Purpose:</b>
-Inspect EPW weather files before running SOLWEIG calculations.
-Displays location, date range, and data quality information.
+<b>Download mode:</b>
+Downloads a Typical Meteorological Year (TMY) EPW file from the EU
+PVGIS service (no API key required). Near-global coverage using
+ERA5 reanalysis data.
 
-<b>EPW Format:</b>
-EnergyPlus Weather files contain hourly meteorological data including:
-- Air temperature
-- Relative humidity
-- Wind speed and direction
-- Solar radiation (global, direct, diffuse)
-- Atmospheric pressure
+Enter latitude and longitude, and the file will be downloaded and
+saved to the specified output path.
 
-<b>Output:</b>
-HTML report with:
-- Location (city, country, coordinates, elevation)
-- Date range and timestep count
-- Data statistics (min, max, mean for key variables)
-- Data quality warnings (missing values, outliers)
+<b>Preview mode:</b>
+Inspect an existing EPW file before running SOLWEIG calculations.
+Generates an HTML report with location, date range, and data statistics.
 
-<b>Tip:</b>
-EPW files can be downloaded from:
-- climate.onebuilding.org (global coverage)
-- energyplus.net/weather (official EnergyPlus collection)"""
+<b>EPW files contain hourly data including:</b>
+<ul>
+<li>Air temperature, relative humidity</li>
+<li>Wind speed and direction</li>
+<li>Solar radiation (global, direct, diffuse)</li>
+<li>Atmospheric pressure</li>
+</ul>
+
+<b>Data source:</b>
+PVGIS (Photovoltaic Geographical Information System) by the
+EU Joint Research Centre. Data derived from ERA5 reanalysis."""
         )
 
     def group(self) -> str:
@@ -75,15 +82,68 @@ EPW files can be downloaded from:
 
     def initAlgorithm(self, config=None):
         """Define algorithm parameters."""
+        # Mode selector
         self.addParameter(
-            QgsProcessingParameterFile(
-                self.EPW_FILE,
-                self.tr("EPW weather file"),
-                extension="epw",
+            QgsProcessingParameterEnum(
+                "MODE",
+                self.tr("Mode"),
+                options=["Download EPW from PVGIS", "Preview existing EPW file"],
+                defaultValue=self.MODE_DOWNLOAD,
             )
         )
 
-        # Output
+        # Download parameters
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                "LATITUDE",
+                self.tr("Latitude (for download)"),
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=57.7,
+                minValue=-90.0,
+                maxValue=90.0,
+                optional=True,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                "LONGITUDE",
+                self.tr("Longitude (for download)"),
+                type=QgsProcessingParameterNumber.Double,
+                defaultValue=12.0,
+                minValue=-180.0,
+                maxValue=180.0,
+                optional=True,
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterFileDestination(
+                "OUTPUT_EPW",
+                self.tr("Save EPW file to (for download)"),
+                fileFilter="EPW files (*.epw)",
+                optional=True,
+            )
+        )
+
+        # Preview parameters
+        self.addParameter(
+            QgsProcessingParameterFile(
+                "EPW_FILE",
+                self.tr("EPW weather file (for preview)"),
+                extension="epw",
+                optional=True,
+            )
+        )
+
+        # Outputs
+        self.addOutput(
+            QgsProcessingOutputFile(
+                "DOWNLOADED_FILE",
+                self.tr("Downloaded EPW file"),
+            )
+        )
+
         self.addOutput(
             QgsProcessingOutputHtml(
                 "OUTPUT_HTML",
@@ -98,8 +158,92 @@ EPW files can be downloaded from:
         feedback: QgsProcessingFeedback,
     ) -> dict:
         """Execute the algorithm."""
+        mode = self.parameterAsEnum(parameters, "MODE", context)
+
+        if mode == self.MODE_DOWNLOAD:
+            return self._download_epw(parameters, context, feedback)
+        else:
+            return self._preview_epw(parameters, context, feedback)
+
+    def _download_epw(
+        self,
+        parameters: dict,
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> dict:
+        """Download EPW from PVGIS and generate preview report."""
         feedback.pushInfo("=" * 60)
-        feedback.pushInfo("EPW Weather File Import")
+        feedback.pushInfo("EPW Download from PVGIS")
+        feedback.pushInfo("=" * 60)
+
+        # Import solweig
+        self.import_solweig()
+        from solweig.io import download_epw, read_epw
+
+        # Get parameters
+        latitude = self.parameterAsDouble(parameters, "LATITUDE", context)
+        longitude = self.parameterAsDouble(parameters, "LONGITUDE", context)
+        output_path = self.parameterAsFileOutput(parameters, "OUTPUT_EPW", context)
+
+        if not output_path:
+            output_path = str(Path(tempfile.gettempdir()) / f"pvgis_{latitude:.2f}_{longitude:.2f}.epw")
+
+        feedback.pushInfo(f"Location: {latitude:.4f}N, {longitude:.4f}E")
+        feedback.pushInfo(f"Output: {output_path}")
+        feedback.pushInfo("")
+        feedback.setProgressText("Downloading from PVGIS...")
+        feedback.setProgress(10)
+
+        try:
+            download_epw(latitude, longitude, output_path)
+        except ConnectionError as e:
+            raise QgsProcessingException(f"Cannot reach PVGIS server. Check your internet connection.\n{e}") from e
+        except RuntimeError as e:
+            raise QgsProcessingException(str(e)) from e
+
+        feedback.setProgress(60)
+        feedback.pushInfo(f"Downloaded EPW file: {output_path}")
+
+        # Generate preview report
+        feedback.setProgressText("Generating report...")
+        try:
+            df, metadata = read_epw(output_path)
+        except Exception as e:
+            raise QgsProcessingException(f"Error reading downloaded EPW: {e}") from e
+
+        feedback.pushInfo("")
+        feedback.pushInfo(f"Location: {metadata.get('city', 'Unknown')}")
+        feedback.pushInfo(f"Coordinates: {metadata.get('latitude', 'N/A')}N, {metadata.get('longitude', 'N/A')}E")
+        feedback.pushInfo(f"Data range: {df.index.min()} to {df.index.max()}")
+        feedback.pushInfo(f"Timesteps: {len(df)}")
+
+        html = self._generate_html_report(df, metadata, output_path)
+        html_path = str(Path(tempfile.gettempdir()) / f"epw_report_{Path(output_path).stem}.html")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html)
+
+        feedback.setProgress(100)
+        feedback.pushInfo("")
+        feedback.pushInfo("=" * 60)
+        feedback.pushInfo("Download complete!")
+        feedback.pushInfo(f"  EPW file: {output_path}")
+        feedback.pushInfo(f"  Report: {html_path}")
+        feedback.pushInfo("=" * 60)
+
+        return {
+            "DOWNLOADED_FILE": output_path,
+            "OUTPUT_HTML": html_path,
+        }
+
+    def _preview_epw(
+        self,
+        parameters: dict,
+        context: QgsProcessingContext,
+        feedback: QgsProcessingFeedback,
+    ) -> dict:
+        """Preview an existing EPW file."""
+        feedback.pushInfo("=" * 60)
+        feedback.pushInfo("EPW Weather File Preview")
         feedback.pushInfo("=" * 60)
 
         # Import solweig
@@ -107,7 +251,9 @@ EPW files can be downloaded from:
         from solweig.io import read_epw
 
         # Get parameters
-        epw_path = self.parameterAsFile(parameters, self.EPW_FILE, context)
+        epw_path = self.parameterAsFile(parameters, "EPW_FILE", context)
+        if not epw_path:
+            raise QgsProcessingException("No EPW file specified for preview mode")
 
         feedback.pushInfo(f"Reading: {epw_path}")
 
@@ -253,8 +399,8 @@ EPW files can be downloaded from:
             <tr><td>City</td><td>{metadata.get("city", "Unknown")}</td></tr>
             <tr><td>State/Province</td><td>{metadata.get("state", "-")}</td></tr>
             <tr><td>Country</td><td>{metadata.get("country", "Unknown")}</td></tr>
-            <tr><td>Latitude</td><td>{metadata.get("latitude", "N/A")}° N</td></tr>
-            <tr><td>Longitude</td><td>{metadata.get("longitude", "N/A")}° E</td></tr>
+            <tr><td>Latitude</td><td>{metadata.get("latitude", "N/A")}&deg; N</td></tr>
+            <tr><td>Longitude</td><td>{metadata.get("longitude", "N/A")}&deg; E</td></tr>
             <tr><td>Elevation</td><td>{metadata.get("elevation", "N/A")} m</td></tr>
             <tr><td>UTC Offset</td><td>UTC{metadata.get("tz_offset", 0):+.0f}</td></tr>
         </table>
@@ -295,7 +441,8 @@ EPW files can be downloaded from:
     <div class="info">
         <strong>Next Steps:</strong>
         <ul>
-            <li>Use this EPW file with "Calculate Tmrt (Timeseries)" algorithm</li>
+            <li>Use this EPW file with the "SOLWEIG Calculation" algorithm</li>
+            <li>Set weather source to "EPW weather file"</li>
             <li>UTC offset is important for accurate sun position calculation</li>
             <li>Consider filtering hours (e.g., 9-17) for daylight-only analysis</li>
         </ul>

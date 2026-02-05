@@ -17,6 +17,7 @@ from qgis.core import (
     QgsProcessingParameterNumber,
     QgsProcessingParameterRasterDestination,
     QgsProcessingParameterRasterLayer,
+    QgsProcessingParameterString,
 )
 
 if TYPE_CHECKING:
@@ -405,7 +406,7 @@ def add_epw_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     )
 
     algorithm.addParameter(
-        QgsProcessingParameterFile(
+        QgsProcessingParameterString(
             "HOURS_FILTER",
             algorithm.tr("Hours to include (comma-separated, e.g., 9,10,11,12)"),
             optional=True,

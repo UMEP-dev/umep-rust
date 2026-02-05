@@ -14,10 +14,9 @@ class SolweigProvider(QgsProcessingProvider):
     """
     QGIS Processing provider for SOLWEIG algorithms.
 
-    Groups algorithms into categories:
+    Algorithms:
     - Preprocessing: SVF computation
-    - Calculation: Tmrt (single, timeseries, tiled)
-    - Post-processing: UTCI, PET
+    - Calculation: Unified SOLWEIG calculation (single/timeseries/tiled + UTCI/PET)
     - Utilities: EPW import
     """
 
@@ -46,28 +45,17 @@ class SolweigProvider(QgsProcessingProvider):
 
         Called by QGIS when the provider is initialized.
         """
-        # Preprocessing algorithms
+        # Preprocessing
         from .algorithms.preprocess.svf_preprocessing import SvfPreprocessingAlgorithm
 
         self.addAlgorithm(SvfPreprocessingAlgorithm())
 
-        # Calculation algorithms
-        from .algorithms.calculation.single_timestep import SingleTimestepAlgorithm
-        from .algorithms.calculation.tiled_processing import TiledProcessingAlgorithm
-        from .algorithms.calculation.timeseries import TimeseriesAlgorithm
+        # Main calculation (unified: single/timeseries/tiled + UTCI/PET)
+        from .algorithms.calculation.solweig_calculation import SolweigCalculationAlgorithm
 
-        self.addAlgorithm(SingleTimestepAlgorithm())
-        self.addAlgorithm(TimeseriesAlgorithm())
-        self.addAlgorithm(TiledProcessingAlgorithm())
+        self.addAlgorithm(SolweigCalculationAlgorithm())
 
-        # Post-processing algorithms
-        from .algorithms.postprocess.pet import PetAlgorithm
-        from .algorithms.postprocess.utci import UtciAlgorithm
-
-        self.addAlgorithm(UtciAlgorithm())
-        self.addAlgorithm(PetAlgorithm())
-
-        # Utility algorithms
+        # Utilities
         from .algorithms.utilities.epw_import import EpwImportAlgorithm
 
         self.addAlgorithm(EpwImportAlgorithm())

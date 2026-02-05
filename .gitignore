@@ -25,7 +25,6 @@ __pycache__/
 
 # UV
 .python-version
-uv.lock
 
 # Don't ignore the temp directory itself
 !temp/

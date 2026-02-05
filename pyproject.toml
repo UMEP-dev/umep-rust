@@ -83,7 +83,6 @@ dev = [
     "pip>=23.2",
     "ruff>=0.5.1",
     "poethepoet>=0.29.0",
-    "pyright>=1.1.398",
     "umep>=0.0.1a18", # For cross-checking tests against reference implementation
     "ty>=0.0.12",
     # Include full optional dependencies for dev/testing

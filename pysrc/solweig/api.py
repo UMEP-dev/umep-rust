@@ -36,6 +36,7 @@ from .errors import (
     SolweigError,
     WeatherDataError,
 )
+from .io import download_epw
 
 # Import from extracted modules
 from .loaders import load_materials, load_params, load_physics
@@ -394,6 +395,8 @@ __all__ = [
     "calculate_buffer_distance",
     "validate_tile_size",
     "generate_tiles",
+    # I/O
+    "download_epw",
     # Utilities
     "dict_to_namespace",
     "namespace_to_dict",

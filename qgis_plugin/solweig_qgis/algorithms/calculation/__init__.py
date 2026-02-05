@@ -1,1 +1,1 @@
-"""Core calculation algorithms for SOLWEIG."""
+"""Unified SOLWEIG calculation algorithm."""

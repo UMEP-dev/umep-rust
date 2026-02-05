@@ -68,6 +68,8 @@ from .api import (  # noqa: E402
     compute_utci_grid,
     # Run metadata/provenance
     create_run_metadata,
+    # I/O
+    download_epw,
     generate_tiles,
     load_materials,
     load_params,
@@ -179,6 +181,8 @@ __all__ = [
     "create_run_metadata",
     "save_run_metadata",
     "load_run_metadata",
+    # I/O
+    "download_epw",
     # Utility modules
     "io",
     "walls",

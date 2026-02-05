@@ -1216,6 +1216,81 @@ def _read_epw_pure_python(path: Path) -> tuple:
     return df, metadata
 
 
+def download_epw(
+    latitude: float,
+    longitude: float,
+    output_path: str | Path,
+    *,
+    timeout: int = 60,
+) -> Path:
+    """
+    Download a Typical Meteorological Year (TMY) EPW file from PVGIS.
+
+    Uses the EU Joint Research Centre's PVGIS API (no API key required).
+    Coverage is near-global (all continents except polar regions),
+    using ERA5 reanalysis data.
+
+    Args:
+        latitude: Latitude in decimal degrees (-90 to 90).
+        longitude: Longitude in decimal degrees (-180 to 180).
+        output_path: Path where the EPW file will be saved.
+        timeout: HTTP request timeout in seconds (default 60).
+
+    Returns:
+        Path to the saved EPW file.
+
+    Raises:
+        ValueError: If coordinates are out of range.
+        ConnectionError: If the PVGIS server is unreachable.
+        RuntimeError: If the download fails (e.g. location over ocean).
+
+    Example:
+        >>> from solweig.io import download_epw
+        >>> path = download_epw(37.98, 23.73, "athens.epw")
+        >>> data, metadata = read_epw(path)
+    """
+    import urllib.error
+    import urllib.request
+
+    if not -90 <= latitude <= 90:
+        raise ValueError(f"Latitude must be between -90 and 90, got {latitude}")
+    if not -180 <= longitude <= 180:
+        raise ValueError(f"Longitude must be between -180 and 180, got {longitude}")
+
+    output_path = Path(output_path)
+
+    url = f"https://re.jrc.ec.europa.eu/api/v5_3/tmy?lat={latitude}&lon={longitude}&outputformat=epw"
+
+    logger.info(f"Downloading EPW from PVGIS for ({latitude:.4f}, {longitude:.4f})...")
+
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+    except urllib.error.HTTPError as e:
+        if e.code == 400:
+            raise RuntimeError(
+                f"PVGIS has no data for ({latitude}, {longitude}). The location may be over ocean or outside coverage."
+            ) from e
+        raise RuntimeError(f"PVGIS download failed (HTTP {e.code}): {e.reason}") from e
+    except urllib.error.URLError as e:
+        raise ConnectionError(f"Cannot reach PVGIS server: {e.reason}") from e
+
+    if len(data) < 1000:
+        # PVGIS returns a short error message for invalid locations
+        text = data.decode("utf-8", errors="replace")
+        raise RuntimeError(f"PVGIS returned an error: {text.strip()}")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(data)
+
+    lines = data.decode("utf-8", errors="replace").split("\n")
+    n_data_lines = len(lines) - 8  # subtract header lines
+    logger.info(f"Saved EPW file: {output_path} ({n_data_lines} hourly records)")
+
+    return output_path
+
+
 def read_epw(path: str | Path) -> tuple:
     """
     Read EnergyPlus Weather (EPW) file and return weather data with metadata.
