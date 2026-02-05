@@ -54,7 +54,7 @@ class TestGoldenWallHeight:
 
     def test_findwalls_produces_nonnegative_heights(self, dsm):
         """Wall heights should be non-negative."""
-        from solweig.algorithms.wallalgorithms import findwalls
+        from solweig.physics.wallalgorithms import findwalls
 
         walllimit = 2.0  # Minimum wall height to detect
         wall_ht = findwalls(dsm, walllimit)
@@ -63,7 +63,7 @@ class TestGoldenWallHeight:
 
     def test_findwalls_shape_matches_dsm(self, dsm):
         """Output shape should match input DSM."""
-        from solweig.algorithms.wallalgorithms import findwalls
+        from solweig.physics.wallalgorithms import findwalls
 
         walllimit = 2.0
         wall_ht = findwalls(dsm, walllimit)
@@ -72,7 +72,7 @@ class TestGoldenWallHeight:
 
     def test_findwalls_detects_walls_at_building_edges(self, dsm, expected_wall_ht):
         """Walls should be detected where expected (building edges)."""
-        from solweig.algorithms.wallalgorithms import findwalls
+        from solweig.physics.wallalgorithms import findwalls
 
         walllimit = 2.0
         wall_ht = findwalls(dsm, walllimit)
@@ -90,7 +90,7 @@ class TestGoldenWallHeight:
 
     def test_findwalls_heights_match_golden(self, dsm, expected_wall_ht):
         """Wall heights should match golden reference within tolerance."""
-        from solweig.algorithms.wallalgorithms import findwalls
+        from solweig.physics.wallalgorithms import findwalls
 
         walllimit = 2.0
         wall_ht = findwalls(dsm, walllimit)
@@ -115,7 +115,7 @@ class TestGoldenWallAspect:
 
     def test_wall_aspect_range(self, dsm, params):
         """Wall aspects should be in valid range [0, 360)."""
-        from solweig.algorithms.wallalgorithms import filter1Goodwin_as_aspect_v3, findwalls
+        from solweig.physics.wallalgorithms import filter1Goodwin_as_aspect_v3, findwalls
 
         scale = float(params["scale"])
         walllimit = 2.0
@@ -135,7 +135,7 @@ class TestGoldenWallAspect:
 
     def test_wall_aspect_shape_matches_dsm(self, dsm, params):
         """Output shape should match input DSM."""
-        from solweig.algorithms.wallalgorithms import filter1Goodwin_as_aspect_v3, findwalls
+        from solweig.physics.wallalgorithms import filter1Goodwin_as_aspect_v3, findwalls
 
         scale = float(params["scale"])
         walllimit = 2.0
@@ -151,7 +151,7 @@ class TestGoldenWallAspect:
         Note: This test is marked slow because aspect calculation iterates
         through 180 angles with filter convolutions.
         """
-        from solweig.algorithms.wallalgorithms import filter1Goodwin_as_aspect_v3, findwalls
+        from solweig.physics.wallalgorithms import filter1Goodwin_as_aspect_v3, findwalls
 
         scale = float(params["scale"])
         walllimit = 2.0
@@ -184,7 +184,7 @@ class TestRotateArrayConsistency:
 
     def test_rotate_90_degrees(self):
         """90 degree rotation should transpose and flip."""
-        from solweig.algorithms.morphology import rotate_array
+        from solweig.physics.morphology import rotate_array
 
         arr = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
 
@@ -195,7 +195,7 @@ class TestRotateArrayConsistency:
 
     def test_rotate_180_degrees(self):
         """180 degree rotation should flip both axes."""
-        from solweig.algorithms.morphology import rotate_array
+        from solweig.physics.morphology import rotate_array
 
         arr = np.array([[1, 2], [3, 4]], dtype=np.float32)
 
@@ -206,7 +206,7 @@ class TestRotateArrayConsistency:
 
     def test_rotate_360_degrees(self):
         """360 degree rotation should return original."""
-        from solweig.algorithms.morphology import rotate_array
+        from solweig.physics.morphology import rotate_array
 
         arr = np.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]], dtype=np.float32)
 
@@ -216,7 +216,7 @@ class TestRotateArrayConsistency:
 
     def test_rotate_bilinear_smooth(self):
         """Bilinear interpolation should produce smooth values."""
-        from solweig.algorithms.morphology import rotate_array
+        from solweig.physics.morphology import rotate_array
 
         arr = np.array([[0, 0, 0], [0, 1, 0], [0, 0, 0]], dtype=np.float32)
 
@@ -234,7 +234,7 @@ class TestBinaryDilationConsistency:
 
     def test_single_pixel_dilation(self):
         """Single pixel should expand to 3x3 with 8-connectivity."""
-        from solweig.algorithms.morphology import binary_dilation
+        from solweig.physics.morphology import binary_dilation
 
         arr = np.array([[False, False, False], [False, True, False], [False, False, False]], dtype=bool)
 
@@ -247,7 +247,7 @@ class TestBinaryDilationConsistency:
 
     def test_dilation_iterations(self):
         """Multiple iterations should expand further."""
-        from solweig.algorithms.morphology import binary_dilation
+        from solweig.physics.morphology import binary_dilation
 
         arr = np.zeros((7, 7), dtype=bool)
         arr[3, 3] = True

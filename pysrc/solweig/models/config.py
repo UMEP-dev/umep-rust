@@ -94,7 +94,7 @@ class ModelConfig:
             >>> config.human.abs_k  # From Tmrt_params
             0.7
         """
-        from ..config import load_params
+        from ..loaders import load_params
 
         params = load_params(path)
 

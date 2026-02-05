@@ -92,13 +92,13 @@ class TestDiffuseFraction:
 
     def test_diffuse_fraction_import(self):
         """Verify diffusefraction module can be imported."""
-        from solweig.algorithms.diffusefraction import diffusefraction
+        from solweig.physics.diffusefraction import diffusefraction
 
         assert callable(diffusefraction)
 
     def test_overcast_high_diffuse_fraction(self):
         """Overcast conditions (low Kt) should have high diffuse fraction."""
-        from solweig.algorithms.diffusefraction import diffusefraction
+        from solweig.physics.diffusefraction import diffusefraction
 
         # Kt <= 0.3: overcast
         radG = 100  # Low global radiation
@@ -116,7 +116,7 @@ class TestDiffuseFraction:
 
     def test_clear_sky_low_diffuse_fraction(self):
         """Clear conditions (high Kt) should have low diffuse fraction."""
-        from solweig.algorithms.diffusefraction import diffusefraction
+        from solweig.physics.diffusefraction import diffusefraction
 
         # Kt >= 0.78: clear
         radG = 800  # High global radiation
@@ -132,7 +132,7 @@ class TestDiffuseFraction:
 
     def test_direct_plus_diffuse_equals_global(self):
         """Direct + diffuse should approximately equal global radiation."""
-        from solweig.algorithms.diffusefraction import diffusefraction
+        from solweig.physics.diffusefraction import diffusefraction
 
         radG = 500
         altitude = 45
@@ -175,7 +175,7 @@ class TestAbsorptionCoefficients:
 
     def test_json_params_abs_l_is_0_97(self):
         """JSON params should specify absL = 0.97 (ISO 7726)."""
-        from solweig.config import load_params
+        from solweig.loaders import load_params
 
         params = load_params()
         abs_l = params.Tmrt_params.Value.absL
@@ -191,7 +191,7 @@ class TestViewFactors:
 
     def test_standing_view_factors(self):
         """Standing posture: Fup=0.06, Fside=0.22."""
-        from solweig.config import load_params
+        from solweig.loaders import load_params
 
         params = load_params()
         standing = params.Posture.Standing.Value
@@ -201,7 +201,7 @@ class TestViewFactors:
 
     def test_sitting_view_factors(self):
         """Sitting posture: Fup=0.166666, Fside=0.166666."""
-        from solweig.config import load_params
+        from solweig.loaders import load_params
 
         params = load_params()
         sitting = params.Posture.Sitting.Value
@@ -211,7 +211,7 @@ class TestViewFactors:
 
     def test_view_factors_sum_approximately_one(self):
         """View factors should sum to approximately 1.0."""
-        from solweig.config import load_params
+        from solweig.loaders import load_params
 
         params = load_params()
 

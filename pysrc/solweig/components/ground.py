@@ -17,10 +17,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..algorithms.clearnessindex_2013b import clearnessindex_2013b
-from ..algorithms.daylen import daylen
-from ..algorithms.diffusefraction import diffusefraction
 from ..bundles import GroundBundle
+from ..physics.clearnessindex_2013b import clearnessindex_2013b
+from ..physics.daylen import daylen
+from ..physics.diffusefraction import diffusefraction
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

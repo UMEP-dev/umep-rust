@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..algorithms import sun_position as sp
-from ..algorithms.clearnessindex_2013b import clearnessindex_2013b
-from ..algorithms.diffusefraction import diffusefraction
+from ..physics import sun_position as sp
+from ..physics.clearnessindex_2013b import clearnessindex_2013b
+from ..physics.diffusefraction import diffusefraction
 from ..solweig_logging import get_logger
 
 if TYPE_CHECKING:

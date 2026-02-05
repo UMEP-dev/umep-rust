@@ -36,6 +36,7 @@ temperature (Tmrt) and other urban climate parameters.
     solweig.walls.generate_wall_hts(dsm_path, bbox, out_dir)
 """
 
+import contextlib
 import logging
 
 logger = logging.getLogger(__name__)
@@ -75,19 +76,6 @@ from .api import (  # noqa: E402
     save_run_metadata,
     # Validation
     validate_inputs,
-)
-
-# Import data bundles (Phase 5 refactoring)
-from .bundles import (  # noqa: E402
-    DirectionalArrays,
-    GroundBundle,
-    GvfBundle,
-    LupBundle,
-    RadiationBundle,
-    ShadowBundle,
-    SvfBundle,
-    VegetationBundle,
-    WallBundle,
 )
 from .errors import SolweigError  # noqa: E402
 
@@ -147,10 +135,22 @@ def get_compute_backend() -> str:
     return "gpu" if is_gpu_available() else "cpu"
 
 
+def disable_gpu() -> None:
+    """
+    Disable GPU acceleration, falling back to CPU.
+
+    This can be useful for debugging or if GPU results differ from expected.
+    The change takes effect immediately for subsequent calculations.
+    """
+    if shadowing is not None:
+        with contextlib.suppress(AttributeError):
+            shadowing.disable_gpu()
+
+
 __all__ = [
     # Version
     "__version__",
-    # Simplified API (recommended)
+    # Core API
     "SurfaceData",
     "PrecomputedData",
     "Location",
@@ -166,7 +166,7 @@ __all__ = [
     "load_params",
     "load_physics",
     "load_materials",
-    # Tiled processing helpers
+    # Tiled processing
     "calculate_buffer_distance",
     "TileSpec",
     "generate_tiles",
@@ -179,16 +179,6 @@ __all__ = [
     "create_run_metadata",
     "save_run_metadata",
     "load_run_metadata",
-    # Data bundles (Phase 5 refactoring)
-    "DirectionalArrays",
-    "SvfBundle",
-    "ShadowBundle",
-    "GroundBundle",
-    "GvfBundle",
-    "LupBundle",
-    "RadiationBundle",
-    "WallBundle",
-    "VegetationBundle",
     # Utility modules
     "io",
     "walls",
@@ -196,13 +186,6 @@ __all__ = [
     # GPU utilities
     "is_gpu_available",
     "get_compute_backend",
-    # Rust modules
+    "disable_gpu",
     "GPU_ENABLED",
-    "shadowing",
-    "skyview",
-    "gvf",
-    "sky",
-    "vegetation",
-    "utci",
-    "pet",
 ]

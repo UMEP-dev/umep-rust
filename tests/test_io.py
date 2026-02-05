@@ -1,17 +1,19 @@
 """
 Tests for I/O functionality including EPW parser.
+
+Note: EPW parser is deliberately pandas-free for QGIS compatibility.
+Tests must not assume pd.DataFrame - they test the _EpwDataFrame interface.
 """
 
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pytest
 from solweig import io
 
 
 class TestEPWParser:
-    """Test the standalone EPW parser (no pvlib dependency)."""
+    """Test the standalone EPW parser (no pandas dependency)."""
 
     @pytest.fixture
     def sample_epw_content(self):
@@ -41,11 +43,11 @@ DATA PERIODS,1,1,Data,Sunday, 1/ 1,12/31
         epw_path.write_text(sample_epw_content)
         return epw_path
 
-    def test_read_epw_returns_dataframe_and_metadata(self, epw_file):
-        """Test that read_epw returns both DataFrame and metadata dict."""
+    def test_read_epw_returns_data_and_metadata(self, epw_file):
+        """Test that read_epw returns a data object and metadata dict."""
         df, metadata = io.read_epw(epw_file)
 
-        assert isinstance(df, pd.DataFrame)
+        assert len(df) == 5
         assert isinstance(metadata, dict)
 
     def test_epw_metadata_parsing(self, epw_file):
@@ -77,7 +79,6 @@ DATA PERIODS,1,1,Data,Sunday, 1/ 1,12/31
         """Test that EPW data has proper datetime index."""
         df, _ = io.read_epw(epw_file)
 
-        assert isinstance(df.index, pd.DatetimeIndex)
         assert df.index.name == "datetime"
 
         # Check first timestamp
@@ -120,20 +121,31 @@ DATA PERIODS,1,1,Data,Sunday, 1/ 1,12/31
         """Test that read_epw accepts pathlib.Path."""
         df, metadata = io.read_epw(Path(epw_file))
 
-        assert isinstance(df, pd.DataFrame)
+        assert len(df) == 5
         assert metadata["city"] == "Athens"
 
     def test_epw_handles_string_path(self, epw_file):
         """Test that read_epw accepts string path."""
         df, metadata = io.read_epw(str(epw_file))
 
-        assert isinstance(df, pd.DataFrame)
+        assert len(df) == 5
         assert metadata["city"] == "Athens"
 
     def test_epw_missing_file_raises_error(self):
         """Test that reading non-existent EPW file raises error."""
         with pytest.raises(FileNotFoundError):
             io.read_epw("nonexistent.epw")
+
+    def test_to_dataframe_converts_when_pandas_available(self, epw_file):
+        """Test that to_dataframe() converts to pandas when available."""
+        import pandas as pd
+
+        df, _ = io.read_epw(epw_file)
+        pdf = df.to_dataframe()
+
+        assert isinstance(pdf, pd.DataFrame)
+        assert isinstance(pdf.index, pd.DatetimeIndex)
+        assert len(pdf) == 5
 
 
 class TestRasterIO:

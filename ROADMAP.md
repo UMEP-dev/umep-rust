@@ -14,18 +14,30 @@ This document outlines the development priorities for SOLWEIG.
 
 ## Next Tasks (Prioritized)
 
-| #   | Task                                     | Section | Impact                                 | Status      |
-| --- | ---------------------------------------- | ------- | -------------------------------------- | ----------- |
-| 1   | ~~Result methods (compute_utci/pet)~~    | E.1     | HIGH - API discoverability             | ✅ Complete |
-| 2   | ~~Location UTC offset warning~~          | E.2     | HIGH - prevents silent bugs            | ✅ Complete |
-| 3   | ~~Structured errors + validate_inputs()~~ | E.4    | MEDIUM - better error messages         | ✅ Complete |
-| 4   | ~~Config precedence (explicit wins)~~    | E.3     | MEDIUM - API consistency               | ✅ Complete |
-| 5   | ~~API cleanup (factories, docs)~~        | E.5     | LOW - polish                           | ✅ Complete |
-| 6   | Documentation update                     | D       | MEDIUM - user adoption                 | In progress |
-| 7   | POI Mode                                 | C       | HIGH - 10-100x speedup                 | Deferred    |
-| 8   | ~~Cache validation (hashes)~~            | B.3     | LOW - safety feature                   | ✅ Complete |
+| #   | Task                                      | Section | Impact                             | Status      |
+| --- | ----------------------------------------- | ------- | ---------------------------------- | ----------- |
+| 1   | ~~Result methods (compute_utci/pet)~~     | E.1     | HIGH - API discoverability         | ✅ Complete |
+| 2   | ~~Location UTC offset warning~~           | E.2     | HIGH - prevents silent bugs        | ✅ Complete |
+| 3   | ~~Structured errors + validate_inputs()~~ | E.4     | MEDIUM - better error messages     | ✅ Complete |
+| 4   | ~~Config precedence (explicit wins)~~     | E.3     | MEDIUM - API consistency           | ✅ Complete |
+| 5   | ~~API cleanup (factories, docs)~~         | E.5     | LOW - polish                       | ✅ Complete |
+| 6   | ~~Cache validation (hashes)~~             | B.3     | LOW - safety feature               | ✅ Complete |
+| 7   | ~~Tests for `calculate_timeseries()`~~    | F.1     | HIGH - primary workflow untested   | ✅ Complete |
+| 8   | ~~Fix GPU function docs~~                 | D       | HIGH - breaks new user experience  | ✅ Complete |
+| 9   | ~~Fix EPW parser tests~~                  | F       | HIGH - 8 tests failing silently    | ✅ Complete |
+| 10  | ~~Rename `algorithms/` → `physics/`~~     | B.4     | MEDIUM - misleading "Legacy" label | ✅ Complete |
+| 11  | ~~Slim down `__all__` exports~~           | E.5     | MEDIUM - internal bundles exposed  | ✅ Complete |
+| 12  | ~~Rename `config.py` → `loaders.py`~~     | B.4     | LOW - two-config ambiguity         | ✅ Complete |
+| 13  | Move `cylindric_wedge` to Rust            | G.2     | HIGH - per-timestep hotspot        | Pending     |
+| 14  | GPU context persistence                   | G.3     | HIGH - eliminates init overhead    | Pending     |
+| 15  | Move aniso patch loop to Rust             | G.2     | MEDIUM - anisotropic mode speedup  | Pending     |
+| 16  | QGIS plugin testing (Phase 11)            | D       | HIGH - blocks plugin adoption      | Pending     |
+| 17  | Orchestration layer unit tests            | F.1     | MEDIUM - regression safety         | Pending     |
+| 18  | API reference with mkdocstrings           | D       | MEDIUM - user adoption             | Pending     |
+| 19  | Field-data validation                     | H       | HIGH - scientific credibility      | Pending     |
+| 20  | POI Mode                                  | C       | HIGH - 10-100x speedup             | Deferred    |
 
-**Current status:** Phase B (Memory & Computational) complete. Ready for QGIS plugin integration.
+**Current status:** Phases A, B, E complete. Code quality sweep done (EPW fix, rename algorithms→physics, slim **all**, rename config→loaders). GPU/Rust-Python interface plan written (Phase G). Next: Rust migration of Python hotspots, then QGIS plugin testing.
 
 ### Recently Completed
 
@@ -46,7 +58,17 @@ This document outlines the development priorities for SOLWEIG.
 
 ## Session Log (Feb 2026)
 
-**Latest session (Feb 3):**
+**Latest session (Feb 5):**
+
+- ✅ **Low sun angle handling** - Fixed numerical issues at low solar altitudes
+  - `Perez_v3.py`: robust handling of edge-case zenith angles
+  - `cylindric_wedge.py`: clamp/guard for near-horizon sun positions
+  - `io.py`: related fixes for sun position edge cases
+  - Added `tests/spec/test_low_sun_angles.py` validation tests
+- ✅ QGIS plugin scaffolded and documented (Phases 1-10 complete)
+- ✅ MkDocs documentation site scaffolded (25 pages under `docs/`)
+
+**Session (Feb 3):**
 
 - ✅ **SVF auto-caching** - Fresh-computed SVF now cached on `surface.svf` for reuse
   - First call: computes SVF (~67s for 200×200)
@@ -55,7 +77,7 @@ This document outlines the development priorities for SOLWEIG.
 - ✅ Added `SvfArrays.from_bundle()` - converts computation result to cacheable format
 - ✅ Confirmed `SurfaceData.prepare()` refactor already complete (methods split into focused functions)
 
-**Previous session:**
+**Earlier sessions:**
 
 - ✅ Batch thermal delay (Rust) - 6 FFI calls → 1
 - ✅ Constants consolidation - `SBC`, `KELVIN_OFFSET` centralized in `constants.py`
@@ -63,6 +85,7 @@ This document outlines the development priorities for SOLWEIG.
 - ✅ Rust parameter structs - `GvfScalarParams` (20→11 params), `TmrtParams` (18→15 params)
 
 **API cleanup:**
+
 - `gvf.gvf_calc(arrays..., GvfScalarParams)` - clean struct-based API
 - `tmrt.compute_tmrt(arrays..., TmrtParams)` - clean struct-based API
 - Old 20+ param functions removed (no backward compat needed for new API)
@@ -80,10 +103,10 @@ This document outlines the development priorities for SOLWEIG.
 
 **Key metrics achieved:**
 
-- api.py reduced from 3,976 → 244 lines (-93.9%)
+- api.py reduced from 3,976 → 403 lines (-89.9%)
 - 6,100 lines of legacy code deleted
-- models.py split into models/ package (6 modules, ~2,850 lines)
-- 197 tests passing (including spec validation tests)
+- models.py split into models/ package (6 modules, ~3,080 lines)
+- 332 tests passing (including spec, golden, and benchmark tests)
 - 100% parity with reference UMEP implementation
 
 ---
@@ -109,8 +132,7 @@ This document outlines the development priorities for SOLWEIG.
 
 **Files:**
 
-- [specs/ground_temperature.md](specs/ground_temperature.md) - NEW
-- [TsWaveDelay_2015a.py](pysrc/solweig/algorithms/TsWaveDelay_2015a.py)
+- [specs/ground_temperature.md](specs/ground_temperature.md)
 - [components/ground.py](pysrc/solweig/components/ground.py)
 
 **Completed:**
@@ -153,7 +175,7 @@ See: [tests/spec/test_radiation_formulas.py](tests/spec/test_radiation_formulas.
 - [x] PET stress categories and radiation effects
 - [x] Default parameter validation
 
-See: [tests/spec/test_thermal_comfort.py](tests/spec/test_thermal_comfort.py)
+See: [tests/spec/test_utci.py](tests/spec/test_utci.py), [tests/spec/test_pet.py](tests/spec/test_pet.py)
 
 **Component validation:** ✅ Complete
 
@@ -176,12 +198,12 @@ See: [tests/spec/test_thermal_comfort.py](tests/spec/test_thermal_comfort.py)
 
 ### B.1 Memory Optimization (HIGH priority)
 
-| Issue               | Current                | Target              | Approach                           | Status             |
-| ------------------- | ---------------------- | ------------------- | ---------------------------------- | ------------------ |
-| Array precision     | Mixed float32/float64  | float32 throughout  | Audit and convert                  | ✅ Complete        |
-| Shadow storage      | float32                | float32             | Continuous values (transmissivity) | ⚠️ Cannot compress |
+| Issue               | Current                | Target              | Approach                           | Status                 |
+| ------------------- | ---------------------- | ------------------- | ---------------------------------- | ---------------------- |
+| Array precision     | Mixed float32/float64  | float32 throughout  | Audit and convert                  | ✅ Complete            |
+| Shadow storage      | float32                | float32             | Continuous values (transmissivity) | ⚠️ Cannot compress     |
 | SVF caching         | Full arrays in memory  | Memory-mapped files | Use np.memmap for tiled processing | ✅ Complete (Feb 2026) |
-| Intermediate arrays | Allocated per timestep | Pre-allocated pools | Reuse buffers                      | ⏳ Pending         |
+| Intermediate arrays | Allocated per timestep | Pre-allocated pools | Reuse buffers                      | ⏳ Pending             |
 
 **Tasks:**
 
@@ -251,13 +273,13 @@ Optional refactoring for maintainability. No behavioral changes.
 
 Optional Rust improvements to reduce Python/Rust crossing overhead.
 
-| Task                       | Goal                                                           | Status                          |
-| -------------------------- | -------------------------------------------------------------- | ------------------------------- |
-| Batch thermal delay        | Combine 6 `ts_wave_delay` calls into 1                         | ✅ Complete                     |
-| Rust parameter structs     | Replace 29-param functions with structs                        | ✅ Complete                     |
-| Fused radiation+tmrt       | Combine radiation calc + Tmrt in single Rust call              | Deferred (marginal gain)        |
-| Parallel SVF patches       | Rayon parallelization of patch calculations                    | Deferred (SVF is one-time cost) |
-| Mega-kernel                | Combine SVF→shadows→ground→GVF→radiation→Tmrt into single call | Deferred (0.3s/step is fast)    |
+| Task                   | Goal                                                           | Status                          |
+| ---------------------- | -------------------------------------------------------------- | ------------------------------- |
+| Batch thermal delay    | Combine 6 `ts_wave_delay` calls into 1                         | ✅ Complete                     |
+| Rust parameter structs | Replace 29-param functions with structs                        | ✅ Complete                     |
+| Fused radiation+tmrt   | Combine radiation calc + Tmrt in single Rust call              | Deferred (marginal gain)        |
+| Parallel SVF patches   | Rayon parallelization of patch calculations                    | Deferred (SVF is one-time cost) |
+| Mega-kernel            | Combine SVF→shadows→ground→GVF→radiation→Tmrt into single call | Deferred (0.3s/step is fast)    |
 
 **Note:** With SVF auto-caching, per-timestep cost is ~0.3s for 200×200. Further FFI optimization offers diminishing returns.
 
@@ -271,12 +293,246 @@ When prioritized, this phase would enable 10-100× speedup for point-based calcu
 
 ---
 
-## Phase D: Documentation & Integration (Future)
+## Phase G: GPU & Rust-Python Interface Design
 
-- Quick Start Guide
-- API Reference (auto-generated)
-- QGIS plugin integration
-- Build wheels for multiple platforms
+**Goal:** Extend GPU acceleration beyond shadowing, adopt a principled Rust/Python boundary, and move remaining Python hotspots to Rust where the gain justifies the complexity.
+
+### Current State (Feb 2026)
+
+**Rust modules** (5,341 lines, 15 files):
+
+- `shadowing.rs` (812 lines) - GPU-accelerated ray-marching via wgpu compute shader
+- `skyview.rs` (550 lines) - Hemispherical SVF (calls shadowing 32-248×)
+- `gvf.rs` (390 lines) - Ground view factor with wall radiation
+- `sky.rs` (550 lines) - Anisotropic sky longwave
+- `vegetation.rs` (800 lines) - Directional radiation from vegetation/buildings
+- `ground.rs` (350 lines) - TgMaps ground temperature model
+- `utci.rs` (350 lines) - Fast polynomial (125 terms)
+- `pet.rs` (370 lines) - Iterative thermal comfort solver
+- `tmrt.rs` (240 lines) - Mean radiant temperature integration
+- Internal helpers: `sun.rs`, `patch_radiation.rs`, `emissivity_models.rs`, `sunlit_shaded_patches.rs`
+
+**GPU status:** Only `shadowing.rs` has GPU support (wgpu compute shader, 346 lines WGSL). Falls back to CPU automatically.
+
+**Python physics** (`physics/`, 2,518 lines) - still in Python:
+
+- `sun_position.py` (1,061 lines) - ASTM solar position algorithm
+- `Perez_v3.py` (313 lines) - Anisotropic sky luminance
+- `cylindric_wedge.py` (109 lines) - Diffuse radiation geometry
+- `morphology.py` (188 lines) - Binary dilation (scipy replacement)
+- `wallalgorithms.py` (158 lines) - Wall height/aspect detection
+- Scalars: `clearnessindex_2013b.py`, `diffusefraction.py`, `daylen.py`, etc.
+
+### G.1 Principled Rust/Python Boundary
+
+**Decision framework** - move to Rust when ALL of:
+
+1. Per-pixel computation (not scalar/once-per-timestep)
+2. Called in the per-timestep hot path
+3. Measurable bottleneck (>5% of timestep time)
+
+**Keep in Python** when:
+
+- Scalar computation (clearnessindex, diffusefraction, daylen)
+- Called once per scenario, not per timestep
+- Complex control flow better expressed in Python
+- Debugging/readability priority outweighs performance
+
+### G.2 Python → Rust Migration Candidates
+
+| Priority | Function                         | Current                          | Per-Timestep?          | Expected Speedup | Effort |
+| -------- | -------------------------------- | -------------------------------- | ---------------------- | ---------------- | ------ |
+| **P0**   | `cylindric_wedge()`              | Python (109 lines)               | Yes, always            | 3-5×             | Low    |
+| **P0**   | Anisotropic patch summation loop | Python (5 lines in radiation.py) | Yes (aniso mode)       | 5-10×            | Low    |
+| **P1**   | `binary_dilation()`              | Python (48 lines)                | No (setup)             | 10-100×          | Medium |
+| **P2**   | `Perez_v3()`                     | Python (313 lines)               | Yes (aniso mode)       | 2-3×             | Medium |
+| **P3**   | `wallalgorithms.py`              | Python (158 lines)               | No (setup)             | 3-5×             | Medium |
+| Keep     | `sun_position.py`                | Python (1,061 lines)             | Once/timestep (scalar) | Negligible       | —      |
+| Keep     | `clearnessindex_2013b.py`        | Python (88 lines)                | Once/timestep (scalar) | Negligible       | —      |
+| Keep     | `diffusefraction.py`             | Python (47 lines)                | Once/timestep (scalar) | Negligible       | —      |
+| Keep     | `daylen.py`                      | Python (22 lines)                | Once/scenario (scalar) | Negligible       | —      |
+
+**P0: cylindric_wedge → Rust**
+
+- Currently: vectorized numpy with trig ops (tan, arctan, sqrt, cos, sin) over full 2D grid
+- Why: Called every timestep, pure math, no complex control flow
+- How: Add `cylindric_wedge()` to existing `sky.rs` module
+- Test: Validate against golden regression tests
+
+**P0: Patch summation loop → Rust**
+
+- Currently: `for idx in range(lv.shape[0]): ani_lum += diffsh[:,:,idx] * lv[idx, 2]`
+- Why: ~150 iterations × full grid per timestep (anisotropic mode)
+- How: Add batch dot-product function to `sky.rs`
+- Test: Bit-exact comparison with Python loop
+
+**P1: binary_dilation → Rust**
+
+- Currently: Python nested loop replacing scipy.ndimage.binary_dilation
+- Why: O(rows × cols × iterations × 9) where iterations ≈ 25/pixel_size
+- How: Add to a new `morphology.rs` or to `gvf.rs`
+- Alternative: Could use ndarray + rayon in Rust for immediate 10×
+
+### G.3 GPU Acceleration Roadmap
+
+**Current GPU architecture (wgpu):**
+
+- Framework: wgpu 27.0 (WebGPU standard, cross-platform)
+- Shader: WGSL compute shader (shadow_propagation.wgsl, 346 lines)
+- Context: `ShadowGpuContext` with 17 storage buffers
+- Dispatch: 16×16×1 workgroups
+- Lifecycle: Re-initialized per call (no persistent state)
+
+**Phase G.3.1: GPU Context Persistence** (HIGH priority)
+
+- Problem: GPU context is recreated on every `calculate_shadows_wall_ht_25()` call
+- Fix: Keep `ShadowGpuContext` alive across timesteps via `SkyviewRunner` pattern
+- Expected benefit: Eliminate GPU init overhead (currently ~50ms per call)
+- Risk: Low (architectural change, no algorithm changes)
+
+**Phase G.3.2: GPU-Accelerated SVF** (HIGH priority, HIGH effort)
+
+- Problem: SVF is the #1 bottleneck (calls shadowing 32-248 times per pixel)
+- Current: CPU-side loop calls GPU shadow shader repeatedly
+- Target: Single GPU dispatch that computes all patches per pixel
+  - Option A: Multi-pass shader (one dispatch per patch direction)
+  - Option B: Monolithic shader that loops through all patches per workgroup
+  - Option C: Batch-dispatch all patches, accumulate on GPU
+- Expected benefit: 5-50× for fresh SVF computation
+- Risk: Medium (complex shader, large memory requirements)
+- Note: SVF is cached, so this only helps first-time computation
+
+**Phase G.3.3: GPU cylindric_wedge** (MEDIUM priority)
+
+- Candidate for GPU: Pure per-pixel trig operations
+- Could run as a simple compute shader alongside shadow GPU
+- Expected benefit: Marginal (already fast with numpy vectorization)
+- Recommendation: Move to Rust first (G.2 P0), consider GPU later if needed
+
+**Phase G.3.4: GPU UTCI/PET** (LOW priority)
+
+- Both are embarrassingly parallel (per-pixel, no data dependencies)
+- UTCI: 125-term polynomial (fast, already rayon-parallel in Rust)
+- PET: 50-iteration solver (slower, could benefit from GPU for very large grids)
+- Expected benefit: Only significant for grids >5000×5000
+- Recommendation: Defer unless handling very large rasters
+
+### G.4 FFI Boundary Optimization
+
+**Current pattern** (good):
+
+```
+Python orchestration → Rust computation → Python result handling
+```
+
+**Identified improvements:**
+
+| Issue                   | Current                            | Target                      | Priority |
+| ----------------------- | ---------------------------------- | --------------------------- | -------- |
+| Radiation orchestration | Python loops + multiple Rust calls | Single fused Rust call      | P2       |
+| GPU context lifecycle   | Per-call init                      | Persistent across timesteps | P0       |
+| Array transfer overhead | Copy per call                      | Zero-copy via PyArray views | P3       |
+| Parameter passing       | Mix of structs and positional args | Consistent struct-based API | P2       |
+
+**Fused radiation kernel** (deferred):
+
+- Currently: Python calls `cylindric_wedge` → `Perez_v3` → `vegetation.kside_veg` → `vegetation.lside_veg` → `sky.anisotropic_sky` → `tmrt.compute_tmrt`
+- Could be: Single `compute_full_radiation(inputs) → RadiationResult` in Rust
+- Benefit: Eliminate ~6 Python/Rust crossings per timestep
+- Risk: Reduces modularity, harder to debug intermediate values
+- Recommendation: Defer until per-timestep time exceeds 1s for target grid sizes
+
+### G.5 Implementation Order
+
+| Step | Task                                           | Est. Effort | Dependencies  |
+| ---- | ---------------------------------------------- | ----------- | ------------- |
+| 1    | Move `cylindric_wedge()` to Rust (`sky.rs`)    | 2-3 hours   | None          |
+| 2    | Move anisotropic patch loop to Rust (`sky.rs`) | 1-2 hours   | None          |
+| 3    | GPU context persistence                        | 3-4 hours   | None          |
+| 4    | Move `binary_dilation()` to Rust               | 2-3 hours   | None          |
+| 5    | Move `Perez_v3()` to Rust (`sky.rs`)           | 4-6 hours   | Step 1        |
+| 6    | GPU-accelerated SVF (design + prototype)       | 2-3 days    | Step 3        |
+| 7    | Fused radiation kernel (if needed)             | 1-2 days    | Steps 1, 2, 5 |
+
+**Milestone targets:**
+
+- After steps 1-2: ~2× faster per timestep (anisotropic mode)
+- After step 3: Eliminated GPU init overhead
+- After step 4: 10-100× faster wall setup
+- After step 6: 5-50× faster fresh SVF computation
+
+---
+
+## Phase H: Field Data Validation (To-Do)
+
+**Goal:** Validate SOLWEIG outputs against measured field data from real-world observation campaigns.
+
+**Why this matters:** Currently all validation is against the reference UMEP Python implementation (computational parity). This confirms the code is _equivalent_, but not that it's _correct_. Field-data validation would confirm that:
+
+1. Tmrt predictions match actual measurements within published error bounds
+2. UTCI/PET thermal comfort categories are realistic
+3. Shadow patterns match observed conditions
+4. The Perez anisotropic sky model improves accuracy vs isotropic
+
+**Potential data sources:**
+
+- UMEP validation datasets (Gothenburg, London)
+- Published SOLWEIG validation studies (Lindberg et al. 2008, 2016)
+- COSMO/CLM urban datasets
+- Local university weather stations with globe thermometer data
+
+**Tasks (not yet started):**
+
+- [ ] Identify suitable validation datasets with paired Tmrt measurements
+- [ ] Create validation test framework (measured vs predicted comparison)
+- [ ] Document acceptable error bounds from published literature
+- [ ] Run validation and report results
+- [ ] Add to CI as regression guard (if suitable small dataset available)
+
+---
+
+## Phase D: Documentation & Integration (In Progress)
+
+- [x] Quick Start Guide ([docs/getting-started/quick-start.md](docs/getting-started/quick-start.md))
+- [x] MkDocs site scaffolded (25 pages under `docs/`)
+- [ ] API Reference with mkdocstrings (auto-generated)
+- [x] QGIS plugin scaffolded (Phases 1-10, see [qgis_plugin/README.md](qgis_plugin/README.md))
+- [ ] QGIS plugin testing & polish (Phase 11)
+- [x] CI/CD for cross-platform plugin builds
+- [ ] Build and publish wheels for multiple platforms
+
+### D.1 Documentation Fixes (Pending)
+
+| Task                                    | Impact | Notes                                                                                                              |
+| --------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------ |
+| Fix GPU function docs                   | HIGH   | `disable_gpu()` referenced in quick-start & installation but doesn't exist. `is_gpu_available()` not in `__all__`. |
+| Document undocumented `__all__` exports | MEDIUM | `compute_utci_grid`, `compute_pet_grid`, data bundles, tiling utils undocumented                                   |
+| Fix `ThermalState` import path in docs  | LOW    | `docs/api/dataclasses.md` uses deep path instead of `solweig.ThermalState`                                         |
+
+---
+
+## Phase F: Test Coverage (Pending)
+
+**Goal:** Close critical gaps in test coverage. The physics (golden tests) and API surface are well tested, but the orchestration layer and primary workflow have blind spots.
+
+### F.1 Critical Test Gaps
+
+| Gap                          | Risk   | What's missing                                                              |
+| ---------------------------- | ------ | --------------------------------------------------------------------------- |
+| ~~`calculate_timeseries()`~~ | HIGH   | ✅ 13 tests added in `tests/test_timeseries.py`                             |
+| ~~`validate_inputs()`~~      | MEDIUM | ✅ 8 tests added in `tests/test_timeseries.py`                              |
+| `compute_utci_grid/pet_grid` | MEDIUM | Grid-level postprocessing exported in `__all__` but untested                |
+| Orchestration unit tests     | MEDIUM | `computation.py` and `timeseries.py` only tested indirectly via integration |
+| Multi-timestep thermal state | MEDIUM | No test verifies state persistence/accumulation across timesteps            |
+
+**Current coverage by layer:**
+
+| Layer                          | Coverage                      | Notes                                                       |
+| ------------------------------ | ----------------------------- | ----------------------------------------------------------- |
+| Layer 1: Public API (`api.py`) | Good (70 tests)               | Missing timeseries, validate_inputs                         |
+| Layer 2: Orchestration         | Poor (indirect only)          | No unit tests for compute_single_timestep, state management |
+| Layer 3: Components            | Moderate (indirect)           | Tested through golden tests, not directly                   |
+| Layer 4: Rust                  | Excellent (100+ golden tests) | No gaps identified                                          |
 
 ---
 
@@ -290,13 +546,13 @@ When prioritized, this phase would enable 10-100× speedup for point-based calcu
 
 Add `compute_utci()` and `compute_pet()` methods directly on `SolweigResult` for discoverability.
 
-| Task | File | Status |
-|------|------|--------|
-| Add `SolweigResult.compute_utci(weather)` method | models/results.py | ✅ Complete |
-| Add `SolweigResult.compute_pet(weather, human)` method | models/results.py | ✅ Complete |
+| Task                                                                                | File              | Status      |
+| ----------------------------------------------------------------------------------- | ----------------- | ----------- |
+| Add `SolweigResult.compute_utci(weather)` method                                    | models/results.py | ✅ Complete |
+| Add `SolweigResult.compute_pet(weather, human)` method                              | models/results.py | ✅ Complete |
 | Support both `result.compute_utci(weather)` and `result.compute_utci(ta, rh, wind)` | models/results.py | ✅ Complete |
-| Update README with new pattern | README.md | ✅ Complete |
-| Add tests for result methods | tests/test_api.py | ✅ Complete |
+| Update README with new pattern                                                      | README.md         | ✅ Complete |
+| Add tests for result methods                                                        | tests/test_api.py | ✅ Complete |
 
 **Usage after implementation:**
 
@@ -314,11 +570,11 @@ utci = result.compute_utci(ta=25.0, rh=50.0, wind=2.0)
 
 Fix silent UTC offset defaulting when location is auto-extracted from CRS.
 
-| Task | File | Status |
-|------|------|--------|
-| Change `Location.from_surface()` to require explicit `utc_offset` or warn | models/weather.py | ✅ Complete |
-| Add warning in `calculate_timeseries()` when location=None | timeseries.py | ✅ Complete |
-| Update quick-start guide with explicit location examples | docs/getting-started/quick-start.md | ✅ Complete |
+| Task                                                                      | File                                | Status      |
+| ------------------------------------------------------------------------- | ----------------------------------- | ----------- |
+| Change `Location.from_surface()` to require explicit `utc_offset` or warn | models/weather.py                   | ✅ Complete |
+| Add warning in `calculate_timeseries()` when location=None                | timeseries.py                       | ✅ Complete |
+| Update quick-start guide with explicit location examples                  | docs/getting-started/quick-start.md | ✅ Complete |
 
 **Behavior after implementation:**
 
@@ -335,14 +591,14 @@ results = calculate_timeseries(surface, weather_list, location=location)
 
 Change precedence so explicit parameters override `config` values (Python's "explicit is better than implicit").
 
-| Task | File | Status |
-|------|------|--------|
-| Change `calculate()` to let explicit params override config | api.py | ✅ Complete |
-| Change `calculate_timeseries()` to let explicit params override config | timeseries.py | ✅ Complete |
-| Change `use_anisotropic_sky` default to `None` (means "use config or False") | api.py | ✅ Complete |
-| Add debug logging when explicit params override config | api.py | ✅ Complete |
-| Document new precedence in docstrings | api.py, timeseries.py | ✅ Complete |
-| Add tests for precedence behavior | tests/test_api.py | ✅ Complete |
+| Task                                                                         | File                  | Status      |
+| ---------------------------------------------------------------------------- | --------------------- | ----------- |
+| Change `calculate()` to let explicit params override config                  | api.py                | ✅ Complete |
+| Change `calculate_timeseries()` to let explicit params override config       | timeseries.py         | ✅ Complete |
+| Change `use_anisotropic_sky` default to `None` (means "use config or False") | api.py                | ✅ Complete |
+| Add debug logging when explicit params override config                       | api.py                | ✅ Complete |
+| Document new precedence in docstrings                                        | api.py, timeseries.py | ✅ Complete |
+| Add tests for precedence behavior                                            | tests/test_api.py     | ✅ Complete |
 
 **Current behavior (config wins):**
 
@@ -362,13 +618,13 @@ calculate(..., config=config, use_anisotropic_sky=False)  # Uses False
 
 Add typed exceptions and preflight validation for better error messages.
 
-| Task | File | Status |
-|------|------|--------|
-| Create `errors.py` with `SolweigError`, `InvalidSurfaceData`, `GridShapeMismatch`, `MissingPrecomputedData`, `WeatherDataError` | errors.py (new) | ✅ Complete |
-| Add `validate_inputs()` preflight function | api.py | ✅ Complete |
-| Update `calculate()` to raise structured errors | api.py | ✅ Complete |
-| Export errors in `__all__` | api.py | ✅ Complete |
-| Add tests for error cases | tests/test_errors.py (new) | ✅ Complete |
+| Task                                                                                                                            | File                       | Status      |
+| ------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | ----------- |
+| Create `errors.py` with `SolweigError`, `InvalidSurfaceData`, `GridShapeMismatch`, `MissingPrecomputedData`, `WeatherDataError` | errors.py (new)            | ✅ Complete |
+| Add `validate_inputs()` preflight function                                                                                      | api.py                     | ✅ Complete |
+| Update `calculate()` to raise structured errors                                                                                 | api.py                     | ✅ Complete |
+| Export errors in `__all__`                                                                                                      | api.py                     | ✅ Complete |
+| Add tests for error cases                                                                                                       | tests/test_errors.py (new) | ✅ Complete |
 
 **Usage after implementation:**
 
@@ -386,22 +642,22 @@ except solweig.MissingPrecomputedData as e:
 
 Minor cleanup tasks.
 
-| Task | File | Status |
-|------|------|--------|
-| Remove `poi_coords` from public signature (keep internal) | api.py | ⏳ Deferred |
-| Add `Weather.from_values()` factory for quick testing | models/weather.py | ✅ Complete |
-| Document result methods and validation in README | README.md | ✅ Complete |
+| Task                                                      | File              | Status      |
+| --------------------------------------------------------- | ----------------- | ----------- |
+| Remove `poi_coords` from public signature (keep internal) | api.py            | ⏳ Deferred |
+| Add `Weather.from_values()` factory for quick testing     | models/weather.py | ✅ Complete |
+| Document result methods and validation in README          | README.md         | ✅ Complete |
 
 ### E.6 Implementation Order
 
-| Step | Task | Effort | Risk | Dependencies |
-|------|------|--------|------|--------------|
-| 1 | E.1: Result methods | 1 hour | None | - |
-| 2 | E.2: Location warning | 30 min | None | - |
-| 3 | E.4: errors.py + validate_inputs() | 2 hours | None | - |
-| 4 | E.3: Config precedence | 2 hours | **Low** - behavioral change | - |
-| 5 | E.5: API cleanup | 30 min | None | - |
-| 6 | Update README and docs | 1 hour | None | E.1, E.2 |
+| Step | Task                               | Effort  | Risk                        | Dependencies |
+| ---- | ---------------------------------- | ------- | --------------------------- | ------------ |
+| 1    | E.1: Result methods                | 1 hour  | None                        | -            |
+| 2    | E.2: Location warning              | 30 min  | None                        | -            |
+| 3    | E.4: errors.py + validate_inputs() | 2 hours | None                        | -            |
+| 4    | E.3: Config precedence             | 2 hours | **Low** - behavioral change | -            |
+| 5    | E.5: API cleanup                   | 30 min  | None                        | -            |
+| 6    | Update README and docs             | 1 hour  | None                        | E.1, E.2     |
 
 **Total estimated effort:** ~7 hours
 
@@ -444,7 +700,7 @@ Ideas for future development, not yet prioritized.
 All changes must maintain:
 
 - **Tmrt bias < 0.1°C** vs reference implementation
-- **310 tests passing** (current baseline, including spec validation tests)
+- **353 tests passing** (current baseline, including spec, golden, and benchmark tests)
 - No memory regression on standard benchmarks
 
 Gate command: `pytest tests/`
@@ -453,13 +709,13 @@ Gate command: `pytest tests/`
 
 ## File Reference
 
-| File                                           | Purpose                 | Lines   |
-| ---------------------------------------------- | ----------------------- | ------- |
-| [api.py](pysrc/solweig/api.py)                 | Public API entry point  | 244     |
-| [models/](pysrc/solweig/models/)               | Dataclasses (6 modules) | ~2,850  |
-| [computation.py](pysrc/solweig/computation.py) | Core orchestration      | 385     |
-| [components/](pysrc/solweig/components/)       | Physics modules         | ~1,365  |
-| [specs/](specs/)                               | Physics specifications  | 10 files|
+| File                                           | Purpose                 | Lines    |
+| ---------------------------------------------- | ----------------------- | -------- |
+| [api.py](pysrc/solweig/api.py)                 | Public API entry point  | 403      |
+| [models/](pysrc/solweig/models/)               | Dataclasses (6 modules) | ~3,080   |
+| [computation.py](pysrc/solweig/computation.py) | Core orchestration      | 389      |
+| [components/](pysrc/solweig/components/)       | Physics modules         | ~1,365   |
+| [specs/](specs/)                               | Physics specifications  | 10 files |
 
 ---
 

@@ -15,7 +15,7 @@ This plugin wraps SOLWEIG's Python API to provide native QGIS Processing framewo
 
 ## Installation
 
-1. Copy the `solweig/` directory to your QGIS plugins folder:
+1. Copy the `solweig_qgis/` directory to your QGIS plugins folder:
    - Windows: `%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\`
    - macOS: `~/Library/Application Support/QGIS/QGIS3/profiles/default/python/plugins/`
    - Linux: `~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/`
@@ -56,39 +56,43 @@ This plugin wraps SOLWEIG's Python API to provide native QGIS Processing framewo
 ## Directory Structure
 
 ```
-solweig/
-├── __init__.py                     # Plugin entry point
-├── metadata.txt                    # QGIS plugin metadata
-├── icon.png                        # Plugin icon
-├── provider.py                     # SolweigProvider (registers algorithms)
+qgis_plugin/
+├── README.md                       # This file
+├── build_plugin.py                 # Build script for bundled distribution
 │
-├── algorithms/
-│   ├── __init__.py
-│   ├── base.py                     # SolweigAlgorithmBase (shared utilities)
-│   │
-│   ├── preprocess/
-│   │   ├── __init__.py
-│   │   └── svf_preprocessing.py    # "Compute Sky View Factor"
-│   │
-│   ├── calculation/
-│   │   ├── __init__.py
-│   │   ├── single_timestep.py      # "Calculate Tmrt (Single Timestep)"
-│   │   ├── timeseries.py           # "Calculate Tmrt (Timeseries)"
-│   │   └── tiled_processing.py     # "Calculate Tmrt (Large Rasters)"
-│   │
-│   ├── postprocess/
-│   │   ├── __init__.py
-│   │   ├── utci.py                 # "Compute UTCI"
-│   │   └── pet.py                  # "Compute PET"
-│   │
-│   └── utilities/
-│       ├── __init__.py
-│       └── epw_import.py           # "Import EPW Weather File"
-│
-└── utils/
-    ├── __init__.py
-    ├── parameters.py               # Common parameter builders
-    └── converters.py               # QGIS ↔ solweig dataclass conversion
+└── solweig_qgis/                   # Plugin package (install this to QGIS)
+    ├── __init__.py                 # Plugin entry point with classFactory()
+    ├── metadata.txt                # QGIS plugin metadata
+    ├── provider.py                 # SolweigProvider (registers algorithms)
+    ├── _bundled/                   # Bundled SOLWEIG library (for distribution)
+    │
+    ├── algorithms/
+    │   ├── __init__.py
+    │   ├── base.py                 # SolweigAlgorithmBase (shared utilities)
+    │   │
+    │   ├── preprocess/
+    │   │   ├── __init__.py
+    │   │   └── svf_preprocessing.py    # "Compute Sky View Factor"
+    │   │
+    │   ├── calculation/
+    │   │   ├── __init__.py
+    │   │   ├── single_timestep.py      # "Calculate Tmrt (Single Timestep)"
+    │   │   ├── timeseries.py           # "Calculate Tmrt (Timeseries)"
+    │   │   └── tiled_processing.py     # "Calculate Tmrt (Large Rasters)"
+    │   │
+    │   ├── postprocess/
+    │   │   ├── __init__.py
+    │   │   ├── utci.py                 # "Compute UTCI"
+    │   │   └── pet.py                  # "Compute PET"
+    │   │
+    │   └── utilities/
+    │       ├── __init__.py
+    │       └── epw_import.py           # "Import EPW Weather File"
+    │
+    └── utils/
+        ├── __init__.py
+        ├── parameters.py               # Common parameter builders
+        └── converters.py               # QGIS ↔ solweig dataclass conversion
 ```
 
 ---

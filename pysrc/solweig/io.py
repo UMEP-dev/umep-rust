@@ -844,6 +844,7 @@ class _EpwDataIndex:
     def __init__(self, timestamps: list):
         self._timestamps = timestamps
         self.tz = None
+        self.name = "datetime"
 
     def __len__(self):
         return len(self._timestamps)
@@ -954,6 +955,12 @@ class _BooleanArray:
     def __len__(self):
         return len(self._values)
 
+    def all(self):
+        return all(self._values)
+
+    def any(self):
+        return any(self._values)
+
     def tolist(self):
         return self._values
 
@@ -975,6 +982,53 @@ class _EpwRow:
         return val
 
 
+class _EpwColumn:
+    """Lightweight column accessor mimicking a pandas Series for a single column."""
+
+    def __init__(self, values: list):
+        self._values = values
+
+    def __getitem__(self, idx):
+        return self._values[idx]
+
+    def __len__(self):
+        return len(self._values)
+
+    def __iter__(self):
+        return iter(self._values)
+
+    def min(self):
+        return min(v for v in self._values if v == v)  # skip NaN
+
+    def max(self):
+        return max(v for v in self._values if v == v)  # skip NaN
+
+    def __ge__(self, other):
+        return _BooleanArray([v >= other for v in self._values])
+
+    def __le__(self, other):
+        return _BooleanArray([v <= other for v in self._values])
+
+    def __gt__(self, other):
+        return _BooleanArray([v > other for v in self._values])
+
+    def __lt__(self, other):
+        return _BooleanArray([v < other for v in self._values])
+
+    def all(self):
+        return all(self._values)
+
+
+class _EpwIloc:
+    """Positional indexing for _EpwDataFrame."""
+
+    def __init__(self, rows: list[dict]):
+        self._rows = rows
+
+    def __getitem__(self, idx):
+        return _EpwRow(self._rows[idx])
+
+
 class _EpwDataFrame:
     """Lightweight DataFrame-like class for EPW data without pandas dependency."""
 
@@ -986,15 +1040,29 @@ class _EpwDataFrame:
     def __len__(self):
         return len(self._rows)
 
-    def __getitem__(self, mask):
-        """Filter by boolean mask."""
-        if isinstance(mask, _BooleanArray):
-            mask = mask._values
-        if isinstance(mask, list):
-            filtered_rows = [r for r, m in zip(self._rows, mask) if m]
-            filtered_ts = [t for t, m in zip(self._timestamps, mask) if m]
+    @property
+    def columns(self):
+        """Column names from the first row."""
+        if self._rows:
+            return list(self._rows[0].keys())
+        return []
+
+    @property
+    def iloc(self):
+        """Positional indexing (returns _EpwRow objects)."""
+        return _EpwIloc(self._rows)
+
+    def __getitem__(self, key):
+        """Access by column name (str) or filter by boolean mask."""
+        if isinstance(key, str):
+            return _EpwColumn([row.get(key, float("nan")) for row in self._rows])
+        if isinstance(key, _BooleanArray):
+            key = key._values
+        if isinstance(key, list):
+            filtered_rows = [r for r, m in zip(self._rows, key) if m]
+            filtered_ts = [t for t, m in zip(self._timestamps, key) if m]
             return _EpwDataFrame(filtered_rows, filtered_ts)
-        raise TypeError(f"Unsupported indexing type: {type(mask)}")
+        raise TypeError(f"Unsupported indexing type: {type(key)}")
 
     @property
     def empty(self):
@@ -1004,6 +1072,21 @@ class _EpwDataFrame:
         """Iterate over (timestamp, row) pairs."""
         for ts, row_data in zip(self._timestamps, self._rows):
             yield _EpwTimestamp(ts), _EpwRow(row_data)
+
+    def to_dataframe(self):
+        """Convert to pandas DataFrame if pandas is available.
+
+        Returns:
+            pd.DataFrame with DatetimeIndex, or self if pandas unavailable.
+        """
+        try:
+            import pandas as pd
+
+            df = pd.DataFrame(self._rows)
+            df.index = pd.DatetimeIndex(self._timestamps, name="datetime")
+            return df
+        except ImportError:
+            return self
 
 
 class _EpwTimestamp:

@@ -108,7 +108,7 @@ Where θz is the solar zenith angle in degrees.
 
 #### Implementation in SOLWEIG
 
-The Rust implementation (`Perez_v3` in `rust/src/sky.rs` and Python wrapper in `algorithms/Perez_v3.py`):
+The Rust implementation (`Perez_v3` in `rust/src/sky.rs` and Python wrapper in `physics/Perez_v3.py`):
 
 1. Computes sky clearness bin from solar geometry and radiation
 2. Retrieves coefficients (a, b, c, d, e) for the bin

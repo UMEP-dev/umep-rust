@@ -36,7 +36,7 @@ def _precompute_weather(weather_series: list, location: Location) -> None:
 
     import numpy as np
 
-    from .algorithms import sun_position as sp
+    from .physics import sun_position as sp
 
     location_dict = location.to_sun_position_dict()
 

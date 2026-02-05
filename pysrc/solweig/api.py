@@ -28,9 +28,6 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 from .computation import calculate_core
-
-# Import from extracted modules
-from .config import load_materials, load_params, load_physics
 from .errors import (
     ConfigurationError,
     GridShapeMismatch,
@@ -39,6 +36,9 @@ from .errors import (
     SolweigError,
     WeatherDataError,
 )
+
+# Import from extracted modules
+from .loaders import load_materials, load_params, load_physics
 from .metadata import create_run_metadata, load_run_metadata, save_run_metadata
 from .models import (
     HumanParams,

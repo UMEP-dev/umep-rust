@@ -20,13 +20,13 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..algorithms.cylindric_wedge import cylindric_wedge
-from ..algorithms.Kup_veg_2015a import Kup_veg_2015a
-from ..algorithms.patch_radiation import patch_steradians
-from ..algorithms.Perez_v3 import Perez_v3
 from ..buffers import as_float32
 from ..bundles import DirectionalArrays, RadiationBundle
 from ..constants import F_SIDE_SITTING, F_SIDE_STANDING, F_UP_SITTING, F_UP_STANDING, KELVIN_OFFSET, SBC
+from ..physics.cylindric_wedge import cylindric_wedge
+from ..physics.Kup_veg_2015a import Kup_veg_2015a
+from ..physics.patch_radiation import patch_steradians
+from ..physics.Perez_v3 import Perez_v3
 
 if TYPE_CHECKING:
     from ..api import HumanParams, PrecomputedData, Weather

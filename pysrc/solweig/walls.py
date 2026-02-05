@@ -23,7 +23,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import io as common
-from .algorithms import wallalgorithms as wa
+from .physics import wallalgorithms as wa
 
 
 def generate_wall_hts(

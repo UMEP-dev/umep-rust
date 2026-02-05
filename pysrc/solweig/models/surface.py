@@ -14,7 +14,7 @@ from .. import io
 from .. import walls as walls_module
 from ..buffers import BufferPool
 from ..cache import CacheMetadata, clear_stale_cache, validate_cache
-from ..config import get_lc_properties_from_params
+from ..loaders import get_lc_properties_from_params
 from ..rustalgos import skyview
 from ..solweig_logging import get_logger
 from ..utils import extract_bounds, intersect_bounds, resample_to_grid

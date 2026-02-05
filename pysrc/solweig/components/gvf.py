@@ -17,10 +17,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..algorithms.morphology import binary_dilation, generate_binary_structure
 from ..buffers import as_float32
 from ..bundles import GvfBundle
 from ..constants import KELVIN_OFFSET, SBC
+from ..physics.morphology import binary_dilation, generate_binary_structure
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

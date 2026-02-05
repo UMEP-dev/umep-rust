@@ -11,9 +11,9 @@ import warnings
 
 import numpy as np
 import pytest
-from solweig.algorithms.cylindric_wedge import cylindric_wedge
-from solweig.algorithms.Perez_v3 import Perez_v3
 from solweig.constants import MIN_SUN_ELEVATION_DEG  # noqa: F401 - used in test
+from solweig.physics.cylindric_wedge import cylindric_wedge
+from solweig.physics.Perez_v3 import Perez_v3
 
 
 class TestCylindricWedgeLowSun:
