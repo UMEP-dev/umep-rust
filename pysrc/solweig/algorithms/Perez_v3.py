@@ -1,5 +1,6 @@
 import numpy as np
 
+from ..constants import MIN_SUN_ELEVATION_DEG
 from .create_patches import create_patches
 
 
@@ -87,6 +88,30 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
     :return:
     """
 
+    # Use established threshold from constants (3°)
+    # Physical justification for uniform fallback below this:
+    # - Air mass > 20 → extreme atmospheric scattering
+    # - Direct beam is negligible (heavy atmospheric absorption)
+    # - Circumsolar brightening disappears → sky approximates uniform
+    # - Tmrt is dominated by longwave at these angles anyway
+    # This also avoids numerical instability from large tan(zenith) values.
+    altitude_deg = 90 - zen
+
+    # Return uniform distribution for very low sun or very low diffuse radiation
+    if altitude_deg < MIN_SUN_ELEVATION_DEG or radD < 10:
+        if patchchoice == 1:
+            skyvaultalt, skyvaultazi, _, _, _, _, _ = create_patches(patch_option)
+            n_patches = skyvaultalt.shape[0]
+            uniform_lv = 1.0 / n_patches
+            x = np.transpose(np.atleast_2d(skyvaultalt))
+            y = np.transpose(np.atleast_2d(skyvaultazi))
+            z = np.transpose(np.atleast_2d(np.full(n_patches, uniform_lv)))
+            lv = np.append(np.append(x, y, axis=1), z, axis=1)
+        else:
+            lv = np.ones((90, 361), dtype=np.float32) / (90 * 361)
+        # Return uniform distribution with clearness=1 (overcast), brightness=0
+        return lv, 1.0, 0.0
+
     m_a1 = np.array([1.3525, -1.2219, -1.1000, -0.5484, -0.6000, -1.0156, -1.0000, -1.0500])
     m_a2 = np.array([-0.2576, -0.7730, -0.2515, -0.6654, -0.3566, -0.3670, 0.0211, 0.0289])
     m_a3 = np.array([-0.2690, 1.4148, 0.8952, -0.2672, -2.5000, 1.0078, 0.5025, 0.4260])
@@ -124,8 +149,10 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
     # Ibh = radI/sin(altitude)
     Ibn = radI
 
-    # Skyclearness
-    PerezClearness = ((Idh + Ibn) / Idh + 1.041 * np.power(zen, 3)) / (1 + 1.041 * np.power(zen, 3))
+    # Skyclearness - guard against division by very small Idh
+    Idh_safe = max(Idh, 1.0)  # Minimum 1 W/m² to avoid division issues
+    PerezClearness = ((Idh_safe + Ibn) / Idh_safe + 1.041 * np.power(zen, 3)) / (1 + 1.041 * np.power(zen, 3))
+
     # Extra terrestrial radiation
     day_angle = jday * 2 * np.pi / 365
     # I0=1367*(1+0.033*np.cos((2*np.pi*jday)/365))
@@ -137,21 +164,26 @@ def Perez_v3(zen, azimuth, radD, radI, jday, patchchoice, patch_option):
         + 0.000077 * np.sin(2 * day_angle)
     )  # New from robinsson
 
-    # Optical air mass
-    # m=1/altitude; old
+    # Optical air mass (Kasten & Young 1989)
+    # Use corrected formula for all positive altitudes to avoid instability
     if altitude >= 10 * deg2rad:
         AirMass = 1 / np.sin(altitude)
-    elif altitude < 0:  # below equation becomes complex
-        AirMass = 1 / np.sin(altitude) + 0.50572 * np.power(180 * complex(altitude) / np.pi + 6.07995, -1.6364)
+    elif altitude > 0:
+        # Kasten & Young correction for low sun angles (0-10°)
+        # This avoids division by sin(altitude) approaching zero
+        altitude_deg = altitude * rad2deg
+        AirMass = 1 / (np.sin(altitude) + 0.50572 * np.power(altitude_deg + 6.07995, -1.6364))
     else:
-        # Added brackets to denominator: np.sin(0) was giving zero hence division by zero = infinity
-        AirMass = 1 / (np.sin(altitude) + 0.50572 * np.power(180 * altitude / np.pi + 6.07995, -1.6364))
+        # Negative altitude shouldn't reach here due to early exit, but clamp to safe value
+        AirMass = 40.0  # Maximum air mass at horizon
+
+    # Clamp air mass to reasonable range
+    AirMass = min(float(np.real(AirMass)), 40.0)
 
     # Skybrightness
-    # if altitude*rad2deg+6.07995>=0
     PerezBrightness = (AirMass * radD) / I0
     if Idh <= 10:
-        # m_a=0;m_b=0;m_c=0;m_d=0;m_e=0;
+        # Very low diffuse radiation - use zero brightness
         PerezBrightness = 0
     # if altitude < 0:
     # print("Airmass")

@@ -275,11 +275,38 @@ def check_path(path_str: str | Path, make_dir: bool = False) -> Path:
     return path
 
 
+# Default color scale ranges for preview images (ensures consistency across timesteps)
+# Format: prefix -> (vmin, vmax)
+_PREVIEW_RANGES: dict[str, tuple[float, float]] = {
+    "tmrt": (0, 80),  # Mean radiant temperature (°C)
+    "utci": (-40, 50),  # Universal Thermal Climate Index (°C)
+    "pet": (-40, 50),  # Physiological Equivalent Temperature (°C)
+    "shadow": (0, 1),  # Shadow fraction (0=sun, 1=shade)
+    "kdown": (0, 1200),  # Downwelling shortwave radiation (W/m²)
+    "kup": (0, 800),  # Upwelling shortwave radiation (W/m²)
+    "ldown": (150, 550),  # Downwelling longwave radiation (W/m²)
+    "lup": (250, 650),  # Upwelling longwave radiation (W/m²)
+    "svf": (0, 1),  # Sky view factor
+    "gvf": (0, 1),  # Ground view factor
+}
+
+
+def _get_preview_range(filename: str) -> tuple[float, float] | None:
+    """Get the color scale range for a variable based on filename prefix."""
+    name = filename.lower()
+    for prefix, range_vals in _PREVIEW_RANGES.items():
+        if name.startswith(prefix):
+            return range_vals
+    return None
+
+
 def _generate_preview_png(data_arr: np.ndarray, out_path: Path, max_size: int = 512, colormap: str = "turbo") -> None:
     """
     Generate a color PNG preview image from raster data.
 
-    Normalizes float data to 0-255 and applies a colormap for better visualization.
+    Uses consistent color scales for known variable types (tmrt, utci, shadow, etc.)
+    to enable visual comparison across timesteps. Falls back to percentile-based
+    scaling for unknown variables.
 
     Args:
         data_arr: 2D numpy array to visualize
@@ -296,9 +323,14 @@ def _generate_preview_png(data_arr: np.ndarray, out_path: Path, max_size: int = 
         if not np.any(valid_mask):
             return  # All NaN, skip preview
 
-        # Get valid data range
-        valid_data = data_arr[valid_mask]
-        vmin, vmax = np.nanpercentile(valid_data, [2, 98])  # Use percentiles to avoid outliers
+        # Use variable-specific range if available, otherwise fall back to percentiles
+        preset_range = _get_preview_range(out_path.stem)
+        if preset_range is not None:
+            vmin, vmax = preset_range
+        else:
+            # Fallback: use percentiles for unknown variables
+            valid_data = data_arr[valid_mask]
+            vmin, vmax = np.nanpercentile(valid_data, [2, 98])
 
         if vmax <= vmin:
             vmax = vmin + 1  # Avoid division by zero

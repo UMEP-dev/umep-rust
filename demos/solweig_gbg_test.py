@@ -6,7 +6,8 @@ This demo shows how to use the solweig package for:
 1. Wall height and aspect generation
 2. Sky View Factor (SVF) calculation
 
-Note: Full SOLWEIG model run requires additional porting work.
+Uses SurfaceData.prepare() which automatically computes and caches
+walls and SVF in the working directory.
 """
 
 from pathlib import Path
@@ -18,48 +19,44 @@ import solweig
 working_folder = "temp/goteborg"
 working_path = Path(working_folder).absolute()
 working_path.mkdir(parents=True, exist_ok=True)
-working_path_str = str(working_path)
 
 # Input files
 dsm_path = "demos/data/Goteborg_SWEREF99_1200/DSM_KRbig.tif"
 cdsm_path = "demos/data/Goteborg_SWEREF99_1200/CDSM_KRbig.tif"
 
 # Setup parameters
-trans_veg_perc = 3
-trunk_ratio_perc = 25
+trunk_ratio = 0.25  # Trunk height as fraction of canopy height
 
 # %%
-# Wall info for SOLWEIG (height and aspect)
-print("Generating wall heights and aspects...")
-solweig.walls.generate_wall_hts(
-    dsm_path=dsm_path,
-    bbox=None,  # Full extent
-    out_dir=working_path_str + "/walls",
-)
-print(f"  Output: {working_path_str}/walls/wall_hts.tif")
-print(f"  Output: {working_path_str}/walls/wall_aspects.tif")
-
-# %%
-# Sky View Factor for SOLWEIG
-print("\nGenerating SVF (this may take a while for large rasters)...")
-solweig.svf.generate_svf(
-    dsm_path=dsm_path,
-    bbox=None,  # Full extent
-    out_dir=working_path_str + "/svf",
-    cdsm_path=cdsm_path,
-    trans_veg_perc=trans_veg_perc,
-    trunk_ratio_perc=trunk_ratio_perc,
-)
-print(f"  Output: {working_path_str}/svf/")
-
-# %%
-print("\nPreprocessing complete!")
+# Prepare surface data with automatic wall and SVF computation
+# SurfaceData.prepare() will:
+#   - Compute wall heights/aspects and cache in working_dir/walls/
+#   - Compute SVF and cache in working_dir/svf/
+#   - Reuse cached data on subsequent runs (use force_recompute=True to regenerate)
+print("Preparing surface data (walls and SVF will be computed if not cached)...")
+print(f"  Working dir: {working_path}")
 print(f"GPU acceleration: {'enabled' if solweig.GPU_ENABLED else 'disabled'}")
 
+surface = solweig.SurfaceData.prepare(
+    dsm=dsm_path,
+    cdsm=cdsm_path,
+    working_dir=str(working_path),
+    trunk_ratio=trunk_ratio,
+    # bbox=None,  # Full extent (default)
+    # force_recompute=False,  # Use cached data if available (default)
+)
+
+print("\nPreprocessing complete!")
+print(f"  DSM shape: {surface.dsm.shape}")
+print(f"  Walls cached: {working_path}/walls/")
+print(f"  SVF cached: {working_path}/svf/")
+
 # %%
-# TODO: Full SOLWEIG run
-# The full SOLWEIG model runner is not yet fully ported to solweig package.
-# For now, you can use umep.functions.SOLWEIGpython.Solweig_run if umep is installed:
+# The surface object is now ready for SOLWEIG calculations:
 #
-# from umep.functions.SOLWEIGpython import Solweig_run as sr
-# sr.solweig_run("demos/data/Goteborg_SWEREF99_1200/configsolweig.ini", feedback=None)
+# weather_list = solweig.Weather.from_epw("weather.epw", start="2023-07-01", end="2023-07-01")
+# results = solweig.calculate_timeseries(
+#     surface=surface,
+#     weather_series=weather_list,
+#     output_dir=str(working_path / "output"),
+# )

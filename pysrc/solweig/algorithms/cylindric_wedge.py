@@ -1,5 +1,10 @@
 import numpy as np
 
+from ..constants import MIN_SUN_ELEVATION_DEG
+
+# Convert to radians for internal use
+_MIN_SUN_ALTITUDE_RAD = MIN_SUN_ELEVATION_DEG * (np.pi / 180.0)
+
 
 def cylindric_wedge(zen, svfalfa, rows, cols):
     """
@@ -11,13 +16,31 @@ def cylindric_wedge(zen, svfalfa, rows, cols):
         rows, cols: Grid dimensions (unused, kept for API compatibility)
 
     Returns:
-        F_sh: Shadow fraction grid
+        F_sh: Shadow fraction grid (0 = fully sunlit, 1 = fully shaded)
+
+    Note:
+        At very low sun altitudes (< 3°), returns F_sh = 1.0 to avoid
+        numerical instability from tan(zen) approaching infinity.
     """
+    # Guard against low sun angles where tan(zen) → infinity
+    # zenith = 90° - altitude, so zen > 87° means altitude < 3°
+    altitude_rad = (np.pi / 2.0) - zen
+    if altitude_rad < _MIN_SUN_ALTITUDE_RAD:
+        # Sun too low - walls fully shaded
+        return np.ones_like(svfalfa, dtype=np.float32)
+
     # Pre-compute trigonometric values once (1.7x speedup)
     tan_zen = np.tan(zen)
     tan_alfa = np.tan(svfalfa)
+
+    # Guard against very small tan_alfa (near-horizontal surfaces)
+    tan_alfa = np.maximum(tan_alfa, 1e-6)
+
     ba = 1.0 / tan_alfa
     tan_product = tan_alfa * tan_zen
+
+    # Guard against division by very small values
+    tan_product = np.maximum(tan_product, 1e-6)
 
     xa = 1 - 2.0 / tan_product
     ha = 2.0 / tan_product
