@@ -85,6 +85,7 @@ class TestCalculateTimeseries:
 
         for r in results:
             assert r.tmrt.shape == (30, 30)
+            assert r.shadow is not None
             assert r.shadow.shape == (30, 30)
 
     def test_empty_series_returns_empty(self, flat_surface, location):

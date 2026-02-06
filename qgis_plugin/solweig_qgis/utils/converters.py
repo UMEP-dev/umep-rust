@@ -316,8 +316,8 @@ def create_human_params_from_parameters(
     if "CLOTHING" in parameters:
         human.clothing = parameters["CLOTHING"]
     if "SEX" in parameters:
-        sex_map = {0: "male", 1: "female"}
-        human.sex = sex_map.get(parameters["SEX"], "male")
+        sex_map = {0: 1, 1: 2}
+        human.sex = sex_map.get(parameters["SEX"], 1)
 
     return human
 

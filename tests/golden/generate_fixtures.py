@@ -43,6 +43,9 @@ def generate_shadow_fixtures():
     )
 
     dsm = SWC.raster_data.dsm.astype(np.float32)
+    assert SWC.raster_data.cdsm is not None
+    assert SWC.raster_data.tdsm is not None
+    assert SWC.raster_data.bush is not None
     cdsm = SWC.raster_data.cdsm.astype(np.float32)
     tdsm = SWC.raster_data.tdsm.astype(np.float32)
     bush = SWC.raster_data.bush.astype(np.float32)
@@ -167,6 +170,9 @@ def generate_input_fixtures():
     )
 
     # Save input rasters
+    assert SWC.raster_data.cdsm is not None
+    assert SWC.raster_data.tdsm is not None
+    assert SWC.raster_data.bush is not None
     np.save(FIXTURES_DIR / "input_dsm.npy", SWC.raster_data.dsm.astype(np.float32))
     np.save(FIXTURES_DIR / "input_cdsm.npy", SWC.raster_data.cdsm.astype(np.float32))
     np.save(FIXTURES_DIR / "input_tdsm.npy", SWC.raster_data.tdsm.astype(np.float32))

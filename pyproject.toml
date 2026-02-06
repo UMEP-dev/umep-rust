@@ -100,7 +100,8 @@ qgis-compat = [
     "numpy==1.26.4",  # OSGeo4W bundles 1.26.4 (Apr 2024)
     "pandas>=2.2.2",  # OSGeo4W bundles 2.2.2 (Apr 2024), also 2.3.1 available
     "scipy>=1.13.0",  # OSGeo4W bundles 1.13.0 (Apr 2024)
-    "gdal>=3.8.0",    # OSGeo4W has 3.8.x-3.12.x; use GDAL directly (no rasterio)
+    # Note: GDAL is a system package in QGIS/OSGeo4W, not pip-installed.
+    # In CI, install matching version separately: uv pip install gdal==$(gdal-config --version)
     "pyproj>=3.6.0",  # OSGeo4W bundles 3.6.x-3.7.x
     "shapely>=2.0.1", # OSGeo4W bundles 2.0.x
     # Note: tqdm not bundled in OSGeo4W - progress.py falls back to QGIS progress bars

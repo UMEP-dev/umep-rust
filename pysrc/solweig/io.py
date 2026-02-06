@@ -226,7 +226,7 @@ def _normalise_bbox(bbox_sequence) -> tuple[float, float, float, float]:
     return float(minx), float(miny), float(maxx), float(maxy)
 
 
-def rasterise_gdf(gdf, geom_col, ht_col, bbox=None, pixel_size: int = 1):
+def rasterise_gdf(gdf, geom_col, ht_col, bbox=None, pixel_size: float = 1.0):
     # Define raster parameters
     if bbox is not None:
         # Unpack bbox values

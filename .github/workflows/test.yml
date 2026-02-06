@@ -125,13 +125,16 @@ jobs:
         run: uv python install 3.12
 
       - name: Install GDAL system libraries
-        run: sudo apt-get update && sudo apt-get install -y libgdal-dev gdal-bin
+        run: sudo apt-get update && sudo apt-get install -y libgdal-dev gdal-bin python3-gdal
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies (QGIS compat - NumPy 1.26)
         run: uv sync --group qgis-compat
+
+      - name: Install GDAL Python bindings matching system
+        run: uv pip install "gdal==$(gdal-config --version)"
 
       - name: Build Rust extension
         run: uv run maturin develop

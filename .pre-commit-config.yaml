@@ -16,7 +16,7 @@ repos:
     hooks:
       - id: ty
         name: ty type check
-        entry: .venv/bin/ty check pysrc/
+        entry: .venv/bin/ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/
         language: system
         types: [python]
         pass_filenames: false

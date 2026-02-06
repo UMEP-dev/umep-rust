@@ -531,6 +531,7 @@ class TestCalculateIntegration:
 
         # Check output structure
         assert result.tmrt.shape == (30, 30)
+        assert result.shadow is not None
         assert result.shadow.shape == (30, 30)
         # UTCI/PET are not auto-computed - use post-processing functions
         assert result.utci is None
@@ -580,6 +581,7 @@ class TestCalculateIntegration:
         result = calculate(surface, location, weather)
 
         # Should have some shadow pixels (not all 0 or all 1)
+        assert result.shadow is not None
         shadow_fraction = result.shadow.sum() / result.shadow.size
         assert 0.1 < shadow_fraction < 0.9, "Expected partial shadowing"
 
@@ -719,6 +721,8 @@ class TestTiledProcessing:
         assert max_diff < 0.1, f"Max Tmrt diff {max_diff:.4f}°C exceeds tolerance"
 
         # Compare shadow (should be identical)
+        assert result_tiled.shadow is not None
+        assert result_nontiled.shadow is not None
         shadow_match = np.allclose(result_tiled.shadow, result_nontiled.shadow, equal_nan=True)
         assert shadow_match, "Shadow grids differ between tiled and non-tiled"
 
@@ -741,6 +745,7 @@ class TestTiledProcessing:
 
         # Check output structure
         assert result.tmrt.shape == (80, 80)
+        assert result.shadow is not None
         assert result.shadow.shape == (80, 80)
         # UTCI not auto-computed - use post-processing if needed
         assert result.utci is None
@@ -767,6 +772,7 @@ class TestTiledProcessing:
         result = calculate_tiled(surface, location, weather, tile_size=256)
 
         assert result.tmrt.shape == (40, 40)
+        assert result.shadow is not None
         assert result.shadow.shape == (40, 40)
 
 
@@ -802,6 +808,7 @@ class TestPreprocessing:
         surface.preprocess()
 
         # CDSM should now be DEM + relative_cdsm = 100 + 8 = 108
+        assert surface.cdsm is not None
         assert np.allclose(surface.cdsm, 108.0, atol=0.01)
 
     def test_cdsm_boosting_without_dem(self):
@@ -813,6 +820,7 @@ class TestPreprocessing:
         surface.preprocess()
 
         # CDSM should now be DSM + relative_cdsm = 105 + 6 = 111
+        assert surface.cdsm is not None
         assert np.allclose(surface.cdsm, 111.0, atol=0.01)
 
     def test_preprocess_zeros_below_threshold(self):
@@ -825,6 +833,7 @@ class TestPreprocessing:
         surface.preprocess()
 
         # Values below 0.1m should be zeroed
+        assert surface.cdsm is not None
         assert surface.cdsm[0, 0] == 0.0  # Was 0.05, below threshold
         assert surface.cdsm[0, 1] > 0.0  # Was 0.5, above threshold
         assert surface.cdsm[1, 0] > 0.0  # Was 1.0, above threshold
@@ -837,9 +846,11 @@ class TestPreprocessing:
 
         surface = SurfaceData(dsm=dsm, cdsm=cdsm)
         surface.preprocess()
+        assert surface.cdsm is not None
         cdsm_after_first = surface.cdsm.copy()
 
         surface.preprocess()  # Second call
+        assert surface.cdsm is not None
         assert np.array_equal(surface.cdsm, cdsm_after_first)
 
     def test_transmissivity_leaf_on_summer(self):

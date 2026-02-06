@@ -6,7 +6,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
-from solweig.progress import ProgressReporter, get_progress_iterator, progress
+from solweig.progress import ProgressReporter, _ProgressIterator, get_progress_iterator, progress
 
 
 class TestProgressReporter:
@@ -163,15 +163,21 @@ class TestProgressIterator:
         items = [1, 2, 3, 4, 5]
 
         iterator = get_progress_iterator(items, desc="Test", disable=True)
-        # Access the reporter through the iterator
-        assert iterator._reporter.total == 5
+        # Access the reporter through the iterator (implementation detail)
+        pi = iterator
+        assert isinstance(pi, _ProgressIterator)
+        reporter: ProgressReporter = pi._reporter  # type: ignore[unresolved-attribute]
+        assert reporter.total == 5
 
     def test_progress_iterator_explicit_total(self):
         """Test providing explicit total."""
         items = range(10)
 
         iterator = get_progress_iterator(items, desc="Test", total=100, disable=True)
-        assert iterator._reporter.total == 100
+        pi = iterator
+        assert isinstance(pi, _ProgressIterator)
+        reporter: ProgressReporter = pi._reporter  # type: ignore[unresolved-attribute]
+        assert reporter.total == 100
 
     def test_progress_iterator_generator(self):
         """Test progress iterator with generator."""
