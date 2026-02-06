@@ -28,16 +28,16 @@ This document outlines the development priorities for SOLWEIG.
 | 10  | ~~Rename `algorithms/` → `physics/`~~     | B.4     | MEDIUM - misleading "Legacy" label | ✅ Complete |
 | 11  | ~~Slim down `__all__` exports~~           | E.5     | MEDIUM - internal bundles exposed  | ✅ Complete |
 | 12  | ~~Rename `config.py` → `loaders.py`~~     | B.4     | LOW - two-config ambiguity         | ✅ Complete |
-| 13  | Move `cylindric_wedge` to Rust            | G.2     | HIGH - per-timestep hotspot        | Pending     |
-| 14  | GPU context persistence                   | G.3     | HIGH - eliminates init overhead    | Pending     |
-| 15  | Move aniso patch loop to Rust             | G.2     | MEDIUM - anisotropic mode speedup  | Pending     |
+| 13  | ~~Move `cylindric_wedge` to Rust~~        | G.2     | HIGH - per-timestep hotspot        | ✅ Complete |
+| 14  | GPU buffer reuse / context persistence    | G.3     | HIGH - eliminates per-call alloc   | Pending     |
+| 15  | ~~Move aniso patch loop to Rust~~         | G.2     | MEDIUM - anisotropic mode speedup  | ✅ Complete |
 | 16  | QGIS plugin testing (Phase 11)            | D       | HIGH - blocks plugin adoption      | Pending     |
 | 17  | Orchestration layer unit tests            | F.1     | MEDIUM - regression safety         | Pending     |
 | 18  | API reference with mkdocstrings           | D       | MEDIUM - user adoption             | Pending     |
 | 19  | Field-data validation                     | H       | HIGH - scientific credibility      | Pending     |
 | 20  | POI Mode                                  | C       | HIGH - 10-100x speedup             | Deferred    |
 
-**Current status:** Phases A, B, E complete. Code quality sweep done (EPW fix, rename algorithms→physics, slim **all**, rename config→loaders). GPU/Rust-Python interface plan written (Phase G). Next: Rust migration of Python hotspots, then QGIS plugin testing.
+**Current status:** Phases A, B, E, G.2 complete. cylindric_wedge and aniso patch loop moved to Rust with rayon parallelism. Type checking expanded to all directories. Next: GPU buffer reuse, then QGIS plugin testing.
 
 ### Recently Completed
 
@@ -58,7 +58,18 @@ This document outlines the development priorities for SOLWEIG.
 
 ## Session Log (Feb 2026)
 
-**Latest session (Feb 5):**
+**Latest session (Feb 6):**
+
+- ✅ **Phase G.2 complete** - Moved Python hotspots to Rust with rayon parallelism
+  - `cylindric_wedge()`: per-pixel wall shadow fraction → `sky.rs`
+  - `weighted_patch_sum()`: anisotropic patch summation → `sky.rs`
+  - Both include low-sun guards matching Python reference
+- ✅ **Type checking expanded** - `ty check` now covers all directories (pysrc/, tests/, demos/, scripts/, qgis_plugin/)
+  - Fixed 8 type errors across codebase
+  - Pre-commit hook and poe tasks updated to match
+- ✅ Fixed real bug: QGIS converters.py `sex` field mapped to string instead of int
+
+**Session (Feb 5):**
 
 - ✅ **Low sun angle handling** - Fixed numerical issues at low solar altitudes
   - `Perez_v3.py`: robust handling of edge-case zenith angles
@@ -381,13 +392,15 @@ When prioritized, this phase would enable 10-100× speedup for point-based calcu
 - Shader: WGSL compute shader (shadow_propagation.wgsl, 346 lines)
 - Context: `ShadowGpuContext` with 17 storage buffers
 - Dispatch: 16×16×1 workgroups
-- Lifecycle: Re-initialized per call (no persistent state)
+- Lifecycle: Context persisted via `OnceLock`, but buffers recreated per call
 
-**Phase G.3.1: GPU Context Persistence** (HIGH priority)
+**Phase G.3.1: GPU Buffer Reuse** (HIGH priority)
 
-- Problem: GPU context is recreated on every `calculate_shadows_wall_ht_25()` call
-- Fix: Keep `ShadowGpuContext` alive across timesteps via `SkyviewRunner` pattern
-- Expected benefit: Eliminate GPU init overhead (currently ~50ms per call)
+- Problem: Per-call buffer allocation overhead - every `calculate_shadows_wall_ht_25()` creates ~10 new GPU buffers, bind groups, staging buffers, and command encoders
+- Context itself already persisted via `OnceLock<Option<ShadowGpuContext>>` in `shadowing.rs`
+- Fix: Add `GpuResourcePool` with buffer caching by size, persistent staging buffer
+- Alternative: Python-side `ShadowGpuRunner` class (matches existing `SkyviewRunner` pattern)
+- Expected benefit: Eliminate per-call allocation overhead
 - Risk: Low (architectural change, no algorithm changes)
 
 **Phase G.3.2: GPU-Accelerated SVF** (HIGH priority, HIGH effort)
@@ -444,15 +457,15 @@ Python orchestration → Rust computation → Python result handling
 
 ### G.5 Implementation Order
 
-| Step | Task                                           | Est. Effort | Dependencies  |
-| ---- | ---------------------------------------------- | ----------- | ------------- |
-| 1    | Move `cylindric_wedge()` to Rust (`sky.rs`)    | 2-3 hours   | None          |
-| 2    | Move anisotropic patch loop to Rust (`sky.rs`) | 1-2 hours   | None          |
-| 3    | GPU context persistence                        | 3-4 hours   | None          |
-| 4    | Move `binary_dilation()` to Rust               | 2-3 hours   | None          |
-| 5    | Move `Perez_v3()` to Rust (`sky.rs`)           | 4-6 hours   | Step 1        |
-| 6    | GPU-accelerated SVF (design + prototype)       | 2-3 days    | Step 3        |
-| 7    | Fused radiation kernel (if needed)             | 1-2 days    | Steps 1, 2, 5 |
+| Step | Task                                           | Est. Effort | Dependencies  | Status      |
+| ---- | ---------------------------------------------- | ----------- | ------------- | ----------- |
+| 1    | Move `cylindric_wedge()` to Rust (`sky.rs`)    | 2-3 hours   | None          | ✅ Complete |
+| 2    | Move anisotropic patch loop to Rust (`sky.rs`) | 1-2 hours   | None          | ✅ Complete |
+| 3    | GPU buffer reuse (persistent resource pool)    | 3-4 hours   | None          | Pending     |
+| 4    | Move `binary_dilation()` to Rust               | 2-3 hours   | None          | Pending     |
+| 5    | Move `Perez_v3()` to Rust (`sky.rs`)           | 4-6 hours   | Step 1        | Pending     |
+| 6    | GPU-accelerated SVF (design + prototype)       | 2-3 days    | Step 3        | Pending     |
+| 7    | Fused radiation kernel (if needed)             | 1-2 days    | Steps 1, 2, 5 | Pending     |
 
 **Milestone targets:**
 
