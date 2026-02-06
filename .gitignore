@@ -9,8 +9,10 @@ demos/data/athens/shadow*
 demos/data/athens/svf*
 demos/data/athens/solweig*
 
-# validation data (downloaded from Zenodo, not checked in)
+# validation data (downloaded from Zenodo/INRAE, not checked in)
 tests/validation_data/
+tests/validation/montpellier/AIR.csv
+tests/validation/montpellier/AIR-Readme.pdf
 
 # geopackage peripheral files
 *.gpkg-*
