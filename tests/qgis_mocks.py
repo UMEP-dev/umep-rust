@@ -109,8 +109,12 @@ def _has_real_osgeo() -> bool:
 
 
 def install():
-    """Install QGIS/GDAL mocks into sys.modules. Idempotent - safe to call multiple times."""
-    # Always force-set qgis modules (never real outside QGIS)
+    """Install QGIS mocks into sys.modules. Idempotent - safe to call multiple times.
+
+    Note: This only installs qgis module mocks.  Call install_osgeo() separately
+    if you need osgeo mocks for imports, and uninstall_osgeo() immediately after
+    to avoid polluting other test modules.
+    """
     qgis_mocks = {
         "qgis": _mock_qgis,
         "qgis.core": _mock_qgis_core,
@@ -122,7 +126,13 @@ def install():
     for name, mock in qgis_mocks.items():
         sys.modules[name] = mock
 
-    # Only mock osgeo if not actually installed (avoid polluting real GDAL for other tests)
+
+def install_osgeo():
+    """Install osgeo mocks into sys.modules (only if osgeo is not really installed).
+
+    Call uninstall_osgeo() immediately after the imports that need it to avoid
+    polluting other test modules (e.g. test_io.py's GeoTIFF tests).
+    """
     if not _has_real_osgeo():
         osgeo_mocks = {
             "osgeo": _mock_osgeo,
