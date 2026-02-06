@@ -1,14 +1,14 @@
 """
 Golden Test Visual Report Generator
 
-Generates a comprehensive visual report comparing current implementation
+Generates a comprehensive Markdown report comparing current implementation
 outputs against golden fixtures for regression testing.
 
 Usage:
     uv run python tests/golden/generate_report.py
 
 Output:
-    temp/golden_report/golden_report.html
+    temp/golden_report/golden_report.md
     temp/golden_report/*.png
 """
 
@@ -289,7 +289,7 @@ def plot_comparison(current, golden, title, filename, cmap="viridis"):
 
     diff_max = max(abs(diff.min()), abs(diff.max()), 1e-10)
     im2 = axes[2].imshow(diff, cmap="RdBu_r", vmin=-diff_max, vmax=diff_max)
-    axes[2].set_title(f"Residual (Rust − UMEP)\nmax|Δ|={diff_max:.2e}")
+    axes[2].set_title(f"Residual (Rust - UMEP)\nmax|d|={diff_max:.2e}")
     plt.colorbar(im2, ax=axes[2], shrink=0.8)
 
     plt.tight_layout()
@@ -325,6 +325,11 @@ def plot_single_array(arr, title, filename, cmap="viridis"):
     }
 
 
+# ---------------------------------------------------------------------------
+# Component generators (compute + compare)
+# ---------------------------------------------------------------------------
+
+
 def generate_shadow_comparisons(inputs):
     """Generate shadow comparison plots."""
     results = {}
@@ -343,7 +348,7 @@ def generate_shadow_comparisons(inputs):
         stats = plot_comparison(
             current,
             golden,
-            f"Building Shadows - {name.title()} (az={azimuth}°, alt={altitude}°)",
+            f"Building Shadows - {name.title()} (az={azimuth}, alt={altitude})",
             f"shadow_{name}_bldg.png",
             cmap="gray_r",
         )
@@ -355,7 +360,7 @@ def generate_shadow_comparisons(inputs):
         stats = plot_comparison(
             current,
             golden,
-            f"Vegetation Shadows - {name.title()} (az={azimuth}°, alt={altitude}°)",
+            f"Vegetation Shadows - {name.title()} (az={azimuth}, alt={altitude})",
             f"shadow_{name}_veg.png",
             cmap="gray_r",
         )
@@ -369,7 +374,7 @@ def generate_shadow_comparisons(inputs):
             stats = plot_comparison(
                 current,
                 golden,
-                f"Wall Shadows - {name.title()} (az={azimuth}°, alt={altitude}°)",
+                f"Wall Shadows - {name.title()} (az={azimuth}, alt={altitude})",
                 f"shadow_{name}_wall_sh.png",
                 cmap="Oranges",
             )
@@ -383,7 +388,7 @@ def generate_shadow_comparisons(inputs):
             stats = plot_comparison(
                 current,
                 golden,
-                f"Wall Sun - {name.title()} (az={azimuth}°, alt={altitude}°)",
+                f"Wall Sun - {name.title()} (az={azimuth}, alt={altitude})",
                 f"shadow_{name}_wall_sun.png",
                 cmap="YlOrRd",
             )
@@ -421,8 +426,8 @@ def generate_gvf_comparisons(inputs):
     result = compute_gvf(inputs)
 
     components = [
-        ("gvf_lup", "gvf_lup", "GVF Lup (W/m²)", "hot"),
-        ("gvfalb", "gvf_alb", "GVF × Albedo", "viridis"),
+        ("gvf_lup", "gvf_lup", "GVF Lup (W/m2)", "hot"),
+        ("gvfalb", "gvf_alb", "GVF x Albedo", "viridis"),
         ("gvf_norm", "gvf_norm", "GVF Normalization", "viridis"),
     ]
 
@@ -441,10 +446,10 @@ def generate_radiation_comparisons(inputs):
     kside, lside = compute_radiation(inputs)
 
     components = [
-        (kside, "keast", "radiation_kside_e", "Kside East - Isotropic (W/m²)", "YlOrRd"),
-        (kside, "ksouth", "radiation_kside_s", "Kside South - Isotropic (W/m²)", "YlOrRd"),
-        (lside, "least", "radiation_lside_e", "Lside East - Isotropic (W/m²)", "inferno"),
-        (lside, "lsouth", "radiation_lside_s", "Lside South - Isotropic (W/m²)", "inferno"),
+        (kside, "keast", "radiation_kside_e", "Kside East - Isotropic (W/m2)", "YlOrRd"),
+        (kside, "ksouth", "radiation_kside_s", "Kside South - Isotropic (W/m2)", "YlOrRd"),
+        (lside, "least", "radiation_lside_e", "Lside East - Isotropic (W/m2)", "inferno"),
+        (lside, "lsouth", "radiation_lside_s", "Lside South - Isotropic (W/m2)", "inferno"),
     ]
 
     for obj, attr, golden_name, title, cmap in components:
@@ -557,10 +562,10 @@ def generate_aniso_radiation_comparisons(inputs):
 
     # Compare Kside anisotropic
     components = [
-        ("keast", "radiation_aniso_kside_e", "Kside East - Anisotropic (W/m²)", "YlOrRd"),
-        ("ksouth", "radiation_aniso_kside_s", "Kside South - Anisotropic (W/m²)", "YlOrRd"),
-        ("kside_i", "radiation_aniso_kside_i", "Kside Direct - Anisotropic (W/m²)", "YlOrRd"),
-        ("kside_d", "radiation_aniso_kside_d", "Kside Diffuse - Anisotropic (W/m²)", "YlOrRd"),
+        ("keast", "radiation_aniso_kside_e", "Kside East - Anisotropic (W/m2)", "YlOrRd"),
+        ("ksouth", "radiation_aniso_kside_s", "Kside South - Anisotropic (W/m2)", "YlOrRd"),
+        ("kside_i", "radiation_aniso_kside_i", "Kside Direct - Anisotropic (W/m2)", "YlOrRd"),
+        ("kside_d", "radiation_aniso_kside_d", "Kside Diffuse - Anisotropic (W/m2)", "YlOrRd"),
     ]
 
     for attr, golden_name, title, cmap in components:
@@ -608,8 +613,8 @@ def generate_aniso_radiation_comparisons(inputs):
     )
 
     lside_components = [
-        ("least", "radiation_aniso_lside_e", "Lside East - Anisotropic (W/m²)", "inferno"),
-        ("lsouth", "radiation_aniso_lside_s", "Lside South - Anisotropic (W/m²)", "inferno"),
+        ("least", "radiation_aniso_lside_e", "Lside East - Anisotropic (W/m2)", "inferno"),
+        ("lsouth", "radiation_aniso_lside_s", "Lside South - Anisotropic (W/m2)", "inferno"),
     ]
 
     for attr, golden_name, title, cmap in lside_components:
@@ -648,7 +653,7 @@ def generate_utci_comparisons():
     stats = plot_comparison(
         current,
         golden,
-        f"UTCI Grid (Ta={params['ta']}°C, RH={params['rh']}%)",
+        f"UTCI Grid (Ta={params['ta']}C, RH={params['rh']}%)",
         "utci_grid.png",
         cmap="RdYlBu_r",
     )
@@ -693,7 +698,7 @@ def generate_pet_comparisons():
     stats = plot_comparison(
         current_masked,
         golden_masked,
-        f"PET Grid (Ta={params['ta']}°C, RH={params['rh']}%)",
+        f"PET Grid (Ta={params['ta']}C, RH={params['rh']}%)",
         "pet_grid.png",
         cmap="RdYlBu_r",
     )
@@ -756,7 +761,7 @@ def generate_tmrt_comparisons():
     stats = plot_comparison(
         current_aniso,
         golden_aniso,
-        "Tmrt Anisotropic (°C)",
+        "Tmrt Anisotropic (C)",
         "tmrt_aniso.png",
         cmap="RdYlBu_r",
     )
@@ -793,7 +798,7 @@ def generate_tmrt_comparisons():
     stats = plot_comparison(
         current_iso,
         golden_iso,
-        "Tmrt Isotropic (°C)",
+        "Tmrt Isotropic (C)",
         "tmrt_iso.png",
         cmap="RdYlBu_r",
     )
@@ -803,7 +808,7 @@ def generate_tmrt_comparisons():
 
 
 def generate_ground_temp_comparisons():
-    """Generate ground temperature comparison plots."""
+    """Generate ground temperature comparison plots (TsWaveDelay model)."""
     from solweig.rustalgos import ground
 
     results = {}
@@ -884,7 +889,7 @@ def generate_wall_temp_comparisons():
     stats = plot_comparison(
         current_tg,
         golden_tg,
-        "Ground Temperature Deviation (°C)",
+        "Ground Temperature Deviation (C)",
         "wall_temp_tg.png",
         cmap="RdYlBu_r",
     )
@@ -999,9 +1004,9 @@ def generate_aniso_sky_comparisons():
 
     # Compare outputs
     components = [
-        ("ldown", "Ldown (W/m²)", "inferno"),
-        ("lside", "Lside (W/m²)", "inferno"),
-        ("kside", "Kside (W/m²)", "YlOrRd"),
+        ("ldown", "Ldown (W/m2)", "inferno"),
+        ("lside", "Lside (W/m2)", "inferno"),
+        ("kside", "Kside (W/m2)", "YlOrRd"),
     ]
 
     for attr, title, cmap in components:
@@ -1019,115 +1024,682 @@ def generate_aniso_sky_comparisons():
     return results
 
 
-def generate_html_report(all_results):
-    """Generate HTML report."""
+# ---------------------------------------------------------------------------
+# Sinusoidal ground temperature model: Rust vs UMEP formula comparison
+# ---------------------------------------------------------------------------
+
+
+def _umep_ground_temp(
+    altmax,
+    dectime_frac,
+    snup_hours,
+    global_rad,
+    rad_g0,
+    zen_deg,
+    tgk,
+    tstart,
+    tmaxlst,
+    tgk_wall,
+    tstart_wall,
+    tmaxlst_wall,
+    sun_altitude,
+):
+    """Pure-Python UMEP reference (Solweig_2025a lines 171-199)."""
+    Tgamp = tgk * altmax + tstart
+    Tgampwall = tgk_wall * altmax + tstart_wall
+
+    snup_frac = snup_hours / 24.0
+    if dectime_frac > snup_frac:
+        tmaxlst_frac = tmaxlst / 24.0
+        phase = (dectime_frac - snup_frac) / (tmaxlst_frac - snup_frac)
+        Tg = Tgamp * np.sin(phase * np.pi / 2.0)
+
+        tmaxlst_wall_frac = tmaxlst_wall / 24.0
+        denom_wall = tmaxlst_wall_frac - snup_frac
+        phase_wall = (dectime_frac - snup_frac) / denom_wall if denom_wall > 0 else dectime_frac - snup_frac
+        Tgwall = Tgampwall * np.sin(phase_wall * np.pi / 2.0)
+    else:
+        Tg = 0.0
+        Tgwall = 0.0
+
+    if Tgwall < 0:
+        Tgwall = 0.0
+
+    if sun_altitude > 0 and rad_g0 > 0:
+        corr = 0.1473 * np.log(90.0 - zen_deg) + 0.3454
+        CI_TgG = (global_rad / rad_g0) + (1.0 - corr)
+        if CI_TgG > 1.0 or np.isinf(CI_TgG):
+            CI_TgG = 1.0
+    else:
+        CI_TgG = 1.0
+
+    Tg = np.maximum(Tg * CI_TgG, 0.0)
+    Tgwall = Tgwall * CI_TgG
+
+    return Tg, Tgwall, CI_TgG
+
+
+def generate_sinusoidal_ground_temp(inputs=None):
+    """Generate sinusoidal ground temperature model comparisons.
+
+    This section compares the Rust compute_ground_temperature() against the
+    UMEP Python reference formula for:
+    1. A diurnal curve plot (UMEP vs Rust overlaid)
+    2. Multiple scenarios covering all land covers and conditions
+    """
+    from solweig.rustalgos import ground
+
+    results = {}
+
+    # --- Part 1: Diurnal curve comparison ---
+    shape = (3, 3)
+    altmax = 55.0
+    snup = 5.0
+    tgk_val = 0.37
+    tstart_val = -3.41
+    tmaxlst_val = 15.0
+
+    hours = np.arange(0, 24.5, 0.5)
+    rust_tg_curve = []
+    umep_tg_curve = []
+    rust_wall_curve = []
+    umep_wall_curve = []
+
+    for h in hours:
+        dectime = h / 24.0
+        # Sun altitude approximation (simple sinusoidal)
+        sun_alt = max(0.0, altmax * np.sin(np.pi * (h - snup) / (21 - snup))) if snup < h < 21 else 0.0
+        zen = 90.0 - sun_alt if sun_alt > 0 else 90.0
+
+        # Global radiation proportional to sun altitude
+        if sun_alt > 2:
+            grad = 800.0 * np.sin(sun_alt * np.pi / 180.0)
+            grad0 = 900.0 * np.sin(sun_alt * np.pi / 180.0)
+        else:
+            grad = 0.0
+            grad0 = 0.0
+
+        # Rust
+        tg, tg_wall, ci, _, _ = ground.compute_ground_temperature(
+            20.0,  # ta
+            sun_alt,
+            altmax,
+            dectime,
+            snup,
+            grad,
+            grad0,
+            zen,
+            np.full(shape, 0.2, dtype=np.float32),
+            np.full(shape, 0.95, dtype=np.float32),
+            np.full(shape, tgk_val, dtype=np.float32),
+            np.full(shape, tstart_val, dtype=np.float32),
+            np.full(shape, tmaxlst_val, dtype=np.float32),
+        )
+        rust_tg_curve.append(float(np.array(tg)[0, 0]))
+        rust_wall_curve.append(float(tg_wall))
+
+        # UMEP
+        umep_tg, umep_wall, _ = _umep_ground_temp(
+            altmax,
+            dectime,
+            snup,
+            grad,
+            grad0,
+            zen,
+            tgk_val,
+            tstart_val,
+            tmaxlst_val,
+            tgk_val,
+            tstart_val,
+            tmaxlst_val,
+            sun_alt,
+        )
+        if isinstance(umep_tg, np.ndarray):
+            umep_tg_curve.append(float(umep_tg.flat[0]))
+        else:
+            umep_tg_curve.append(float(umep_tg))
+        umep_wall_curve.append(float(umep_wall))
+
+    rust_tg_curve = np.array(rust_tg_curve)
+    umep_tg_curve = np.array(umep_tg_curve)
+    rust_wall_curve = np.array(rust_wall_curve)
+    umep_wall_curve = np.array(umep_wall_curve)
+
+    # Plot diurnal curves
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle("Sinusoidal Ground Temperature: Rust vs UMEP", fontsize=12, fontweight="bold")
+
+    # Ground
+    axes[0].plot(hours, umep_tg_curve, "b-", label="UMEP (Python)", linewidth=2)
+    axes[0].plot(hours, rust_tg_curve, "r--", label="Rust", linewidth=2)
+    axes[0].axvline(x=snup, color="orange", linestyle=":", alpha=0.7, label="Sunrise")
+    axes[0].axvline(x=tmaxlst_val, color="green", linestyle=":", alpha=0.7, label="TmaxLST")
+    axes[0].set_xlabel("Hour of day")
+    axes[0].set_ylabel("Tg (K above Ta)")
+    axes[0].set_title("Ground Temperature Deviation")
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
+    axes[0].set_xlim(0, 24)
+
+    # Wall
+    axes[1].plot(hours, umep_wall_curve, "b-", label="UMEP (Python)", linewidth=2)
+    axes[1].plot(hours, rust_wall_curve, "r--", label="Rust", linewidth=2)
+    axes[1].axvline(x=snup, color="orange", linestyle=":", alpha=0.7, label="Sunrise")
+    axes[1].axvline(x=tmaxlst_val, color="green", linestyle=":", alpha=0.7, label="TmaxLST")
+    axes[1].set_xlabel("Hour of day")
+    axes[1].set_ylabel("Tg_wall (K above Ta)")
+    axes[1].set_title("Wall Temperature Deviation")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+    axes[1].set_xlim(0, 24)
+
+    plt.tight_layout()
+    plt.savefig(REPORT_DIR / "sinusoidal_diurnal.png", dpi=120, bbox_inches="tight")
+    plt.close()
+
+    # Compute stats for diurnal curve
+    ground_diff = np.max(np.abs(rust_tg_curve - umep_tg_curve))
+    wall_diff = np.max(np.abs(rust_wall_curve - umep_wall_curve))
+    results["sinusoidal_ground_diurnal"] = {
+        "max_abs_diff": ground_diff,
+        "mean_diff": float(np.mean(rust_tg_curve - umep_tg_curve)),
+        "std_diff": float(np.std(rust_tg_curve - umep_tg_curve)),
+        "max_value": float(np.max(np.abs(umep_tg_curve))),
+    }
+    results["sinusoidal_wall_diurnal"] = {
+        "max_abs_diff": wall_diff,
+        "mean_diff": float(np.mean(rust_wall_curve - umep_wall_curve)),
+        "std_diff": float(np.std(rust_wall_curve - umep_wall_curve)),
+        "max_value": float(np.max(np.abs(umep_wall_curve))),
+    }
+
+    # --- Part 2: Multi-scenario formula agreement ---
+    _s = dict  # shorthand
+    scenarios = [
+        # fmt: off
+        (
+            "Noon clear cobble",
+            _s(
+                altmax=55,
+                hour=12,
+                snup=5,
+                grad=600,
+                grad0=650,
+                zen=35,
+                sun_alt=55,
+                tgk=0.37,
+                tstart=-3.41,
+                tmaxlst=15,
+                tgk_w=0.37,
+                tstart_w=-3.41,
+                tmaxlst_w=15,
+            ),
+        ),
+        (
+            "Noon clear asphalt",
+            _s(
+                altmax=55,
+                hour=12,
+                snup=5,
+                grad=600,
+                grad0=650,
+                zen=35,
+                sun_alt=55,
+                tgk=0.58,
+                tstart=-9.78,
+                tmaxlst=15,
+                tgk_w=0.37,
+                tstart_w=-3.41,
+                tmaxlst_w=15,
+            ),
+        ),
+        (
+            "Afternoon 18h",
+            _s(
+                altmax=55,
+                hour=18,
+                snup=5,
+                grad=300,
+                grad0=400,
+                zen=60,
+                sun_alt=30,
+                tgk=0.37,
+                tstart=-3.41,
+                tmaxlst=15,
+                tgk_w=0.37,
+                tstart_w=-3.41,
+                tmaxlst_w=15,
+            ),
+        ),
+        (
+            "Evening 22h",
+            _s(
+                altmax=55,
+                hour=22,
+                snup=5,
+                grad=0,
+                grad0=0,
+                zen=90,
+                sun_alt=0,
+                tgk=0.37,
+                tstart=-3.41,
+                tmaxlst=15,
+                tgk_w=0.37,
+                tstart_w=-3.41,
+                tmaxlst_w=15,
+            ),
+        ),
+        (
+            "Before sunrise",
+            _s(
+                altmax=55,
+                hour=3,
+                snup=5,
+                grad=0,
+                grad0=0,
+                zen=90,
+                sun_alt=0,
+                tgk=0.37,
+                tstart=-3.41,
+                tmaxlst=15,
+                tgk_w=0.37,
+                tstart_w=-3.41,
+                tmaxlst_w=15,
+            ),
+        ),
+        (
+            "Peak at TmaxLST",
+            _s(
+                altmax=55,
+                hour=15,
+                snup=5,
+                grad=500,
+                grad0=550,
+                zen=45,
+                sun_alt=45,
+                tgk=0.37,
+                tstart=-3.41,
+                tmaxlst=15,
+                tgk_w=0.37,
+                tstart_w=-3.41,
+                tmaxlst_w=15,
+            ),
+        ),
+        (
+            "Cloudy CI low",
+            _s(
+                altmax=55,
+                hour=12,
+                snup=5,
+                grad=200,
+                grad0=650,
+                zen=35,
+                sun_alt=55,
+                tgk=0.37,
+                tstart=-3.41,
+                tmaxlst=15,
+                tgk_w=0.37,
+                tstart_w=-3.41,
+                tmaxlst_w=15,
+            ),
+        ),
+        (
+            "Wood wall noon",
+            _s(
+                altmax=55,
+                hour=12,
+                snup=5,
+                grad=600,
+                grad0=650,
+                zen=35,
+                sun_alt=55,
+                tgk=0.37,
+                tstart=-3.41,
+                tmaxlst=15,
+                tgk_w=0.50,
+                tstart_w=-2.0,
+                tmaxlst_w=14,
+            ),
+        ),
+        (
+            "Brick wall afternoon",
+            _s(
+                altmax=55,
+                hour=18,
+                snup=5,
+                grad=300,
+                grad0=400,
+                zen=60,
+                sun_alt=30,
+                tgk=0.37,
+                tstart=-3.41,
+                tmaxlst=15,
+                tgk_w=0.40,
+                tstart_w=-4.0,
+                tmaxlst_w=15,
+            ),
+        ),
+        (
+            "Grass morning",
+            _s(
+                altmax=55,
+                hour=8,
+                snup=5,
+                grad=300,
+                grad0=320,
+                zen=60,
+                sun_alt=30,
+                tgk=0.21,
+                tstart=-3.38,
+                tmaxlst=14,
+                tgk_w=0.37,
+                tstart_w=-3.41,
+                tmaxlst_w=15,
+            ),
+        ),
+        (
+            "Water",
+            _s(
+                altmax=55,
+                hour=12,
+                snup=5,
+                grad=600,
+                grad0=650,
+                zen=35,
+                sun_alt=55,
+                tgk=0.0,
+                tstart=0.0,
+                tmaxlst=12,
+                tgk_w=0.37,
+                tstart_w=-3.41,
+                tmaxlst_w=15,
+            ),
+        ),
+        (
+            "High lat low sun",
+            _s(
+                altmax=15,
+                hour=12,
+                snup=9,
+                grad=100,
+                grad0=120,
+                zen=78,
+                sun_alt=12,
+                tgk=0.37,
+                tstart=-3.41,
+                tmaxlst=13,
+                tgk_w=0.37,
+                tstart_w=-3.41,
+                tmaxlst_w=13,
+            ),
+        ),
+        # fmt: on
+    ]
+
+    scenario_results = []
+    for name, s in scenarios:
+        dectime = s["hour"] / 24.0
+
+        # UMEP reference
+        umep_tg, umep_wall, umep_ci = _umep_ground_temp(
+            s["altmax"],
+            dectime,
+            s["snup"],
+            s["grad"],
+            s["grad0"],
+            s["zen"],
+            s["tgk"],
+            s["tstart"],
+            s["tmaxlst"],
+            s["tgk_w"],
+            s["tstart_w"],
+            s["tmaxlst_w"],
+            s["sun_alt"],
+        )
+
+        # Rust
+        tgk_grid = np.full(shape, s["tgk"], dtype=np.float32)
+        tstart_grid = np.full(shape, s["tstart"], dtype=np.float32)
+        tmaxlst_grid = np.full(shape, s["tmaxlst"], dtype=np.float32)
+
+        rust_tg, rust_wall, rust_ci, _, _ = ground.compute_ground_temperature(
+            20.0,
+            s["sun_alt"],
+            s["altmax"],
+            dectime,
+            s["snup"],
+            s["grad"],
+            s["grad0"],
+            s["zen"],
+            np.full(shape, 0.2, dtype=np.float32),
+            np.full(shape, 0.95, dtype=np.float32),
+            tgk_grid,
+            tstart_grid,
+            tmaxlst_grid,
+            tgk_wall=s["tgk_w"],
+            tstart_wall=s["tstart_w"],
+            tmaxlst_wall=s["tmaxlst_w"],
+        )
+        rust_tg_val = float(np.array(rust_tg)[0, 0])
+        umep_tg_val = float(umep_tg) if not isinstance(umep_tg, np.ndarray) else float(umep_tg.flat[0])
+
+        tg_diff = abs(rust_tg_val - umep_tg_val)
+        wall_diff = abs(float(rust_wall) - float(umep_wall))
+        ci_diff = abs(float(rust_ci) - float(umep_ci))
+        passed = tg_diff < 1e-4 and wall_diff < 1e-4 and ci_diff < 1e-5
+
+        scenario_results.append(
+            {
+                "name": name,
+                "rust_tg": rust_tg_val,
+                "umep_tg": umep_tg_val,
+                "tg_diff": tg_diff,
+                "rust_wall": float(rust_wall),
+                "umep_wall": float(umep_wall),
+                "wall_diff": wall_diff,
+                "rust_ci": float(rust_ci),
+                "umep_ci": float(umep_ci),
+                "ci_diff": ci_diff,
+                "passed": passed,
+            }
+        )
+
+    results["_sinusoidal_scenarios"] = scenario_results
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Markdown report generation
+# ---------------------------------------------------------------------------
+
+
+def apply_thresholds(all_results):
+    """Apply component-specific pass/fail thresholds to results."""
+    for name, stats in all_results.items():
+        if name.startswith("_"):
+            continue  # Skip metadata entries
+        if "pass" in stats:
+            continue  # Already set
+
+        max_diff = stats.get("max_abs_diff", 0)
+        max_val = stats.get("max_value", 1.0)
+
+        if "svf_veg" in name:
+            stats["pass"] = max_diff < 0.02
+            stats["threshold"] = "0.02 (1% arch diff)"
+        elif name.startswith("svf_") or name.startswith("shadow_"):
+            stats["pass"] = max_diff < 1e-4
+            stats["threshold"] = "1e-4"
+        elif name.startswith("gvf_"):
+            relative_diff = max_diff / max_val if max_val > 0 else max_diff
+            stats["pass"] = relative_diff < 1e-3
+            stats["threshold"] = "0.1% relative"
+        elif name.startswith("radiation_aniso_"):
+            relative_diff = max_diff / max_val if max_val > 0 else max_diff
+            stats["pass"] = relative_diff < 5e-3
+            stats["threshold"] = "0.5% relative"
+        elif name.startswith("radiation_"):
+            relative_diff = max_diff / max_val if max_val > 0 else max_diff
+            stats["pass"] = relative_diff < 1e-3
+            stats["threshold"] = "0.1% relative"
+        elif name.startswith("utci_"):
+            stats["pass"] = max_diff < 0.1
+            stats["threshold"] = "0.1 C"
+        elif name.startswith("pet_"):
+            stats["pass"] = max_diff < 0.2
+            stats["threshold"] = "0.2 C"
+        elif name.startswith("tmrt_") or name.startswith("wall_temp_"):
+            stats["pass"] = max_diff < 0.1
+            stats["threshold"] = "0.1 C"
+        elif name.startswith("aniso_sky_"):
+            stats["pass"] = max_diff < 0.5
+            stats["threshold"] = "0.5 W/m2"
+        elif name.startswith("sinusoidal_"):
+            stats["pass"] = max_diff < 1e-3
+            stats["threshold"] = "1e-3 C"
+        else:
+            stats["pass"] = max_diff < 1e-3
+            stats["threshold"] = "1e-3"
+
+
+def generate_markdown_report(all_results):
+    """Generate Markdown report."""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Count pass/fail
-    total = len(all_results)
-    passed = sum(1 for r in all_results.values() if r.get("pass", False))
+    # Count pass/fail (exclude metadata entries)
+    spatial_results = {k: v for k, v in all_results.items() if not k.startswith("_")}
+    total = len(spatial_results)
+    passed = sum(1 for r in spatial_results.values() if r.get("pass", False))
 
-    html = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>UMEP vs SOLWEIG Rust - Golden Test Report</title>
-    <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-               max-width: 1400px; margin: 0 auto; padding: 20px; }}
-        h1 {{ color: #333; border-bottom: 2px solid #333; padding-bottom: 10px; }}
-        h2 {{ color: #444; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 30px; }}
-        h3 {{ color: #555; }}
-        h4 {{ color: #666; margin-bottom: 5px; }}
-        .summary {{ background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
-                   padding: 20px; border-radius: 8px; margin-bottom: 25px; }}
-        .pass {{ color: #28a745; font-weight: bold; }}
-        .fail {{ color: #dc3545; font-weight: bold; }}
-        table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-        th, td {{ border: 1px solid #ddd; padding: 10px 12px; text-align: left; }}
-        th {{ background: #f8f9fa; font-weight: 600; }}
-        tr:hover {{ background: #f5f5f5; }}
-        img {{ max-width: 100%; height: auto; margin: 10px 0; border-radius: 4px; }}
-        .component {{ margin-bottom: 30px; padding: 15px; background: #fafafa; border-radius: 8px; }}
-        .context {{ background: #e8f4f8; padding: 20px; border-radius: 8px; margin-bottom: 30px; }}
-        .context h2 {{ margin-top: 0; color: #2c5282; }}
-        .legend {{ font-size: 0.9em; color: #666; margin-top: 10px; }}
-    </style>
-</head>
-<body>
-    <h1>UMEP vs SOLWEIG Rust - Golden Test Report</h1>
-    <div class="summary">
-        <strong>Generated:</strong> {timestamp}<br>
-        <strong>Comparison:</strong> UMEP Python (Reference) vs SOLWEIG Rust Implementation<br>
-        <strong>Result:</strong> <span class="{"pass" if passed == total else "fail"}">
-            {passed}/{total} components match</span>
-        <p class="legend">Each comparison shows: UMEP (Reference) | SOLWEIG Rust | Residual (Rust − UMEP)</p>
-    </div>
+    # Count sinusoidal scenarios
+    sinusoidal_scenarios = all_results.get("_sinusoidal_scenarios", [])
+    sin_total = len(sinusoidal_scenarios)
+    sin_passed = sum(1 for s in sinusoidal_scenarios if s["passed"])
 
-    <div class="context">
-        <h2>Input Context</h2>
-        <p>Input data used for all golden test comparisons:</p>
-        <img src="context.png" alt="Input context: DSM, CDSM, Wall Heights, SVF">
-    </div>
+    status_icon = "PASS" if passed == total and sin_passed == sin_total else "FAIL"
 
-    <h2>Summary Table</h2>
-    <table>
-        <tr><th>Component</th><th>Max |Diff|</th><th>Threshold</th><th>Mean Diff</th><th>Status</th></tr>
-"""
+    lines = []
+    lines.append("# UMEP vs SOLWEIG Rust - Golden Test Report")
+    lines.append("")
+    lines.append(f"**Generated:** {timestamp}")
+    lines.append("**Comparison:** UMEP Python (Reference) vs SOLWEIG Rust Implementation")
+    lines.append(f"**Spatial tests:** {passed}/{total} pass")
+    if sin_total > 0:
+        lines.append(f"**Formula agreement:** {sin_passed}/{sin_total} scenarios pass")
+    lines.append(f"**Overall:** {status_icon}")
+    lines.append("")
+    lines.append("Each comparison shows: UMEP (Reference) | SOLWEIG Rust | Residual (Rust - UMEP)")
+    lines.append("")
 
-    for name, stats in all_results.items():
-        if "pass" in stats:
-            status = '<span class="pass">✓ PASS</span>' if stats["pass"] else '<span class="fail">✗ FAIL</span>'
-        else:
-            status = '<span style="color:#888">N/A</span>'
+    # --- Input context ---
+    lines.append("## Input Context")
+    lines.append("")
+    lines.append("![Input context: DSM, CDSM, Wall Heights, SVF](context.png)")
+    lines.append("")
+
+    # --- Summary table ---
+    lines.append("## Spatial Comparison Summary")
+    lines.append("")
+    lines.append("| Component | Max |Diff| | Threshold | Mean Diff | Status |")
+    lines.append("|-----------|------------|-----------|-----------|--------|")
+
+    for name, stats in spatial_results.items():
+        status_str = "PASS" if stats.get("pass", False) else "FAIL"
         threshold = stats.get("threshold", "1e-3")
-        max_diff = stats.get("max_abs_diff", stats.get("max", 0))
-        mean_diff = stats.get("mean_diff", stats.get("mean", 0))
-        html += f"""        <tr>
-            <td>{name}</td>
-            <td>{max_diff:.2e}</td>
-            <td>{threshold}</td>
-            <td>{mean_diff:.2e}</td>
-            <td>{status}</td>
-        </tr>
-"""
+        max_diff = stats.get("max_abs_diff", 0)
+        mean_diff = stats.get("mean_diff", 0)
+        lines.append(f"| {name} | {max_diff:.2e} | {threshold} | {mean_diff:.2e} | {status_str} |")
 
-    html += """    </table>
+    lines.append("")
 
-    <h2>Visual Comparisons: UMEP (Reference) vs SOLWEIG Rust</h2>
-"""
-
-    # Group by category
+    # --- Visual comparisons grouped by category ---
     categories = {
-        "Shadows": [k for k in all_results if k.startswith("shadow_")],
-        "Sky View Factor": [k for k in all_results if k.startswith("svf_")],
-        "Ground View Factor": [k for k in all_results if k.startswith("gvf_")],
-        "Radiation Isotropic": [k for k in all_results if k.startswith("radiation_") and "aniso" not in k],
-        "Radiation Anisotropic": [k for k in all_results if k.startswith("radiation_aniso_")],
-        "UTCI": [k for k in all_results if k.startswith("utci_")],
-        "PET": [k for k in all_results if k.startswith("pet_")],
-        "Tmrt": [k for k in all_results if k.startswith("tmrt_")],
-        "Ground Temperature": [k for k in all_results if k.startswith("ground_temp_")],
-        "Wall Temperature": [k for k in all_results if k.startswith("wall_temp_")],
-        "Anisotropic Sky": [k for k in all_results if k.startswith("aniso_sky_")],
+        "Shadows": [k for k in spatial_results if k.startswith("shadow_")],
+        "Sky View Factor": [k for k in spatial_results if k.startswith("svf_")],
+        "Ground View Factor": [k for k in spatial_results if k.startswith("gvf_")],
+        "Radiation (Isotropic)": [k for k in spatial_results if k.startswith("radiation_") and "aniso" not in k],
+        "Radiation (Anisotropic)": [k for k in spatial_results if k.startswith("radiation_aniso_")],
+        "UTCI": [k for k in spatial_results if k.startswith("utci_")],
+        "PET": [k for k in spatial_results if k.startswith("pet_")],
+        "Tmrt": [k for k in spatial_results if k.startswith("tmrt_")],
+        "Ground Temperature (TsWaveDelay)": [k for k in spatial_results if k.startswith("ground_temp_")],
+        "Wall Temperature": [k for k in spatial_results if k.startswith("wall_temp_")],
+        "Anisotropic Sky": [k for k in spatial_results if k.startswith("aniso_sky_")],
     }
+
+    lines.append("## Visual Comparisons")
+    lines.append("")
 
     for category, keys in categories.items():
         if keys:
-            html += f"""    <h3>{category}</h3>
-"""
+            lines.append(f"### {category}")
+            lines.append("")
             for key in keys:
-                html += f"""    <div class="component">
-        <h4>{key}</h4>
-        <img src="{key}.png" alt="{key}">
-    </div>
-"""
+                status_str = "PASS" if spatial_results[key].get("pass", False) else "FAIL"
+                lines.append(f"**{key}** ({status_str})")
+                lines.append("")
+                lines.append(f"![{key}]({key}.png)")
+                lines.append("")
 
-    html += """</body>
-</html>
-"""
+    # --- Sinusoidal ground temperature section ---
+    # Diurnal curves
+    sinusoidal_ground = spatial_results.get("sinusoidal_ground_diurnal")
+    sinusoidal_wall = spatial_results.get("sinusoidal_wall_diurnal")
+    if sinusoidal_ground or sinusoidal_wall or sinusoidal_scenarios:
+        lines.append("## Sinusoidal Ground Temperature Model")
+        lines.append("")
+        lines.append("Compares `compute_ground_temperature()` (Rust) against the UMEP Python")
+        lines.append("formula from `Solweig_2025a_calc_forprocessing.py` (lines 171-199).")
+        lines.append("")
 
-    with open(REPORT_DIR / "golden_report.html", "w") as f:
-        f.write(html)
+    if sinusoidal_ground:
+        lines.append("### Diurnal Curve (Rust vs UMEP)")
+        lines.append("")
+        lines.append("![Sinusoidal diurnal curve: Rust vs UMEP](sinusoidal_diurnal.png)")
+        lines.append("")
+        gnd_status = "PASS" if sinusoidal_ground.get("pass", False) else "FAIL"
+        wall_status = "PASS" if (sinusoidal_wall and sinusoidal_wall.get("pass", False)) else "FAIL"
+        lines.append(f"- Ground curve max |diff|: {sinusoidal_ground['max_abs_diff']:.2e} ({gnd_status})")
+        if sinusoidal_wall:
+            lines.append(f"- Wall curve max |diff|: {sinusoidal_wall['max_abs_diff']:.2e} ({wall_status})")
+        lines.append("")
+
+    # Scenario table
+    if sinusoidal_scenarios:
+        lines.append("### Formula Agreement (12 Scenarios)")
+        lines.append("")
+        lines.append(f"**Result:** {sin_passed}/{sin_total} scenarios match within f32 tolerance (atol=1e-4)")
+        lines.append("")
+        lines.append("| Scenario | Rust Tg | UMEP Tg | |d Tg| | Rust Wall | UMEP Wall | |d Wall| | CI | Status |")
+        lines.append("|----------|---------|---------|--------|-----------|-----------|---------|------|--------|")
+
+        for s in sinusoidal_scenarios:
+            status_str = "PASS" if s["passed"] else "FAIL"
+            lines.append(
+                f"| {s['name']} "
+                f"| {s['rust_tg']:.4f} "
+                f"| {s['umep_tg']:.4f} "
+                f"| {s['tg_diff']:.1e} "
+                f"| {s['rust_wall']:.4f} "
+                f"| {s['umep_wall']:.4f} "
+                f"| {s['wall_diff']:.1e} "
+                f"| {s['rust_ci']:.4f} "
+                f"| {status_str} |"
+            )
+
+        lines.append("")
+
+    # Write file
+    report_path = REPORT_DIR / "golden_report.md"
+    with open(report_path, "w") as f:
+        f.write("\n".join(lines))
+
+    return report_path
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 
 def main():
@@ -1180,7 +1752,7 @@ def main():
     except Exception as e:
         print(f"    Skipping Tmrt: {e}")
 
-    print("Generating ground temperature comparisons...")
+    print("Generating ground temperature comparisons (TsWaveDelay)...")
     try:
         all_results.update(generate_ground_temp_comparisons())
     except Exception as e:
@@ -1198,60 +1770,32 @@ def main():
     except Exception as e:
         print(f"    Skipping aniso sky: {e}")
 
-    # Apply component-specific pass/fail thresholds
-    # Thresholds match the pytest golden tests for consistency
-    for name, stats in all_results.items():
-        if "pass" in stats:
-            continue  # Already set
+    print("Generating sinusoidal ground temperature comparisons...")
+    try:
+        all_results.update(generate_sinusoidal_ground_temp())
+    except Exception as e:
+        print(f"    Skipping sinusoidal ground temp: {e}")
 
-        max_diff = stats.get("max_abs_diff", 0)
-        max_val = stats.get("max_value", 1.0)
+    # Apply thresholds
+    apply_thresholds(all_results)
 
-        if "svf_veg" in name:
-            stats["pass"] = max_diff < 0.02
-            stats["threshold"] = "0.02 (1% architecture diff)"
-        elif name.startswith("svf_") or name.startswith("shadow_"):
-            stats["pass"] = max_diff < 1e-4
-            stats["threshold"] = "1e-4"
-        elif name.startswith("gvf_"):
-            relative_diff = max_diff / max_val if max_val > 0 else max_diff
-            stats["pass"] = relative_diff < 1e-3
-            stats["threshold"] = "0.1% relative"
-        elif name.startswith("radiation_aniso_"):
-            # Anisotropic radiation has more numerical variation
-            relative_diff = max_diff / max_val if max_val > 0 else max_diff
-            stats["pass"] = relative_diff < 5e-3  # 0.5% relative
-            stats["threshold"] = "0.5% relative"
-        elif name.startswith("radiation_"):
-            relative_diff = max_diff / max_val if max_val > 0 else max_diff
-            stats["pass"] = relative_diff < 1e-3
-            stats["threshold"] = "0.1% relative"
-        elif name.startswith("utci_"):
-            stats["pass"] = max_diff < 0.1  # 0.1°C
-            stats["threshold"] = "0.1°C"
-        elif name.startswith("pet_"):
-            stats["pass"] = max_diff < 0.2  # 0.2°C (iterative solver)
-            stats["threshold"] = "0.2°C"
-        elif name.startswith("tmrt_") or name.startswith("wall_temp_"):
-            stats["pass"] = max_diff < 0.1  # 0.1°C
-            stats["threshold"] = "0.1°C"
-        elif name.startswith("aniso_sky_"):
-            stats["pass"] = max_diff < 0.5  # 0.5 W/m²
-            stats["threshold"] = "0.5 W/m²"
-        else:
-            stats["pass"] = max_diff < 1e-3
-            stats["threshold"] = "1e-3"
-
-    print("\nGenerating HTML report...")
-    generate_html_report(all_results)
+    print("\nGenerating Markdown report...")
+    report_path = generate_markdown_report(all_results)
 
     # Print summary
-    total = len(all_results)
-    passed = sum(1 for r in all_results.values() if r.get("pass", False))
+    spatial_results = {k: v for k, v in all_results.items() if not k.startswith("_")}
+    total = len(spatial_results)
+    passed = sum(1 for r in spatial_results.values() if r.get("pass", False))
+
+    sinusoidal_scenarios = all_results.get("_sinusoidal_scenarios", [])
+    sin_total = len(sinusoidal_scenarios)
+    sin_passed = sum(1 for s in sinusoidal_scenarios if s["passed"])
 
     print("\n" + "=" * 60)
-    print(f"Report generated: {REPORT_DIR / 'golden_report.html'}")
-    print(f"Result: {passed}/{total} tests passed")
+    print(f"Report generated: {report_path}")
+    print(f"Spatial comparisons: {passed}/{total} pass")
+    if sin_total > 0:
+        print(f"Formula agreement:   {sin_passed}/{sin_total} scenarios pass")
     print("=" * 60)
 
 

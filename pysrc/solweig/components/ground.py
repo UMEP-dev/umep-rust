@@ -36,6 +36,10 @@ def compute_ground_temperature(
     tgk_grid: NDArray[np.floating],
     tstart_grid: NDArray[np.floating],
     tmaxlst_grid: NDArray[np.floating],
+    *,
+    tgk_wall: float | None = None,
+    tstart_wall: float | None = None,
+    tmaxlst_wall: float | None = None,
 ) -> GroundBundle:
     """
     Compute ground and wall temperature deviations from air temperature.
@@ -52,6 +56,9 @@ def compute_ground_temperature(
         tgk_grid: TgK parameter per pixel (temperature gain coefficient)
         tstart_grid: Tstart parameter per pixel (temperature baseline offset)
         tmaxlst_grid: TmaxLST parameter per pixel (hour of maximum temperature)
+        tgk_wall: Optional wall TgK parameter. If None, uses cobblestone default (0.37).
+        tstart_wall: Optional wall Tstart parameter. If None, uses cobblestone default (-3.41).
+        tmaxlst_wall: Optional wall TmaxLST parameter. If None, uses cobblestone default (15.0).
 
     Returns:
         GroundBundle containing:
@@ -116,6 +123,9 @@ def compute_ground_temperature(
         tgk_grid.astype(np.float32),
         tstart_grid.astype(np.float32),
         tmaxlst_grid.astype(np.float32),
+        tgk_wall=tgk_wall,
+        tstart_wall=tstart_wall,
+        tmaxlst_wall=tmaxlst_wall,
     )
 
     return GroundBundle(

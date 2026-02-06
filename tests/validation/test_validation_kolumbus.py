@@ -8,9 +8,8 @@ Period: 2023-05-15 to 2023-08-31 (10-minute intervals)
 Measurements: IR radiometer wall surface temperatures (plastered brick + wood)
 
 These tests validate the SOLWEIG wall temperature model (tg_wall) against
-field measurements of wall surface temperature. The model uses hardcoded
-'cobblestone' parameters (tgk=0.37, tstart=-3.41, tmaxlst=15.0), so we
-expect reasonable but not perfect agreement with real wall materials.
+field measurements of wall surface temperature. With JSON-based wall params,
+material-specific parameters can be passed (e.g., brick vs wood).
 
 Tests are marked @pytest.mark.slow and @pytest.mark.validation since they
 require external data files and take significant time.
@@ -183,8 +182,22 @@ class TestWallTemperatureValidation:
 
         return Location(latitude=57.6966, longitude=11.9305, utc_offset=2, altitude=10.0)
 
-    def _compute_tg_wall_for_day(self, weather_list, location):
+    def _compute_tg_wall_for_day(
+        self,
+        weather_list,
+        location,
+        tgk_wall=None,
+        tstart_wall=None,
+        tmaxlst_wall=None,
+    ):
         """Compute tg_wall for each hourly Weather in a day.
+
+        Args:
+            weather_list: List of Weather objects for the day.
+            location: Location object.
+            tgk_wall: Optional wall TgK (temperature gain coefficient).
+            tstart_wall: Optional wall Tstart (baseline offset).
+            tmaxlst_wall: Optional wall TmaxLST (hour of max temperature).
 
         Returns list of (datetime, ta, tg_wall) tuples.
         """
@@ -213,6 +226,9 @@ class TestWallTemperatureValidation:
                 tgk_grid=tgk,
                 tstart_grid=tstart,
                 tmaxlst_grid=tmaxlst,
+                tgk_wall=tgk_wall,
+                tstart_wall=tstart_wall,
+                tmaxlst_wall=tmaxlst_wall,
             )
             results.append((w.datetime, w.ta, bundle.tg_wall))
         return results
@@ -351,6 +367,125 @@ class TestWallTemperatureValidation:
         # Multi-day statistics should be somewhat stable
         assert rmse_pb < 10.0, f"Monthly RMSE PB={rmse_pb:.2f}°C too high"
         assert rmse_wood < 10.0, f"Monthly RMSE wood={rmse_wood:.2f}°C too high"
+
+    @pytest.mark.slow
+    def test_wall_temp_brick_params(self, gothenburg_location):
+        """Validate with brick-specific wall params from JSON.
+
+        The Kolumbus plastered brick wall should be better modeled with
+        brick-appropriate thermal response parameters.
+        """
+        from solweig import Weather
+
+        met = Weather.from_umep_met(
+            DATA_DIR / "metdata_10min_july.txt",
+            start="2023-07-15",
+            end="2023-07-15",
+        )
+        # Brick wall params from default_materials.json
+        model_results = self._compute_tg_wall_for_day(
+            met,
+            gothenburg_location,
+            tgk_wall=0.40,
+            tstart_wall=-4.0,
+            tmaxlst_wall=15.0,
+        )
+
+        obs = load_hourly_observations("2023-07-15", "2023-07-15")
+        model_dict = {dt: (ta, tg) for dt, ta, tg in model_results}
+        matched = []
+        for o in obs:
+            if o["time"] in model_dict:
+                ta, tg_wall = model_dict[o["time"]]
+                matched.append((o["ts_pb_obs"], ta + tg_wall))
+
+        assert len(matched) >= 20
+        obs_arr = np.array([x[0] for x in matched])
+        mod_arr = np.array([x[1] for x in matched])
+        rmse = np.sqrt(np.mean((obs_arr - mod_arr) ** 2))
+
+        print(f"\n--- Brick params on PB wall (2023-07-15): RMSE={rmse:.2f}°C ---")
+        assert rmse < 15.0, f"Brick-param RMSE={rmse:.2f}°C exceeds threshold"
+
+    @pytest.mark.slow
+    def test_wall_temp_wood_params(self, gothenburg_location):
+        """Validate with wood-specific wall params from JSON.
+
+        The Kolumbus wood wall should be better modeled with
+        wood-appropriate thermal response parameters.
+        """
+        from solweig import Weather
+
+        met = Weather.from_umep_met(
+            DATA_DIR / "metdata_10min_july.txt",
+            start="2023-07-15",
+            end="2023-07-15",
+        )
+        # Wood wall params from default_materials.json
+        model_results = self._compute_tg_wall_for_day(
+            met,
+            gothenburg_location,
+            tgk_wall=0.50,
+            tstart_wall=-2.0,
+            tmaxlst_wall=14.0,
+        )
+
+        obs = load_hourly_observations("2023-07-15", "2023-07-15")
+        model_dict = {dt: (ta, tg) for dt, ta, tg in model_results}
+        matched = []
+        for o in obs:
+            if o["time"] in model_dict:
+                ta, tg_wall = model_dict[o["time"]]
+                matched.append((o["ts_wood_obs"], ta + tg_wall))
+
+        assert len(matched) >= 20
+        obs_arr = np.array([x[0] for x in matched])
+        mod_arr = np.array([x[1] for x in matched])
+        rmse = np.sqrt(np.mean((obs_arr - mod_arr) ** 2))
+
+        print(f"\n--- Wood params on wood wall (2023-07-15): RMSE={rmse:.2f}°C ---")
+        assert rmse < 15.0, f"Wood-param RMSE={rmse:.2f}°C exceeds threshold"
+
+    @pytest.mark.slow
+    def test_material_params_vs_default_comparison(self, gothenburg_location):
+        """Compare material-specific params against default cobblestone.
+
+        Material-specific params should produce different (ideally better)
+        results than the generic cobblestone default.
+        """
+        from solweig import Weather
+
+        met = Weather.from_umep_met(
+            DATA_DIR / "metdata_10min_july.txt",
+            start="2023-07-15",
+            end="2023-07-15",
+        )
+
+        # Default (cobblestone)
+        default_results = self._compute_tg_wall_for_day(met, gothenburg_location)
+        # Brick params
+        brick_results = self._compute_tg_wall_for_day(
+            met, gothenburg_location, tgk_wall=0.40, tstart_wall=-4.0, tmaxlst_wall=15.0
+        )
+        # Wood params
+        wood_results = self._compute_tg_wall_for_day(
+            met, gothenburg_location, tgk_wall=0.50, tstart_wall=-2.0, tmaxlst_wall=14.0
+        )
+
+        # The different params should produce different peak wall temperatures
+        default_peak = max(tg for _, _, tg in default_results)
+        brick_peak = max(tg for _, _, tg in brick_results)
+        wood_peak = max(tg for _, _, tg in wood_results)
+
+        print("\n--- Material comparison (2023-07-15 peak tg_wall) ---")
+        print(f"Default (cobblestone): {default_peak:.2f}K")
+        print(f"Brick:                 {brick_peak:.2f}K")
+        print(f"Wood:                  {wood_peak:.2f}K")
+
+        # Wood should have higher peak (faster response, higher TgK)
+        assert wood_peak > default_peak, "Wood should heat faster than cobblestone"
+        # Brick should also differ from default (different TgK/Tstart)
+        assert abs(brick_peak - default_peak) > 0.1, "Brick should differ from default"
 
 
 # ---------------------------------------------------------------------------

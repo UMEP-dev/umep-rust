@@ -216,6 +216,11 @@ def calculate_timeseries(
     # Apply defaults for anything still None
     if effective_aniso is None:
         effective_aniso = False
+    # Auto-load bundled UMEP JSON as default materials (single source of truth)
+    if effective_materials is None:
+        from .loaders import load_params
+
+        effective_materials = load_params()
 
     # Assign back for use in the rest of the function
     use_anisotropic_sky = effective_aniso

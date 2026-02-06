@@ -37,7 +37,7 @@ This document outlines the development priorities for SOLWEIG.
 | 19  | Field-data validation                     | H       | HIGH - scientific credibility      | In Progress |
 | 20  | POI Mode                                  | C       | HIGH - 10-100x speedup             | Deferred    |
 
-**Current status:** Phases A, B, D, E, F.1, G.2, G.3.1 complete. 330+ tests total (318 quick + 12 validation + slow tests). Field-data validation in progress (Kolumbus wall temp + full pipeline). Next: Montpellier Tmrt validation, POI mode.
+**Current status:** Phases A, B, D, E, F.1, G.2, G.3.1, H.1 complete. 335+ tests total (323 quick + 12 validation + slow tests). JSON parameter integration done (bundled UMEP JSON as single source of truth, material-specific wall params). Next: Montpellier Tmrt validation, POI mode.
 
 ### Recently Completed
 
@@ -57,6 +57,19 @@ This document outlines the development priorities for SOLWEIG.
 ---
 
 ## Session Log (Feb 2026)
+
+**Session (Feb 6, JSON parameter integration):**
+
+- ✅ **Full JSON parameter integration** - `parametersforsolweig.json` as single source of truth
+  - Created `pysrc/solweig/data/default_materials.json` (bundled UMEP JSON with wall values filled in)
+  - Auto-load materials in `calculate()` / `calculate_timeseries()` when `materials=None`
+  - Wall params flow from JSON → Python → Rust: tgk_wall, tstart_wall, tmaxlst_wall
+  - Rust `ground.rs`: 3 `Option<f32>` wall params with cobblestone defaults
+  - Fixed phase clamping bug (unclamped to allow afternoon cooling per UMEP)
+  - Fixed wall denominator division-by-zero guard
+  - 5 new sinusoidal golden tests + 12 parametrized UMEP agreement tests
+  - Golden report generator: HTML → Markdown rewrite, added sinusoidal section
+  - Wall material defaults: Brick (TgK=0.40), Wood (TgK=0.50), Concrete (TgK=0.35)
 
 **Session (Feb 6, validation):**
 
@@ -554,7 +567,7 @@ Python orchestration → Rust computation → Python result handling
 - [x] Add `Weather.from_umep_met()` for SUEWS-format met files
 - [x] Write 12 validation tests (data loading, wall temp, full pipeline)
 - [x] Register `validation` pytest marker
-- [ ] Add material-specific wall temperature parameters (would reduce RMSE to ~2°C)
+- [x] Add material-specific wall temperature parameters (Rust optional params + JSON defaults)
 - [ ] Land cover-aware wall temperature model (use groundcover.tif)
 
 ### H.2 Montpellier Tmrt Validation (Planned)

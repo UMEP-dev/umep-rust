@@ -26,12 +26,20 @@ const PI: f32 = std::f32::consts::PI;
 /// - tgk_grid: TgK parameter per pixel (temperature gain coefficient)
 /// - tstart_grid: Tstart parameter per pixel (temperature baseline offset)
 /// - tmaxlst_grid: TmaxLST parameter per pixel (hour of maximum temperature, 0-24)
+/// - tgk_wall: Optional wall TgK parameter (default: 0.37, cobblestone)
+/// - tstart_wall: Optional wall Tstart parameter (default: -3.41, cobblestone)
+/// - tmaxlst_wall: Optional wall TmaxLST parameter (default: 15.0, cobblestone)
 ///
 /// Returns tuple:
 /// - tg: Ground temperature deviation from air temperature (K)
 /// - tg_wall: Wall temperature deviation from air temperature (K)
 /// - ci_tg: Clearness index correction factor (0-1)
 #[pyfunction]
+#[pyo3(signature = (
+    _ta, sun_altitude, altmax, dectime, snup, global_rad, rad_g0, zen_deg,
+    alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid,
+    tgk_wall=None, tstart_wall=None, tmaxlst_wall=None,
+))]
 pub fn compute_ground_temperature<'py>(
     py: Python<'py>,
     _ta: f32,
@@ -47,6 +55,9 @@ pub fn compute_ground_temperature<'py>(
     tgk_grid: PyReadonlyArray2<'py, f32>,
     tstart_grid: PyReadonlyArray2<'py, f32>,
     tmaxlst_grid: PyReadonlyArray2<'py, f32>,
+    tgk_wall: Option<f32>,
+    tstart_wall: Option<f32>,
+    tmaxlst_wall: Option<f32>,
 ) -> PyResult<(
     Bound<'py, PyArray2<f32>>,
     f32,
@@ -62,10 +73,10 @@ pub fn compute_ground_temperature<'py>(
 
     let shape = tgk_arr.dim();
 
-    // Wall parameters (scalar, use default cobblestone values)
-    let tstart_wall = -3.41f32;
-    let tmaxlst_wall = 15.0f32;
-    let tgk_wall = 0.37f32;
+    // Wall parameters (scalar, default to cobblestone if not provided from JSON)
+    let tgk_wall = tgk_wall.unwrap_or(0.37);
+    let tstart_wall = tstart_wall.unwrap_or(-3.41);
+    let tmaxlst_wall = tmaxlst_wall.unwrap_or(15.0);
 
     // Temperature amplitude based on max sun altitude (per-pixel from land cover)
     // Formula: Tgamp = TgK * altmax + Tstart
@@ -96,8 +107,9 @@ pub fn compute_ground_temperature<'py>(
             if dectime > snup_frac {
                 let denom = tmaxlst_frac_val - snup_frac;
                 let denom = if denom > 0.0 { denom } else { 1.0 };
-                let mut phase = (dectime - snup_frac) / denom;
-                phase = phase.clamp(0.0, 1.0);
+                // No upper clamp — phase > 1 after TmaxLST allows
+                // sin(phase * π/2) to naturally decline (afternoon cooling)
+                let phase = (dectime - snup_frac) / denom;
 
                 *out = tgamp_val * (phase * PI / 2.0).sin();
             } else {
@@ -105,15 +117,14 @@ pub fn compute_ground_temperature<'py>(
             }
         });
 
-    // Clamp negative Tg values
-    tg.par_mapv_inplace(|v| v.max(0.0));
+    // No intermediate clamp — negatives are clipped AFTER CI correction (matching UMEP)
 
-    // Wall phase (scalar)
+    // Wall phase (scalar) — no upper clamp for afternoon cooling
     let tg_wall = if dectime > snup_frac && tmaxlst_wall_frac > snup_frac {
-        let mut phase_wall = (dectime - snup_frac) / (tmaxlst_wall_frac - snup_frac);
-        phase_wall = phase_wall.clamp(0.0, 1.0);
-        let wall_temp = tgamp_wall * (phase_wall * PI / 2.0).sin();
-        wall_temp.max(0.0)
+        let denom_wall = tmaxlst_wall_frac - snup_frac;
+        let denom_wall = if denom_wall > 0.0 { denom_wall } else { 1.0 };
+        let phase_wall = (dectime - snup_frac) / denom_wall;
+        tgamp_wall * (phase_wall * PI / 2.0).sin()
     } else {
         0.0
     };

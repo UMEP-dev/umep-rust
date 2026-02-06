@@ -308,6 +308,9 @@ def calculate(
         effective_aniso = False
     if effective_human is None:
         effective_human = HumanParams()
+    # Auto-load bundled UMEP JSON as default materials (single source of truth)
+    if effective_materials is None:
+        effective_materials = load_params()
 
     # Assign back to use in the rest of the function
     use_anisotropic_sky = effective_aniso

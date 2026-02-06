@@ -19,31 +19,34 @@ def load_params(params_json_path: str | Path | None = None) -> SimpleNamespace:
     """
     Load SOLWEIG parameters from a JSON file.
 
+    Returns a mutable SimpleNamespace with all UMEP-standard parameters:
+    land cover properties, wall materials, Tmrt settings, PET settings,
+    tree settings, and posture geometry.
+
     Args:
         params_json_path: Path to the parameters JSON file.
-            If None (default), loads bundled default_params.json with standard values
-            for Tmrt, PET, vegetation, and posture parameters.
-            For landcover-specific parameters (albedo, emissivity per surface type),
-            provide a custom parameters file.
+            If None (default), loads the bundled default_materials.json
+            with all UMEP-standard values.
 
     Returns:
         SimpleNamespace object with nested parameter values accessible via attributes.
+        The namespace is mutable — override individual values as needed.
 
     Examples:
         Load bundled defaults:
 
-        >>> params = load_params()  # Uses bundled default_params.json
+        >>> params = load_params()
         >>> params.Tmrt_params.Value.absK  # 0.7
-        >>> params.Tree_settings.Value.Transmissivity  # 0.03
-
-        Load custom parameters:
-
-        >>> params = load_params("parametersforsolweig.json")
         >>> params.Albedo.Effective.Value.Dark_asphalt  # 0.18
+
+        Override a specific value:
+
+        >>> params = load_params()
+        >>> params.Ts_deg.Value.Walls = 0.50  # Change wall TgK
     """
     if params_json_path is None:
-        # Use bundled default parameters
-        params_path = Path(__file__).parent / "data" / "default_params.json"
+        # Use bundled default parameters (full UMEP-format JSON with all sections)
+        params_path = Path(__file__).parent / "data" / "default_materials.json"
     else:
         params_path = Path(params_json_path)
 

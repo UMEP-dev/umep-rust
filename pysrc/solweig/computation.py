@@ -318,6 +318,15 @@ def calculate_core(
         surface.svf = SvfArrays.from_bundle(svf_bundle)
 
     # Step 3: Ground Temperature Model (TgMaps with land cover parameterization)
+    # Extract wall temperature params from materials JSON (defaults to None → cobblestone in Rust)
+    tgk_wall = None
+    tstart_wall = None
+    tmaxlst_wall = None
+    if materials is not None:
+        tgk_wall = getattr(getattr(getattr(materials, "Ts_deg", None), "Value", None), "Walls", None)
+        tstart_wall = getattr(getattr(getattr(materials, "Tstart", None), "Value", None), "Walls", None)
+        tmaxlst_wall = getattr(getattr(getattr(materials, "TmaxLST", None), "Value", None), "Walls", None)
+
     ground_bundle = compute_ground_temperature(
         weather=weather,
         location=location,
@@ -326,6 +335,9 @@ def calculate_core(
         tgk_grid=tgk_grid,
         tstart_grid=tstart_grid,
         tmaxlst_grid=tmaxlst_grid,
+        tgk_wall=tgk_wall,
+        tstart_wall=tstart_wall,
+        tmaxlst_wall=tmaxlst_wall,
     )
 
     # Step 4: Ground View Factor (upwelling radiation from ground + walls)
