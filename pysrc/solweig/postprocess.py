@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime as dt
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .models import HumanParams
+from .progress import ProgressReporter
 from .rustalgos import pet as pet_rust
 from .rustalgos import utci as utci_rust
 
@@ -119,6 +121,7 @@ def compute_utci(
     weather_series: list[Weather],
     output_dir: str | Path,
     location: Location | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> int:
     """
     Batch compute UTCI from saved Tmrt GeoTIFF files.
@@ -132,6 +135,8 @@ def compute_utci(
         output_dir: Directory to save utci_YYYYMMDD_HHMM.tif files.
         location: Geographic location for weather.compute_derived().
             If None, assumes weather is already computed.
+        progress_callback: Optional callback(current_step, total_steps) called after
+            each timestep. If None, a tqdm progress bar is shown automatically.
 
     Returns:
         Number of UTCI files processed.
@@ -177,12 +182,20 @@ def compute_utci(
             if not w._derived_computed:
                 w.compute_derived(location)
 
+    # Set up progress reporting
+    n_steps = len(weather_series)
+    _progress = None if progress_callback is not None else ProgressReporter(total=n_steps, desc="Computing UTCI")
+
     # Start timing
     start_time = time.time()
     processed = 0
-    for weather in weather_series:
+    for i, weather in enumerate(weather_series):
         if weather.datetime not in tmrt_map:
             logger.warning(f"No Tmrt file found for {weather.datetime}")
+            if progress_callback is not None:
+                progress_callback(i + 1, n_steps)
+            elif _progress is not None:
+                _progress.update(1)
             continue
 
         # Load Tmrt
@@ -205,14 +218,18 @@ def compute_utci(
         )
         processed += 1
 
-        if processed % 10 == 0:
-            logger.info(f"Processed {processed}/{len(weather_series)} timesteps")
+        # Report progress
+        if progress_callback is not None:
+            progress_callback(i + 1, n_steps)
+        elif _progress is not None:
+            _progress.update(1)
+
+    if _progress is not None:
+        _progress.close()
 
     total_time = time.time() - start_time
     rate = processed / total_time if total_time > 0 else 0
-    logger.info(
-        f"✓ UTCI computation complete: {processed} files saved to {output_dir} ({total_time:.1f}s, {rate:.2f} steps/s)"
-    )
+    logger.info(f"UTCI complete: {processed} files saved to {output_dir} ({total_time:.1f}s, {rate:.2f} steps/s)")
     return processed
 
 
@@ -222,6 +239,7 @@ def compute_pet(
     output_dir: str | Path,
     human: HumanParams | None = None,
     location: Location | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> int:
     """
     Batch compute PET from saved Tmrt GeoTIFF files.
@@ -236,6 +254,8 @@ def compute_pet(
         human: Human body parameters. Uses defaults if not provided.
         location: Geographic location for weather.compute_derived().
             If None, assumes weather is already computed.
+        progress_callback: Optional callback(current_step, total_steps) called after
+            each timestep. If None, a tqdm progress bar is shown automatically.
 
     Returns:
         Number of PET files processed.
@@ -285,12 +305,20 @@ def compute_pet(
             if not w._derived_computed:
                 w.compute_derived(location)
 
+    # Set up progress reporting
+    n_steps = len(weather_series)
+    _progress = None if progress_callback is not None else ProgressReporter(total=n_steps, desc="Computing PET")
+
     # Start timing
     start_time = time.time()
     processed = 0
-    for weather in weather_series:
+    for i, weather in enumerate(weather_series):
         if weather.datetime not in tmrt_map:
             logger.warning(f"No Tmrt file found for {weather.datetime}")
+            if progress_callback is not None:
+                progress_callback(i + 1, n_steps)
+            elif _progress is not None:
+                _progress.update(1)
             continue
 
         # Load Tmrt
@@ -313,12 +341,16 @@ def compute_pet(
         )
         processed += 1
 
-        if processed % 10 == 0:
-            logger.info(f"Processed {processed}/{len(weather_series)} timesteps")
+        # Report progress
+        if progress_callback is not None:
+            progress_callback(i + 1, n_steps)
+        elif _progress is not None:
+            _progress.update(1)
+
+    if _progress is not None:
+        _progress.close()
 
     total_time = time.time() - start_time
     rate = processed / total_time if total_time > 0 else 0
-    logger.info(
-        f"✓ PET computation complete: {processed} files saved to {output_dir} ({total_time:.1f}s, {rate:.2f} steps/s)"
-    )
+    logger.info(f"PET complete: {processed} files saved to {output_dir} ({total_time:.1f}s, {rate:.2f} steps/s)")
     return processed

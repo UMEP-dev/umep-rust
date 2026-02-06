@@ -197,6 +197,7 @@ class SurfaceData:
     _geotransform: list[float] | None = field(default=None, init=False, repr=False)  # GDAL geotransform
     _crs_wkt: str | None = field(default=None, init=False, repr=False)  # CRS as WKT string
     _buffer_pool: BufferPool | None = field(default=None, init=False, repr=False)  # Reusable array pool
+    _gvf_geometry_cache: object = field(default=None, init=False, repr=False)  # Rust GVF geometry cache
 
     def __post_init__(self):
         # Ensure dsm is float32 for memory efficiency

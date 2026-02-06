@@ -1,5 +1,5 @@
 use crate::{emissivity_models, patch_radiation, sunlit_shaded_patches};
-use ndarray::{Array1, Array2};
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2, ArrayView3};
 use numpy::{
     IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3,
 };
@@ -177,65 +177,58 @@ impl PixelResult {
     }
 }
 
-#[pyfunction]
+/// Pure-ndarray result from anisotropic sky calculation (no PyO3 types).
+pub(crate) struct SkyResultPure {
+    pub ldown: Array2<f32>,
+    pub lside: Array2<f32>,
+    pub least: Array2<f32>,
+    pub lsouth: Array2<f32>,
+    pub lwest: Array2<f32>,
+    pub lnorth: Array2<f32>,
+    pub keast: Array2<f32>,
+    pub ksouth: Array2<f32>,
+    pub kwest: Array2<f32>,
+    pub knorth: Array2<f32>,
+    pub kside_i: Array2<f32>,
+    pub kside_d: Array2<f32>,
+    pub kside: Array2<f32>,
+}
+
+/// Pure-ndarray anisotropic sky calculation, callable from pipeline.rs.
 #[allow(clippy::too_many_arguments)]
 #[allow(non_snake_case)]
-pub fn anisotropic_sky(
-    py: Python,
-    shmat: PyReadonlyArray3<f32>,
-    vegshmat: PyReadonlyArray3<f32>,
-    vbshvegshmat: PyReadonlyArray3<f32>,
-    sun: &SunParams,
-    asvf: PyReadonlyArray2<f32>,
-    sky: &SkyParams,
-    l_patches: PyReadonlyArray2<f32>,
-    voxel_table: Option<PyReadonlyArray2<f32>>,
-    voxel_maps: Option<PyReadonlyArray3<f32>>,
-    steradians: PyReadonlyArray1<f32>,
-    surface: &SurfaceParams,
-    lup: PyReadonlyArray2<f32>,
-    lv: PyReadonlyArray2<f32>,
-    shadow: PyReadonlyArray2<f32>,
-    kup_e: PyReadonlyArray2<f32>,
-    kup_s: PyReadonlyArray2<f32>,
-    kup_w: PyReadonlyArray2<f32>,
-    kup_n: PyReadonlyArray2<f32>,
-) -> PyResult<Py<SkyResult>> {
-    // Extract parameters from structs
-    let solar_altitude = sun.altitude;
-    let solar_azimuth = sun.azimuth;
-    let cyl = sky.cyl;
-    let wall_scheme = sky.wall_scheme;
-    let esky = sky.esky;
-    let ta = sky.ta;
-    let albedo = sky.albedo;
-    let tgwall = surface.tgwall;
-    let ewall = surface.ewall;
-    let rad_i = surface.rad_i;
-    let rad_d = surface.rad_d;
-
-    // Convert PyReadonlyArray to ArrayView for easier manipulation
-    let shmat = shmat.as_array();
-    let vegshmat = vegshmat.as_array();
-    let vbshvegshmat = vbshvegshmat.as_array();
-    let asvf = asvf.as_array();
-    let l_patches = l_patches.as_array();
-    let voxel_table = voxel_table.as_ref().map(|v| v.as_array());
-    let voxel_maps = voxel_maps.as_ref().map(|v| v.as_array());
-    let steradians = steradians.as_array();
-    let lup = lup.as_array();
-    let lv = lv.as_array();
-    let shadow = shadow.as_array();
-    let kup_e = kup_e.as_array();
-    let kup_s = kup_s.as_array();
-    let kup_w = kup_w.as_array();
-    let kup_n = kup_n.as_array();
-
+pub(crate) fn anisotropic_sky_pure(
+    shmat: ArrayView3<f32>,
+    vegshmat: ArrayView3<f32>,
+    vbshvegshmat: ArrayView3<f32>,
+    solar_altitude: f32,
+    solar_azimuth: f32,
+    esky: f32,
+    ta: f32,
+    cyl: bool,
+    wall_scheme: bool,
+    albedo: f32,
+    tgwall: f32,
+    ewall: f32,
+    rad_i: f32,
+    rad_d: f32,
+    asvf: ArrayView2<f32>,
+    l_patches: ArrayView2<f32>,
+    steradians: ArrayView1<f32>,
+    lup: ArrayView2<f32>,
+    lv: ArrayView2<f32>,
+    shadow: ArrayView2<f32>,
+    kup_e: ArrayView2<f32>,
+    kup_s: ArrayView2<f32>,
+    kup_w: ArrayView2<f32>,
+    kup_n: ArrayView2<f32>,
+    voxel_table: Option<ArrayView2<f32>>,
+    voxel_maps: Option<ArrayView3<f32>>,
+) -> SkyResultPure {
     let rows = shmat.shape()[0];
     let cols = shmat.shape()[1];
     let n_patches = l_patches.shape()[0];
 
-    // Output arrays
     let mut lside_sky = Array2::<f32>::zeros((rows, cols));
     let mut ldown_sky = Array2::<f32>::zeros((rows, cols));
     let mut lside_veg = Array2::<f32>::zeros((rows, cols));
@@ -255,15 +248,8 @@ pub fn anisotropic_sky(
     let mut lside_ref = Array2::<f32>::zeros((rows, cols));
     let mut ldown_ref = Array2::<f32>::zeros((rows, cols));
 
-    // Patch altitudes and azimuths
     let patch_altitude = l_patches.column(0).to_owned();
     let patch_azimuth = l_patches.column(1).to_owned();
-
-    // Calculate unique altitudes for returning from function
-    let mut skyalt_vec: Vec<f32> = patch_altitude.iter().cloned().collect();
-    skyalt_vec.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    skyalt_vec.dedup();
-    let skyalt = Array1::<f32>::from(skyalt_vec);
 
     let deg2rad = PI / 180.0;
 
@@ -282,12 +268,11 @@ pub fn anisotropic_sky(
     let (_patch_emissivity_normalized, esky_band) =
         emissivity_models::model2(&l_patches.to_owned(), esky, ta);
 
-    // Create a flat list of pixel indices to parallelize over
+    // Main parallel computation over pixels
     let pixel_indices: Vec<(usize, usize)> = (0..rows)
         .flat_map(|r| (0..cols).map(move |c| (r, c)))
         .collect();
 
-    // Main parallel computation over pixels
     let pixel_results: Vec<PixelResult> = pixel_indices
         .into_par_iter()
         .map(|(r, c)| {
@@ -307,7 +292,6 @@ pub fn anisotropic_sky(
                     let angle_of_incidence = (p_alt * deg2rad).cos();
                     let angle_of_incidence_h = (p_alt * deg2rad).sin();
 
-                    // Longwave from sky
                     if temp_sky {
                         let temp_emissivity = esky_band[i];
                         let ta_k = ta + 273.15;
@@ -328,7 +312,6 @@ pub fn anisotropic_sky(
                         pres.lnorth += ln;
                     }
 
-                    // Longwave from vegetation
                     if temp_vegsh {
                         let (ls, ld, le, lso, lw, ln) = patch_radiation::longwave_from_veg_pixel(
                             steradian,
@@ -347,7 +330,6 @@ pub fn anisotropic_sky(
                         pres.lnorth += ln;
                     }
 
-                    // Longwave from buildings
                     if temp_sh {
                         let (sunlit_patch, shaded_patch) =
                             sunlit_shaded_patches::shaded_or_sunlit_pixel(
@@ -360,7 +342,7 @@ pub fn anisotropic_sky(
 
                         if !wall_scheme {
                             let azimuth_difference = (solar_azimuth - p_azi).abs();
-                            let (lside_sun, lside_sh, ldown_sun, ldown_sh, le, lso, lw, ln) =
+                            let (ls_sun, ls_sh, ld_sun, ld_sh, le, lso, lw, ln) =
                                 patch_radiation::longwave_from_buildings_pixel(
                                     steradian,
                                     angle_of_incidence,
@@ -374,10 +356,10 @@ pub fn anisotropic_sky(
                                     ta,
                                     tgwall,
                                 );
-                            pres.lside_sun += lside_sun;
-                            pres.lside_sh += lside_sh;
-                            pres.ldown_sun += ldown_sun;
-                            pres.ldown_sh += ldown_sh;
+                            pres.lside_sun += ls_sun;
+                            pres.lside_sh += ls_sh;
+                            pres.ldown_sun += ld_sun;
+                            pres.ldown_sh += ld_sh;
                             pres.least += le;
                             pres.lsouth += lso;
                             pres.lwest += lw;
@@ -385,28 +367,26 @@ pub fn anisotropic_sky(
                         } else {
                             let voxel_map_val = voxel_maps.as_ref().unwrap()[[r, c, i]];
                             if voxel_map_val > 0.0 {
-                                // Wall
-                                let (lside_sun, lside_sh, ldown_sun, ldown_sh, le, lso, lw, ln) =
+                                let (ls_sun, ls_sh, ld_sun, ld_sh, le, lso, lw, ln) =
                                     patch_radiation::longwave_from_buildings_wall_scheme_pixel(
-                                        voxel_table.as_ref().unwrap().view(),
+                                        *voxel_table.as_ref().unwrap(),
                                         voxel_map_val as usize,
                                         steradian,
                                         angle_of_incidence,
                                         angle_of_incidence_h,
                                         p_azi,
                                     );
-                                pres.lside_sun += lside_sun;
-                                pres.lside_sh += lside_sh;
-                                pres.ldown_sun += ldown_sun;
-                                pres.ldown_sh += ldown_sh;
+                                pres.lside_sun += ls_sun;
+                                pres.lside_sh += ls_sh;
+                                pres.ldown_sun += ld_sun;
+                                pres.ldown_sh += ld_sh;
                                 pres.least += le;
                                 pres.lsouth += lso;
                                 pres.lwest += lw;
                                 pres.lnorth += ln;
                             } else {
-                                // Roof
                                 let azimuth_difference = (solar_azimuth - p_azi).abs();
-                                let (lside_sun, lside_sh, ldown_sun, ldown_sh, le, lso, lw, ln) =
+                                let (ls_sun, ls_sh, ld_sun, ld_sh, le, lso, lw, ln) =
                                     patch_radiation::longwave_from_buildings_pixel(
                                         steradian,
                                         angle_of_incidence,
@@ -420,10 +400,10 @@ pub fn anisotropic_sky(
                                         ta,
                                         tgwall,
                                     );
-                                pres.lside_sun += lside_sun;
-                                pres.lside_sh += lside_sh;
-                                pres.ldown_sun += ldown_sun;
-                                pres.ldown_sh += ldown_sh;
+                                pres.lside_sun += ls_sun;
+                                pres.lside_sh += ls_sh;
+                                pres.ldown_sun += ld_sun;
+                                pres.ldown_sh += ld_sh;
                                 pres.least += le;
                                 pres.lsouth += lso;
                                 pres.lwest += lw;
@@ -432,7 +412,6 @@ pub fn anisotropic_sky(
                         }
                     }
 
-                    // Shortwave from sky
                     if solar_altitude > 0.0 {
                         if temp_sky {
                             pres.kside_d += lum_chi[i] * angle_of_incidence * steradian;
@@ -464,7 +443,7 @@ pub fn anisotropic_sky(
                 }
             }
 
-            // Reflected longwave calculation (loop over patches again for this pixel)
+            // Reflected longwave
             let mut pres_with_reflection = pres;
             for i in 0..n_patches {
                 let p_alt = patch_altitude[i];
@@ -498,7 +477,7 @@ pub fn anisotropic_sky(
         })
         .collect();
 
-    // Populate the final 2D arrays from the results
+    // Populate final 2D arrays
     for (idx, pres) in pixel_results.into_iter().enumerate() {
         let r = idx / cols;
         let c = idx % cols;
@@ -522,11 +501,9 @@ pub fn anisotropic_sky(
         ldown_ref[[r, c]] = pres.ldown_ref;
     }
 
-    // Sum of all Lside components (sky, vegetation, sunlit and shaded buildings, reflected)
     let lside = &lside_sky + &lside_veg + &lside_sh + &lside_sun + &lside_ref;
     let ldown = &ldown_sky + &ldown_veg + &ldown_sh + &ldown_sun + &ldown_ref;
 
-    // Direct radiation
     let mut kside_i = Array2::<f32>::zeros((rows, cols));
     if cyl {
         kside_i = &shadow * rad_i * (solar_altitude * deg2rad).cos();
@@ -545,26 +522,134 @@ pub fn anisotropic_sky(
         ksouth = &kup_s * 0.5;
     }
 
+    SkyResultPure {
+        ldown,
+        lside,
+        least,
+        lsouth,
+        lwest,
+        lnorth,
+        keast,
+        ksouth,
+        kwest,
+        knorth,
+        kside_i,
+        kside_d,
+        kside,
+    }
+}
+
+/// Pure-ndarray weighted patch sum, callable from pipeline.rs.
+pub(crate) fn weighted_patch_sum_pure(
+    patches: ArrayView3<f32>,
+    weights: ArrayView1<f32>,
+) -> Array2<f32> {
+    let rows = patches.shape()[0];
+    let cols = patches.shape()[1];
+    let n_patches = patches.shape()[2];
+
+    let pixel_results: Vec<f32> = (0..rows * cols)
+        .into_par_iter()
+        .map(|idx| {
+            let r = idx / cols;
+            let c = idx % cols;
+            let mut sum = 0.0f32;
+            for i in 0..n_patches {
+                sum += patches[[r, c, i]] * weights[[i]];
+            }
+            sum
+        })
+        .collect();
+
+    Array2::from_shape_vec((rows, cols), pixel_results).unwrap()
+}
+
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+#[allow(non_snake_case)]
+pub fn anisotropic_sky(
+    py: Python,
+    shmat: PyReadonlyArray3<f32>,
+    vegshmat: PyReadonlyArray3<f32>,
+    vbshvegshmat: PyReadonlyArray3<f32>,
+    sun: &SunParams,
+    asvf: PyReadonlyArray2<f32>,
+    sky: &SkyParams,
+    l_patches: PyReadonlyArray2<f32>,
+    voxel_table: Option<PyReadonlyArray2<f32>>,
+    voxel_maps: Option<PyReadonlyArray3<f32>>,
+    steradians: PyReadonlyArray1<f32>,
+    surface: &SurfaceParams,
+    lup: PyReadonlyArray2<f32>,
+    lv: PyReadonlyArray2<f32>,
+    shadow: PyReadonlyArray2<f32>,
+    kup_e: PyReadonlyArray2<f32>,
+    kup_s: PyReadonlyArray2<f32>,
+    kup_w: PyReadonlyArray2<f32>,
+    kup_n: PyReadonlyArray2<f32>,
+) -> PyResult<Py<SkyResult>> {
+    let voxel_table_view = voxel_table.as_ref().map(|v| v.as_array());
+    let voxel_maps_view = voxel_maps.as_ref().map(|v| v.as_array());
+
+    // Compute unique altitudes for the PyO3 return value
+    let l_patches_v = l_patches.as_array();
+    let patch_altitude = l_patches_v.column(0);
+    let mut skyalt_vec: Vec<f32> = patch_altitude.iter().cloned().collect();
+    skyalt_vec.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    skyalt_vec.dedup();
+    let skyalt = Array1::<f32>::from(skyalt_vec);
+
+    let pure_result = anisotropic_sky_pure(
+        shmat.as_array(),
+        vegshmat.as_array(),
+        vbshvegshmat.as_array(),
+        sun.altitude,
+        sun.azimuth,
+        sky.esky,
+        sky.ta,
+        sky.cyl,
+        sky.wall_scheme,
+        sky.albedo,
+        surface.tgwall,
+        surface.ewall,
+        surface.rad_i,
+        surface.rad_d,
+        asvf.as_array(),
+        l_patches_v,
+        steradians.as_array(),
+        lup.as_array(),
+        lv.as_array(),
+        shadow.as_array(),
+        kup_e.as_array(),
+        kup_s.as_array(),
+        kup_w.as_array(),
+        kup_n.as_array(),
+        voxel_table_view,
+        voxel_maps_view,
+    );
+
+    let steradians_owned = steradians.as_array().to_owned();
+
     let result = SkyResult {
-        ldown: ldown.into_pyarray(py).unbind(),
-        lside: lside.into_pyarray(py).unbind(),
-        lside_sky: lside_sky.into_pyarray(py).unbind(),
-        lside_veg: lside_veg.into_pyarray(py).unbind(),
-        lside_sh: lside_sh.into_pyarray(py).unbind(),
-        lside_sun: lside_sun.into_pyarray(py).unbind(),
-        lside_ref: lside_ref.into_pyarray(py).unbind(),
-        least: least.into_pyarray(py).unbind(),
-        lwest: lwest.into_pyarray(py).unbind(),
-        lnorth: lnorth.into_pyarray(py).unbind(),
-        lsouth: lsouth.into_pyarray(py).unbind(),
-        keast: keast.into_pyarray(py).unbind(),
-        ksouth: ksouth.into_pyarray(py).unbind(),
-        kwest: kwest.into_pyarray(py).unbind(),
-        knorth: knorth.into_pyarray(py).unbind(),
-        kside_i: kside_i.into_pyarray(py).unbind(),
-        kside_d: kside_d.into_pyarray(py).unbind(),
-        kside: kside.into_pyarray(py).unbind(),
-        steradians: steradians.mapv(|v| v).into_pyarray(py).unbind(),
+        ldown: pure_result.ldown.into_pyarray(py).unbind(),
+        lside: pure_result.lside.into_pyarray(py).unbind(),
+        lside_sky: Array2::<f32>::zeros((0, 0)).into_pyarray(py).unbind(), // not needed by callers
+        lside_veg: Array2::<f32>::zeros((0, 0)).into_pyarray(py).unbind(),
+        lside_sh: Array2::<f32>::zeros((0, 0)).into_pyarray(py).unbind(),
+        lside_sun: Array2::<f32>::zeros((0, 0)).into_pyarray(py).unbind(),
+        lside_ref: Array2::<f32>::zeros((0, 0)).into_pyarray(py).unbind(),
+        least: pure_result.least.into_pyarray(py).unbind(),
+        lwest: pure_result.lwest.into_pyarray(py).unbind(),
+        lnorth: pure_result.lnorth.into_pyarray(py).unbind(),
+        lsouth: pure_result.lsouth.into_pyarray(py).unbind(),
+        keast: pure_result.keast.into_pyarray(py).unbind(),
+        ksouth: pure_result.ksouth.into_pyarray(py).unbind(),
+        kwest: pure_result.kwest.into_pyarray(py).unbind(),
+        knorth: pure_result.knorth.into_pyarray(py).unbind(),
+        kside_i: pure_result.kside_i.into_pyarray(py).unbind(),
+        kside_d: pure_result.kside_d.into_pyarray(py).unbind(),
+        kside: pure_result.kside.into_pyarray(py).unbind(),
+        steradians: steradians_owned.into_pyarray(py).unbind(),
         skyalt: skyalt.into_pyarray(py).unbind(),
     };
     Py::new(py, result)
@@ -601,6 +686,36 @@ fn cylindric_wedge_pixel(tan_zen: f32, svfalfa_val: f32) -> f32 {
     (2.0 * PI * ba - s_surf) / (2.0 * PI * ba)
 }
 
+/// Pure-ndarray implementation of cylindric wedge shadow fraction.
+/// Callable from pipeline.rs (fused path) or from the PyO3 wrapper (modular path).
+#[allow(non_snake_case)]
+pub(crate) fn cylindric_wedge_pure(
+    zen: f32,
+    svfalfa: ArrayView2<f32>,
+) -> Array2<f32> {
+    let rows = svfalfa.shape()[0];
+    let cols = svfalfa.shape()[1];
+
+    // Guard against low sun angles where tan(zen) → infinity
+    let altitude_rad = PI / 2.0 - zen;
+    if altitude_rad < MIN_SUN_ELEVATION_RAD {
+        return Array2::<f32>::ones((rows, cols));
+    }
+
+    let tan_zen = zen.tan();
+
+    let pixel_results: Vec<f32> = (0..rows * cols)
+        .into_par_iter()
+        .map(|idx| {
+            let r = idx / cols;
+            let c = idx % cols;
+            cylindric_wedge_pixel(tan_zen, svfalfa[[r, c]])
+        })
+        .collect();
+
+    Array2::from_shape_vec((rows, cols), pixel_results).unwrap()
+}
+
 /// Fraction of sunlit walls based on sun altitude and SVF-weighted building angles.
 ///
 /// Args:
@@ -619,32 +734,7 @@ pub fn cylindric_wedge(
     zen: f32,
     svfalfa: PyReadonlyArray2<f32>,
 ) -> PyResult<Py<PyArray2<f32>>> {
-    let svfalfa = svfalfa.as_array();
-    let rows = svfalfa.shape()[0];
-    let cols = svfalfa.shape()[1];
-
-    // Guard against low sun angles where tan(zen) → infinity
-    let altitude_rad = PI / 2.0 - zen;
-    if altitude_rad < MIN_SUN_ELEVATION_RAD {
-        return Ok(Array2::<f32>::ones((rows, cols))
-            .into_pyarray(py)
-            .unbind());
-    }
-
-    let tan_zen = zen.tan();
-
-    // Parallel per-pixel computation using rayon
-    let pixel_results: Vec<f32> = (0..rows * cols)
-        .into_par_iter()
-        .map(|idx| {
-            let r = idx / cols;
-            let c = idx % cols;
-            cylindric_wedge_pixel(tan_zen, svfalfa[[r, c]])
-        })
-        .collect();
-
-    let result = Array2::from_shape_vec((rows, cols), pixel_results)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    let result = cylindric_wedge_pure(zen, svfalfa.as_array());
     Ok(result.into_pyarray(py).unbind())
 }
 

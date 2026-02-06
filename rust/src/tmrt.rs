@@ -1,4 +1,4 @@
-use ndarray::Array2;
+use ndarray::{Array2, ArrayView2};
 use numpy::{PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 use rayon::prelude::*;
@@ -50,46 +50,30 @@ impl TmrtParams {
     }
 }
 
-/// Internal implementation of Tmrt calculation.
+/// Pure-ndarray implementation of Tmrt calculation.
+/// Callable from pipeline.rs (fused path) or from the PyO3 wrapper (modular path).
 #[allow(clippy::too_many_arguments)]
-fn compute_tmrt_impl<'py>(
-    py: Python<'py>,
-    kdown: PyReadonlyArray2<'py, f32>,
-    kup: PyReadonlyArray2<'py, f32>,
-    ldown: PyReadonlyArray2<'py, f32>,
-    lup: PyReadonlyArray2<'py, f32>,
-    kside_n: PyReadonlyArray2<'py, f32>,
-    kside_e: PyReadonlyArray2<'py, f32>,
-    kside_s: PyReadonlyArray2<'py, f32>,
-    kside_w: PyReadonlyArray2<'py, f32>,
-    lside_n: PyReadonlyArray2<'py, f32>,
-    lside_e: PyReadonlyArray2<'py, f32>,
-    lside_s: PyReadonlyArray2<'py, f32>,
-    lside_w: PyReadonlyArray2<'py, f32>,
-    kside_total: PyReadonlyArray2<'py, f32>,
-    lside_total: PyReadonlyArray2<'py, f32>,
+pub(crate) fn compute_tmrt_pure(
+    kdown: ArrayView2<f32>,
+    kup: ArrayView2<f32>,
+    ldown: ArrayView2<f32>,
+    lup: ArrayView2<f32>,
+    kside_n: ArrayView2<f32>,
+    kside_e: ArrayView2<f32>,
+    kside_s: ArrayView2<f32>,
+    kside_w: ArrayView2<f32>,
+    lside_n: ArrayView2<f32>,
+    lside_e: ArrayView2<f32>,
+    lside_s: ArrayView2<f32>,
+    lside_w: ArrayView2<f32>,
+    kside_total: ArrayView2<f32>,
+    lside_total: ArrayView2<f32>,
     abs_k: f32,
     abs_l: f32,
     is_standing: bool,
     use_anisotropic_sky: bool,
-) -> PyResult<Bound<'py, PyArray2<f32>>> {
-    // Convert to ndarray
-    let kdown_arr = kdown.as_array();
-    let kup_arr = kup.as_array();
-    let ldown_arr = ldown.as_array();
-    let lup_arr = lup.as_array();
-    let kside_n_arr = kside_n.as_array();
-    let kside_e_arr = kside_e.as_array();
-    let kside_s_arr = kside_s.as_array();
-    let kside_w_arr = kside_w.as_array();
-    let lside_n_arr = lside_n.as_array();
-    let lside_e_arr = lside_e.as_array();
-    let lside_s_arr = lside_s.as_array();
-    let lside_w_arr = lside_w.as_array();
-    let kside_total_arr = kside_total.as_array();
-    let lside_total_arr = lside_total.as_array();
-
-    let shape = kdown_arr.dim();
+) -> Array2<f32> {
+    let shape = kdown.dim();
 
     // Select view factors based on posture
     let (f_up, f_side, f_cyl) = if is_standing {
@@ -111,43 +95,37 @@ fn compute_tmrt_impl<'py>(
             let col = idx % shape.1;
 
             // Extract radiation components at this pixel
-            let kdown_val = kdown_arr[[row, col]];
-            let kup_val = kup_arr[[row, col]];
-            let ldown_val = ldown_arr[[row, col]];
-            let lup_val = lup_arr[[row, col]];
-            let kside_n_val = kside_n_arr[[row, col]];
-            let kside_e_val = kside_e_arr[[row, col]];
-            let kside_s_val = kside_s_arr[[row, col]];
-            let kside_w_val = kside_w_arr[[row, col]];
-            let lside_n_val = lside_n_arr[[row, col]];
-            let lside_e_val = lside_e_arr[[row, col]];
-            let lside_s_val = lside_s_arr[[row, col]];
-            let lside_w_val = lside_w_arr[[row, col]];
-            let kside_total_val = kside_total_arr[[row, col]];
-            let lside_total_val = lside_total_arr[[row, col]];
+            let kdown_val = kdown[[row, col]];
+            let kup_val = kup[[row, col]];
+            let ldown_val = ldown[[row, col]];
+            let lup_val = lup[[row, col]];
+            let kside_n_val = kside_n[[row, col]];
+            let kside_e_val = kside_e[[row, col]];
+            let kside_s_val = kside_s[[row, col]];
+            let kside_w_val = kside_w[[row, col]];
+            let lside_n_val = lside_n[[row, col]];
+            let lside_e_val = lside_e[[row, col]];
+            let lside_s_val = lside_s[[row, col]];
+            let lside_w_val = lside_w[[row, col]];
+            let kside_total_val = kside_total[[row, col]];
+            let lside_total_val = lside_total[[row, col]];
 
             // Compute absorbed radiation
             let k_absorbed = if use_anisotropic_sky {
-                // Anisotropic model formula (cyl=1, aniso=1)
-                // Uses full directional radiation with cylindrical projection
-                abs_k * (kside_total_val * f_cyl // Anisotropic shortwave on vertical body surface
-                    + (kdown_val + kup_val) * f_up // Downwelling + upwelling on top/bottom
+                abs_k * (kside_total_val * f_cyl
+                    + (kdown_val + kup_val) * f_up
                     + (kside_n_val + kside_e_val + kside_s_val + kside_w_val) * f_side)
-                // Directional from 4 sides
             } else {
-                // Isotropic model: use only direct beam on vertical (kside_total = kside_i)
-                abs_k * (kside_total_val * f_cyl // Direct beam on vertical body surface
-                    + (kdown_val + kup_val) * f_up // Downwelling + upwelling on top/bottom
+                abs_k * (kside_total_val * f_cyl
+                    + (kdown_val + kup_val) * f_up
                     + (kside_n_val + kside_e_val + kside_s_val + kside_w_val) * f_side)
-                // Diffuse from 4 sides
             };
 
             let l_absorbed = if use_anisotropic_sky {
                 abs_l * ((ldown_val + lup_val) * f_up
-                    + lside_total_val * f_cyl // Anisotropic longwave on vertical surface
+                    + lside_total_val * f_cyl
                     + (lside_n_val + lside_e_val + lside_s_val + lside_w_val) * f_side)
             } else {
-                // Isotropic longwave: no lside_total term (only directional components)
                 abs_l
                     * ((ldown_val + lup_val) * f_up
                         + (lside_n_val + lside_e_val + lside_s_val + lside_w_val) * f_side)
@@ -158,16 +136,13 @@ fn compute_tmrt_impl<'py>(
 
             // Convert to Tmrt using Stefan-Boltzmann law
             // Tmrt = (Sstr / (abs_l × SBC))^0.25 - 273.15
-            // Using sqrt(sqrt(x)) for fourth root
             let tmrt_val = (sstr / (abs_l * SBC)).sqrt().sqrt() - KELVIN_OFFSET;
 
             // Clip to physically reasonable range
             *out = tmrt_val.clamp(-50.0, 80.0);
         });
 
-    // Convert to PyArray
-    let tmrt_py = PyArray2::from_owned_array(py, tmrt);
-    Ok(tmrt_py)
+    tmrt
 }
 
 /// Compute Mean Radiant Temperature (Tmrt) from radiation budget.
@@ -213,25 +188,25 @@ pub fn compute_tmrt<'py>(
     lside_total: PyReadonlyArray2<'py, f32>,
     params: &TmrtParams,
 ) -> PyResult<Bound<'py, PyArray2<f32>>> {
-    compute_tmrt_impl(
-        py,
-        kdown,
-        kup,
-        ldown,
-        lup,
-        kside_n,
-        kside_e,
-        kside_s,
-        kside_w,
-        lside_n,
-        lside_e,
-        lside_s,
-        lside_w,
-        kside_total,
-        lside_total,
+    let result = compute_tmrt_pure(
+        kdown.as_array(),
+        kup.as_array(),
+        ldown.as_array(),
+        lup.as_array(),
+        kside_n.as_array(),
+        kside_e.as_array(),
+        kside_s.as_array(),
+        kside_w.as_array(),
+        lside_n.as_array(),
+        lside_e.as_array(),
+        lside_s.as_array(),
+        lside_w.as_array(),
+        kside_total.as_array(),
+        lside_total.as_array(),
         params.abs_k,
         params.abs_l,
         params.is_standing,
         params.use_anisotropic_sky,
-    )
+    );
+    Ok(PyArray2::from_owned_array(py, result))
 }

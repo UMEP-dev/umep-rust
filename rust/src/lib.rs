@@ -5,6 +5,7 @@ mod emissivity_models;
 mod gpu;
 mod ground;
 mod gvf;
+mod gvf_geometry;
 mod patch_radiation;
 mod pet;
 mod shadowing;
@@ -12,6 +13,7 @@ mod sky;
 mod skyview;
 mod sun;
 mod sunlit_shaded_patches;
+mod pipeline;
 mod tmrt;
 mod utci;
 mod vegetation;
@@ -32,6 +34,7 @@ fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_pet_module(py_module)?;
     register_ground_module(py_module)?;
     register_tmrt_module(py_module)?;
+    register_pipeline_module(py_module)?;
 
     // Add GPU feature flag
     #[cfg(feature = "gpu")]
@@ -145,6 +148,20 @@ fn register_tmrt_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     submodule.add("__doc__", "Mean Radiant Temperature (Tmrt) calculations.")?;
     submodule.add_class::<tmrt::TmrtParams>()?;
     submodule.add_function(wrap_pyfunction!(tmrt::compute_tmrt, &submodule)?)?;
+    py_module.add_submodule(&submodule)?;
+    Ok(())
+}
+
+fn register_pipeline_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let submodule = PyModule::new(py_module.py(), "pipeline")?;
+    submodule.add("__doc__", "Fused timestep pipeline — single FFI call per timestep.")?;
+    submodule.add_class::<pipeline::WeatherScalars>()?;
+    submodule.add_class::<pipeline::HumanScalars>()?;
+    submodule.add_class::<pipeline::ConfigScalars>()?;
+    submodule.add_class::<pipeline::TimestepResult>()?;
+    submodule.add_class::<pipeline::PyGvfGeometryCache>()?;
+    submodule.add_function(wrap_pyfunction!(pipeline::compute_timestep, &submodule)?)?;
+    submodule.add_function(wrap_pyfunction!(pipeline::precompute_gvf_cache, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }

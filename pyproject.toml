@@ -83,18 +83,19 @@ dev = [
     "pip>=23.2",
     "ruff>=0.5.1",
     "poethepoet>=0.29.0",
-    "umep>=0.0.1a18",             # For cross-checking tests against reference implementation
+    "umep>=0.0.1a18", # For cross-checking tests against reference implementation
     "ty>=0.0.12",
     # Include full optional dependencies for dev/testing
-    "geopandas>=1.0.1",  # POI/WOI point-of-interest analysis
-    "rasterio>=1.3.0",   # Fast raster I/O (falls back to GDAL)
-    "tqdm>=4.67.1",      # Terminal progress bars
-    "pillow>=9.0.0",     # Preview PNG generation for GeoTIFFs
+    "geopandas>=1.0.1", # POI/WOI point-of-interest analysis
+    "rasterio>=1.3.0", # Fast raster I/O (falls back to GDAL)
+    "tqdm>=4.67.1", # Terminal progress bars
+    "pillow>=9.0.0", # Preview PNG generation for GeoTIFFs
     "pre-commit>=4.3.0",
     # Documentation
     "mkdocs>=1.6.0",
     "mkdocs-material>=9.5.0",
     "mkdocstrings[python]>=0.27.0",
+    "ipykernel>=6.31.0",
 ]
 # QGIS 3.34 LTR compatibility testing - uses GDAL backend, no rasterio/geopandas
 # Tests the minimal dependency set that works in QGIS/OSGeo4W Python environment

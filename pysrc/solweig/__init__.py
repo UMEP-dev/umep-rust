@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # Version
 __version__ = "0.0.1a1"
 
-# Import simplified API (Phase 2 modernization)
+# Import simplified API
 # Import utility modules
 from . import io, progress, walls  # noqa: E402
 from .api import (  # noqa: E402

@@ -54,9 +54,11 @@ print(f"  SVF cached: {working_path}/svf/")
 # %%
 # The surface object is now ready for SOLWEIG calculations:
 #
-# weather_list = solweig.Weather.from_epw("weather.epw", start="2023-07-01", end="2023-07-01")
-# results = solweig.calculate_timeseries(
-#     surface=surface,
-#     weather_series=weather_list,
-#     output_dir=str(working_path / "output"),
-# )
+weather_list = solweig.Weather.from_umep_met("demos/data/Goteborg_SWEREF99_1200/GBG_TMY_1977.txt")
+results = solweig.calculate_timeseries(
+    surface=surface,
+    weather_series=weather_list,
+    output_dir=str(working_path / "output"),
+)
+
+# %%

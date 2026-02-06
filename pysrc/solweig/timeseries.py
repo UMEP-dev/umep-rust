@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 from .metadata import create_run_metadata, save_run_metadata
 from .models import HumanParams, Location, ThermalState
+from .progress import ProgressReporter
 from .solweig_logging import get_logger
 
 logger = get_logger(__name__)
@@ -108,6 +110,7 @@ def calculate_timeseries(
     wall_material: str | None = None,
     output_dir: str | Path | None = None,
     outputs: list[str] | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[SolweigResult]:
     """
     Calculate Tmrt for a time series of weather data.
@@ -145,6 +148,8 @@ def calculate_timeseries(
             long timeseries to avoid memory issues).
         outputs: Which outputs to save (e.g., ["tmrt", "shadow", "kdown"]).
             Only used if output_dir is provided. If None, uses config.outputs or ["tmrt"].
+        progress_callback: Optional callback(current_step, total_steps) called after
+            each timestep. If None, a tqdm progress bar is shown automatically.
 
     Returns:
         List of SolweigResult objects, one per timestep.
@@ -285,15 +290,15 @@ def calculate_timeseries(
         dt1 = weather_series[1].datetime
         state.timestep_dec = (dt1 - dt0).total_seconds() / 86400.0
 
-    # Progress reporting interval (log every N timesteps)
-    report_interval = max(1, len(weather_series) // 10) if len(weather_series) > 20 else 1
-
     # Pre-create buffer pool for array reuse across timesteps
     _ = surface.get_buffer_pool()
 
+    # Set up progress reporting (caller callback suppresses tqdm)
+    n_steps = len(weather_series)
+    _progress = None if progress_callback is not None else ProgressReporter(total=n_steps, desc="SOLWEIG timeseries")
+
     # Start timing
     start_time = time.time()
-    last_report_time = start_time
 
     for i, weather in enumerate(weather_series):
         # Process timestep
@@ -326,20 +331,15 @@ def calculate_timeseries(
 
         results.append(result)
 
-        # Log progress after processing
-        if (i + 1) % report_interval == 0 or i == 0:
-            current_time = time.time()
-            elapsed = current_time - start_time
-            interval_time = current_time - last_report_time
-            # For first report, we've processed 1 timestep; for subsequent, report_interval timesteps
-            timesteps_processed = 1 if i == 0 else report_interval
-            rate = timesteps_processed / interval_time if interval_time > 0 else 0
+        # Report progress
+        if progress_callback is not None:
+            progress_callback(i + 1, n_steps)
+        elif _progress is not None:
+            _progress.update(1)
 
-            logger.info(
-                f"  Processed timestep {i + 1}/{len(weather_series)}: {weather.datetime.strftime('%Y-%m-%d %H:%M')} "
-                f"[{rate:.2f} steps/s, {elapsed:.1f}s elapsed]"
-            )
-            last_report_time = current_time
+    # Close progress bar
+    if _progress is not None:
+        _progress.close()
 
     # Calculate total elapsed time
     total_time = time.time() - start_time

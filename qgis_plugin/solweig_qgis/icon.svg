@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Background: warm gradient sky -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FF6B35"/>
+      <stop offset="50%" stop-color="#F7C948"/>
+      <stop offset="100%" stop-color="#87CEEB"/>
+    </linearGradient>
+    <radialGradient id="sunGlow" cx="50%" cy="22%" r="30%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.9"/>
+      <stop offset="50%" stop-color="#FFD700" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#FFD700" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="thermo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FF3333"/>
+      <stop offset="100%" stop-color="#FF6666"/>
+    </linearGradient>
+    <!-- Heat shimmer lines -->
+    <linearGradient id="heat" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FF6B35" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#FF6B35" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Sky background -->
+  <rect width="64" height="64" rx="8" ry="8" fill="url(#sky)"/>
+
+  <!-- Sun glow -->
+  <circle cx="32" cy="14" r="18" fill="url(#sunGlow)"/>
+
+  <!-- Sun with happy face -->
+  <circle cx="32" cy="13" r="9" fill="#FFD700" stroke="#F5A623" stroke-width="1"/>
+  <!-- Sun rays -->
+  <g stroke="#FFD700" stroke-width="1.8" stroke-linecap="round">
+    <line x1="32" y1="1" x2="32" y2="3"/>
+    <line x1="41" y1="4" x2="40" y2="6"/>
+    <line x1="44" y1="13" x2="42" y2="13"/>
+    <line x1="41" y1="22" x2="40" y2="20"/>
+    <line x1="23" y1="4" x2="24" y2="6"/>
+    <line x1="20" y1="13" x2="22" y2="13"/>
+    <line x1="23" y1="22" x2="24" y2="20"/>
+  </g>
+  <!-- Sunglasses -->
+  <ellipse cx="29" cy="12" rx="3" ry="2.2" fill="#333" rx="1"/>
+  <ellipse cx="35" cy="12" rx="3" ry="2.2" fill="#333"/>
+  <line x1="32" y1="12" x2="32" y2="12" stroke="#333" stroke-width="1.2"/>
+  <line x1="26" y1="11.5" x2="24.5" y2="10.5" stroke="#333" stroke-width="1"/>
+  <line x1="38" y1="11.5" x2="39.5" y2="10.5" stroke="#333" stroke-width="1"/>
+  <!-- Cheeky grin -->
+  <path d="M28.5 15.5 Q32 19 35.5 15.5" fill="none" stroke="#C0392B" stroke-width="1.2" stroke-linecap="round"/>
+
+  <!-- Heat shimmer wavy lines rising from buildings -->
+  <g opacity="0.5">
+    <path d="M15 36 Q17 33 15 30 Q13 27 15 24" fill="none" stroke="#FF6B35" stroke-width="0.8" stroke-dasharray="1.5 1"/>
+    <path d="M38 34 Q40 31 38 28 Q36 25 38 22" fill="none" stroke="#FF6B35" stroke-width="0.8" stroke-dasharray="1.5 1"/>
+    <path d="M52 38 Q54 35 52 32 Q50 29 52 26" fill="none" stroke="#FF6B35" stroke-width="0.8" stroke-dasharray="1.5 1"/>
+  </g>
+
+  <!-- City skyline -->
+  <!-- Building 1 - tall narrow -->
+  <rect x="4" y="32" width="8" height="24" fill="#2C3E50"/>
+  <rect x="5.5" y="34" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+  <rect x="5.5" y="38" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.6"/>
+  <rect x="5.5" y="42" width="2" height="2" rx="0.3" fill="#85C1E9" opacity="0.7"/>
+  <rect x="5.5" y="46" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+  <rect x="8.5" y="34" width="2" height="2" rx="0.3" fill="#85C1E9" opacity="0.7"/>
+  <rect x="8.5" y="38" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+  <rect x="8.5" y="42" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.6"/>
+
+  <!-- Building 2 - medium with flat top -->
+  <rect x="13" y="37" width="10" height="19" fill="#34495E"/>
+  <rect x="14.5" y="39" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.7"/>
+  <rect x="14.5" y="43" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+  <rect x="14.5" y="47" width="2" height="2" rx="0.3" fill="#85C1E9" opacity="0.6"/>
+  <rect x="18" y="39" width="2" height="2" rx="0.3" fill="#85C1E9" opacity="0.7"/>
+  <rect x="18" y="43" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.7"/>
+  <rect x="18" y="47" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+
+  <!-- Tree between buildings -->
+  <rect x="24.5" y="48" width="2" height="8" fill="#6D4C41"/>
+  <circle cx="25.5" cy="45" r="4.5" fill="#27AE60"/>
+  <circle cx="23" cy="46.5" r="3" fill="#2ECC71"/>
+  <circle cx="28" cy="46.5" r="3" fill="#229954"/>
+
+  <!-- Building 3 - tall with antenna -->
+  <rect x="31" y="30" width="9" height="26" fill="#2C3E50"/>
+  <line x1="35.5" y1="30" x2="35.5" y2="26" stroke="#7F8C8D" stroke-width="1.2"/>
+  <circle cx="35.5" cy="25.5" r="1" fill="#E74C3C"/>
+  <rect x="32.5" y="32" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+  <rect x="32.5" y="36" width="2" height="2" rx="0.3" fill="#85C1E9" opacity="0.7"/>
+  <rect x="32.5" y="40" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.6"/>
+  <rect x="32.5" y="44" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+  <rect x="36.5" y="32" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.7"/>
+  <rect x="36.5" y="36" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+  <rect x="36.5" y="40" width="2" height="2" rx="0.3" fill="#85C1E9" opacity="0.7"/>
+  <rect x="36.5" y="44" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.6"/>
+  <rect x="32.5" y="48" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+
+  <!-- Building 4 - short wide -->
+  <rect x="41" y="42" width="10" height="14" fill="#34495E"/>
+  <rect x="42.5" y="44" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+  <rect x="42.5" y="48" width="2" height="2" rx="0.3" fill="#85C1E9" opacity="0.7"/>
+  <rect x="46" y="44" width="2" height="2" rx="0.3" fill="#85C1E9" opacity="0.6"/>
+  <rect x="46" y="48" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+
+  <!-- Building 5 - narrow tall right side -->
+  <rect x="52" y="35" width="8" height="21" fill="#2C3E50"/>
+  <rect x="53.5" y="37" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.7"/>
+  <rect x="53.5" y="41" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+  <rect x="53.5" y="45" width="2" height="2" rx="0.3" fill="#85C1E9" opacity="0.7"/>
+  <rect x="56.5" y="37" width="2" height="2" rx="0.3" fill="#85C1E9" opacity="0.6"/>
+  <rect x="56.5" y="41" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.7"/>
+  <rect x="56.5" y="45" width="2" height="2" rx="0.3" fill="#F7DC6F" opacity="0.8"/>
+
+  <!-- Ground -->
+  <rect x="0" y="56" width="64" height="8" rx="0 0 8 8" fill="#95A5A6" opacity="0.4"/>
+
+  <!-- Mini thermometer on right side -->
+  <g transform="translate(55, 2)">
+    <!-- Thermometer body -->
+    <rect x="0" y="0" width="3.5" height="16" rx="1.75" fill="white" stroke="#BDC3C7" stroke-width="0.5"/>
+    <!-- Mercury -->
+    <rect x="0.75" y="4" width="2" height="12" rx="1" fill="url(#thermo)"/>
+    <!-- Bulb -->
+    <circle cx="1.75" cy="16" r="2.8" fill="#FF3333" stroke="#BDC3C7" stroke-width="0.5"/>
+    <!-- Tick marks -->
+    <line x1="-0.5" y1="5" x2="0.3" y2="5" stroke="#BDC3C7" stroke-width="0.4"/>
+    <line x1="-0.5" y1="8" x2="0.3" y2="8" stroke="#BDC3C7" stroke-width="0.4"/>
+    <line x1="-0.5" y1="11" x2="0.3" y2="11" stroke="#BDC3C7" stroke-width="0.4"/>
+  </g>
+
+  <!-- "Tmrt" label -->
+  <text x="4" y="62" font-family="Arial, Helvetica, sans-serif" font-size="5" font-weight="bold" fill="white" opacity="0.9">T<tspan font-size="3.5" baseline-shift="-1">mrt</tspan></text>
+</svg>

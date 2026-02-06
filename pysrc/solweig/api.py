@@ -27,7 +27,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
-from .computation import calculate_core
+from .computation import calculate_core, calculate_core_fused  # noqa: F401 (calculate_core kept for direct use)
 from .errors import (
     ConfigurationError,
     GridShapeMismatch,
@@ -338,19 +338,20 @@ def calculate(
     if poi_coords is not None:
         raise NotImplementedError("POI mode (point-of-interest calculation) is planned for Phase 4")
 
-    # Call the new modular core calculation (Phase 5 refactoring)
-    return calculate_core(
+    # Fused Rust pipeline — single FFI call per daytime timestep.
+    # Both isotropic and anisotropic sky models are supported.
+    return calculate_core_fused(
         surface=surface,
         location=location,
         weather=weather,
         human=human,
         precomputed=precomputed,
-        use_anisotropic_sky=use_anisotropic_sky,
         state=state,
         physics=physics,
         materials=materials,
         conifer=conifer,
         wall_material=wall_material,
+        use_anisotropic_sky=use_anisotropic_sky,
     )
 
 

@@ -626,6 +626,12 @@ UTCI/PET results are saved in subdirectories.
         feedback.setProgressText(f"Running timeseries ({len(weather_series)} timesteps)...")
         feedback.setProgress(25)
 
+        # Map step progress into the 25-80% range of the overall QGIS progress bar
+        def _on_progress(current: int, total: int) -> None:
+            pct = 25 + int(55 * current / total) if total > 0 else 25
+            feedback.setProgress(pct)
+            feedback.setProgressText(f"Timestep {current}/{total}...")
+
         try:
             results = solweig.calculate_timeseries(
                 surface=surface,
@@ -636,6 +642,7 @@ UTCI/PET results are saved in subdirectories.
                 use_anisotropic_sky=use_anisotropic_sky,
                 conifer=conifer,
                 precomputed=precomputed,
+                progress_callback=_on_progress,
             )
         except Exception as e:
             raise QgsProcessingException(f"Timeseries calculation failed: {e}") from e
@@ -654,14 +661,20 @@ UTCI/PET results are saved in subdirectories.
         feedback.pushInfo("Computing UTCI thermal comfort index...")
 
         utci_dir = os.path.join(output_dir, "utci")
-
         tmrt_dir = os.path.join(output_dir, "tmrt")
+
+        # Map step progress into the 80-90% range
+        def _on_progress(current: int, total: int) -> None:
+            pct = 80 + int(10 * current / total) if total > 0 else 80
+            feedback.setProgress(pct)
+            feedback.setProgressText(f"UTCI {current}/{total}...")
 
         try:
             n_files = solweig.compute_utci(
                 tmrt_dir=tmrt_dir,
                 weather_series=weather_series,
                 output_dir=utci_dir,
+                progress_callback=_on_progress,
             )
         except Exception as e:
             raise QgsProcessingException(f"UTCI computation failed: {e}") from e
@@ -684,12 +697,19 @@ UTCI/PET results are saved in subdirectories.
         tmrt_dir = os.path.join(output_dir, "tmrt")
         pet_dir = os.path.join(output_dir, "pet")
 
+        # Map step progress into the 80-95% range (PET is slow)
+        def _on_progress(current: int, total: int) -> None:
+            pct = 80 + int(15 * current / total) if total > 0 else 80
+            feedback.setProgress(pct)
+            feedback.setProgressText(f"PET {current}/{total}...")
+
         try:
             n_files = solweig.compute_pet(
                 tmrt_dir=tmrt_dir,
                 weather_series=weather_series,
                 output_dir=pet_dir,
                 human=human,
+                progress_callback=_on_progress,
             )
         except Exception as e:
             raise QgsProcessingException(f"PET computation failed: {e}") from e
