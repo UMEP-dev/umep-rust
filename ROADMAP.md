@@ -29,7 +29,7 @@ This document outlines the development priorities for SOLWEIG.
 | 11  | ~~Slim down `__all__` exports~~           | E.5     | MEDIUM - internal bundles exposed  | ✅ Complete |
 | 12  | ~~Rename `config.py` → `loaders.py`~~     | B.4     | LOW - two-config ambiguity         | ✅ Complete |
 | 13  | ~~Move `cylindric_wedge` to Rust~~        | G.2     | HIGH - per-timestep hotspot        | ✅ Complete |
-| 14  | GPU buffer reuse / context persistence    | G.3     | HIGH - eliminates per-call alloc   | Pending     |
+| 14  | ~~GPU buffer reuse / persistence~~        | G.3     | HIGH - eliminates per-call alloc   | ✅ Complete |
 | 15  | ~~Move aniso patch loop to Rust~~         | G.2     | MEDIUM - anisotropic mode speedup  | ✅ Complete |
 | 16  | QGIS plugin testing (Phase 11)            | D       | HIGH - blocks plugin adoption      | Pending     |
 | 17  | Orchestration layer unit tests            | F.1     | MEDIUM - regression safety         | Pending     |
@@ -37,7 +37,7 @@ This document outlines the development priorities for SOLWEIG.
 | 19  | Field-data validation                     | H       | HIGH - scientific credibility      | Pending     |
 | 20  | POI Mode                                  | C       | HIGH - 10-100x speedup             | Deferred    |
 
-**Current status:** Phases A, B, E, G.2 complete. cylindric_wedge and aniso patch loop moved to Rust with rayon parallelism. Type checking expanded to all directories. Next: GPU buffer reuse, then QGIS plugin testing.
+**Current status:** Phases A, B, E, G.2, G.3.1 complete. GPU buffer caching eliminates per-call allocation. CI expanded to 221 tests with quick/full split. Next: QGIS plugin testing, orchestration tests, API reference.
 
 ### Recently Completed
 
@@ -60,6 +60,13 @@ This document outlines the development priorities for SOLWEIG.
 
 **Latest session (Feb 6):**
 
+- ✅ **GPU buffer reuse (G.3.1)** - `CachedBuffers` struct persists 17 wgpu buffers across shadow calls
+  - Buffers reallocated only when grid dimensions change
+  - Uses `queue.write_buffer()` instead of `create_buffer_init()` per call
+- ✅ **Test infrastructure** - `poe test_quick` (221 tests, ~4 min) / `poe test_full` (357 tests)
+  - `@pytest.mark.slow` on 7 modules (api, timeseries, tiling, memory, svf, gvf, wall_geometry)
+  - CI expanded from 55 → 221 tests per Python version
+  - `ty check` scope fixed in CI to match pre-commit hook
 - ✅ **Phase G.2 complete** - Moved Python hotspots to Rust with rayon parallelism
   - `cylindric_wedge()`: per-pixel wall shadow fraction → `sky.rs`
   - `weighted_patch_sum()`: anisotropic patch summation → `sky.rs`
@@ -461,7 +468,7 @@ Python orchestration → Rust computation → Python result handling
 | ---- | ---------------------------------------------- | ----------- | ------------- | ----------- |
 | 1    | Move `cylindric_wedge()` to Rust (`sky.rs`)    | 2-3 hours   | None          | ✅ Complete |
 | 2    | Move anisotropic patch loop to Rust (`sky.rs`) | 1-2 hours   | None          | ✅ Complete |
-| 3    | GPU buffer reuse (persistent resource pool)    | 3-4 hours   | None          | Pending     |
+| 3    | GPU buffer reuse (persistent resource pool)    | 3-4 hours   | None          | ✅ Complete |
 | 4    | Move `binary_dilation()` to Rust               | 2-3 hours   | None          | Pending     |
 | 5    | Move `Perez_v3()` to Rust (`sky.rs`)           | 4-6 hours   | Step 1        | Pending     |
 | 6    | GPU-accelerated SVF (design + prototype)       | 2-3 days    | Step 3        | Pending     |
