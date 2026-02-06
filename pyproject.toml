@@ -116,9 +116,9 @@ documentation = "https://github.com/UMEP-dev/solweig"
 repository = "https://github.com/UMEP-dev/solweig"
 
 [tool.poe.tasks]
-verify_project = { shell = "ruff format && ruff check --fix && ty check pysrc/ && pytest ./tests" }
+verify_project = { shell = "ruff format && ruff check --fix && ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/ && pytest ./tests" }
 lint = { shell = "ruff format && ruff check --fix" }
-typecheck = { shell = "ty check pysrc/" }
+typecheck = { shell = "ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/" }
 
 [tool.ruff]
 line-length = 120
