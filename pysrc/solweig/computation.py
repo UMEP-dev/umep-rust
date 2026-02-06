@@ -200,6 +200,7 @@ def calculate_core(
     physics: SimpleNamespace | None,
     materials: SimpleNamespace | None,
     conifer: bool = False,
+    wall_material: str | None = None,
 ) -> SolweigResult:
     """
     Core SOLWEIG calculation orchestrating all components.
@@ -318,11 +319,15 @@ def calculate_core(
         surface.svf = SvfArrays.from_bundle(svf_bundle)
 
     # Step 3: Ground Temperature Model (TgMaps with land cover parameterization)
-    # Extract wall temperature params from materials JSON (defaults to None → cobblestone in Rust)
+    # Resolve wall params: explicit wall_material wins, then materials JSON, then Rust defaults
     tgk_wall = None
     tstart_wall = None
     tmaxlst_wall = None
-    if materials is not None:
+    if wall_material is not None:
+        from .loaders import resolve_wall_params
+
+        tgk_wall, tstart_wall, tmaxlst_wall = resolve_wall_params(wall_material, materials)
+    elif materials is not None:
         tgk_wall = getattr(getattr(getattr(materials, "Ts_deg", None), "Value", None), "Walls", None)
         tstart_wall = getattr(getattr(getattr(materials, "Tstart", None), "Value", None), "Walls", None)
         tmaxlst_wall = getattr(getattr(getattr(materials, "TmaxLST", None), "Value", None), "Walls", None)

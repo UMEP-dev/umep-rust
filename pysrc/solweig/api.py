@@ -39,7 +39,7 @@ from .errors import (
 from .io import download_epw
 
 # Import from extracted modules
-from .loaders import load_materials, load_params, load_physics
+from .loaders import load_materials, load_params, load_physics, resolve_wall_params
 from .metadata import create_run_metadata, load_run_metadata, save_run_metadata
 from .models import (
     HumanParams,
@@ -195,6 +195,7 @@ def calculate(
     state: ThermalState | None = None,
     physics: SimpleNamespace | None = None,
     materials: SimpleNamespace | None = None,
+    wall_material: str | None = None,
 ) -> SolweigResult:
     """
     Calculate mean radiant temperature (Tmrt).
@@ -232,6 +233,9 @@ def calculate(
         materials: Material properties (albedo, emissivity per landcover class) from load_materials().
             Site-specific landcover parameters. Only needed if surface has land_cover grid.
             If None, uses config.materials.
+        wall_material: Wall material type for temperature model.
+            One of "brick", "concrete", "wood", "cobblestone" (case-insensitive).
+            If None (default), uses generic wall params from materials JSON.
 
     Returns:
         SolweigResult with Tmrt and optionally UTCI/PET grids.
@@ -346,6 +350,7 @@ def calculate(
         physics=physics,
         materials=materials,
         conifer=conifer,
+        wall_material=wall_material,
     )
 
 
@@ -390,6 +395,7 @@ __all__ = [
     "load_params",
     "load_physics",
     "load_materials",
+    "resolve_wall_params",
     # Metadata
     "create_run_metadata",
     "save_run_metadata",

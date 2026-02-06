@@ -105,6 +105,7 @@ def calculate_timeseries(
     conifer: bool = False,
     physics: SimpleNamespace | None = None,
     materials: SimpleNamespace | None = None,
+    wall_material: str | None = None,
     output_dir: str | Path | None = None,
     outputs: list[str] | None = None,
 ) -> list[SolweigResult]:
@@ -136,6 +137,9 @@ def calculate_timeseries(
         materials: Material properties (albedo, emissivity per landcover class) from load_materials().
             Site-specific landcover parameters. Only needed if surface has land_cover grid.
             If None, uses config.materials.
+        wall_material: Wall material type for temperature model.
+            One of "brick", "concrete", "wood", "cobblestone" (case-insensitive).
+            If None (default), uses generic wall params from materials JSON.
         output_dir: Directory to save results. If provided, results are saved
             incrementally as GeoTIFF files during calculation (recommended for
             long timeseries to avoid memory issues).
@@ -304,6 +308,7 @@ def calculate_timeseries(
             state=state,
             physics=physics,
             materials=materials,
+            wall_material=wall_material,
         )
 
         # Carry forward state to next timestep

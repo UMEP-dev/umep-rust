@@ -212,3 +212,46 @@ def get_lc_properties_from_params(
             tmaxlst_grid[mask] = tmaxlst
 
     return alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid
+
+
+# Map user-facing wall material names to JSON keys in default_materials.json
+WALL_MATERIAL_MAP: dict[str, str] = {
+    "brick": "Brick_wall",
+    "concrete": "Concrete_wall",
+    "wood": "Wood_wall",
+    "cobblestone": "Walls",
+}
+
+
+def resolve_wall_params(
+    wall_material: str,
+    materials: SimpleNamespace | None = None,
+) -> tuple[float, float, float]:
+    """Resolve wall material name to (tgk_wall, tstart_wall, tmaxlst_wall).
+
+    Args:
+        wall_material: Material name (case-insensitive).
+            One of: "brick", "concrete", "wood", "cobblestone".
+        materials: Loaded materials namespace. If None, loads bundled defaults.
+
+    Returns:
+        Tuple of (tgk_wall, tstart_wall, tmaxlst_wall) floats.
+
+    Raises:
+        ValueError: If wall_material is not a recognized material name.
+    """
+    key = wall_material.lower()
+    if key not in WALL_MATERIAL_MAP:
+        valid = ", ".join(sorted(WALL_MATERIAL_MAP))
+        msg = f"Unknown wall material {wall_material!r}. Valid options: {valid}"
+        raise ValueError(msg)
+
+    json_name = WALL_MATERIAL_MAP[key]
+
+    if materials is None:
+        materials = load_params()
+
+    tgk = float(getattr(materials.Ts_deg.Value, json_name))
+    tstart = float(getattr(materials.Tstart.Value, json_name))
+    tmaxlst = float(getattr(materials.TmaxLST.Value, json_name))
+    return tgk, tstart, tmaxlst
