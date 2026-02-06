@@ -53,7 +53,7 @@ jobs:
         run: uv sync --group dev
 
       - name: Run ty
-        run: uv run ty check
+        run: uv run ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/
 
   test:
     runs-on: ubuntu-latest
@@ -79,8 +79,8 @@ jobs:
       - name: Build Rust extension
         run: uv run maturin develop
 
-      - name: Run fast tests (spec tests only)
-        run: uv run python -m pytest tests/spec/ -v --tb=short
+      - name: Run tests (excluding slow)
+        run: uv run python -m pytest tests/ -m 'not slow' -v --tb=short
         env:
           PYTHONPATH: ${{ github.workspace }}
 
@@ -147,8 +147,8 @@ jobs:
         env:
           UMEP_USE_GDAL: "1"
 
-      - name: Run fast tests (spec tests only) with GDAL backend
-        run: uv run python -m pytest tests/spec/ -v --tb=short
+      - name: Run tests (excluding slow) with GDAL backend
+        run: uv run python -m pytest tests/ -m 'not slow' -v --tb=short
         env:
           PYTHONPATH: ${{ github.workspace }}
           UMEP_USE_GDAL: "1"
