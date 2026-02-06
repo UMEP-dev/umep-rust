@@ -557,3 +557,144 @@ class Weather:
             logger.warning(f"No timesteps found in EPW file for date range {start_dt} to {end_dt}")
 
         return weather_list
+
+    @classmethod
+    def from_umep_met(
+        cls,
+        paths: str | Path | list[str | Path],
+        resample_hourly: bool = True,
+        start: str | dt | None = None,
+        end: str | dt | None = None,
+    ) -> list[Weather]:
+        """
+        Load weather data from UMEP/SUEWS meteorological forcing files.
+
+        The UMEP met format is space-separated with columns:
+        %iy, id, it, imin, Q*, QH, QE, Qs, Qf, Wind, RH, Td, press,
+        rain, Kdn, snow, ldown, fcld, wuh, xsmd, lai_hr, Kdiff, Kdir, Wd
+
+        Missing values are encoded as -999.
+
+        Args:
+            paths: Path(s) to UMEP met file(s). Multiple files are
+                concatenated (e.g., one per month).
+            resample_hourly: If True, keep only on-the-hour rows (imin=0).
+                Default True since SOLWEIG works best with hourly data.
+            start: Start date filter as "YYYY-MM-DD" or datetime. Optional.
+            end: End date filter (inclusive) as "YYYY-MM-DD" or datetime. Optional.
+
+        Returns:
+            List of Weather objects sorted by datetime.
+
+        Example:
+            # Single file
+            weather = Weather.from_umep_met("metdata_10min_july.txt")
+
+            # Multiple monthly files
+            weather = Weather.from_umep_met([
+                "metdata_10min_may.txt",
+                "metdata_10min_june.txt",
+            ])
+        """
+        from datetime import timedelta
+
+        if isinstance(paths, (str, Path)):
+            paths = [paths]
+
+        rows: list[dict[str, float]] = []
+        for path in paths:
+            path = Path(path)
+            if not path.exists():
+                raise FileNotFoundError(f"UMEP met file not found: {path}")
+
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("%") or line.startswith("#"):
+                        continue
+                    parts = line.split()
+                    if len(parts) < 24:
+                        continue
+                    try:
+                        rows.append(
+                            {
+                                "year": int(parts[0]),
+                                "doy": int(parts[1]),
+                                "hour": int(parts[2]),
+                                "minute": int(parts[3]),
+                                "wind": float(parts[9]),
+                                "rh": float(parts[10]),
+                                "ta": float(parts[11]),
+                                "press_kpa": float(parts[12]),
+                                "kdn": float(parts[14]),
+                                "kdiff": float(parts[21]),
+                                "kdir": float(parts[22]),
+                            }
+                        )
+                    except (ValueError, IndexError):
+                        continue
+
+        if not rows:
+            raise ValueError(f"No valid data rows found in UMEP met files: {paths}")
+
+        # Filter hourly if requested
+        if resample_hourly:
+            rows = [r for r in rows if r["minute"] == 0]
+
+        # Convert to Weather objects
+        weather_list = []
+        for r in rows:
+            timestamp = dt(int(r["year"]), 1, 1) + timedelta(
+                days=int(r["doy"]) - 1, hours=int(r["hour"]), minutes=int(r["minute"])
+            )
+
+            # Skip rows with missing critical data
+            if r["ta"] <= -998 or r["rh"] <= -998 or r["kdn"] <= -998:
+                continue
+
+            # Convert pressure from kPa to hPa (-999 means missing)
+            pressure = r["press_kpa"] * 10.0 if r["press_kpa"] > -998 else 1013.25
+
+            # Direct/diffuse radiation (-999 means missing)
+            kdir = r["kdir"] if r["kdir"] > -998 else None
+            kdiff = r["kdiff"] if r["kdiff"] > -998 else None
+
+            # Wind speed (-999 means missing)
+            ws = r["wind"] if r["wind"] > -998 else 1.0
+
+            timestep = 60.0 if resample_hourly else 10.0
+
+            w = cls(
+                datetime=timestamp,
+                ta=r["ta"],
+                rh=r["rh"],
+                global_rad=max(r["kdn"], 0.0),
+                ws=ws,
+                pressure=pressure,
+                timestep_minutes=timestep,
+                measured_direct_rad=kdir,
+                measured_diffuse_rad=kdiff,
+            )
+            weather_list.append(w)
+
+        # Sort by datetime
+        weather_list.sort(key=lambda w: w.datetime)
+
+        # Apply date filters
+        if start is not None:
+            start_dt = dt.fromisoformat(start) if isinstance(start, str) else start
+            weather_list = [w for w in weather_list if w.datetime >= start_dt]
+        if end is not None:
+            end_dt = dt.fromisoformat(end) if isinstance(end, str) else end
+            if end_dt.hour == 0 and end_dt.minute == 0:
+                end_dt = end_dt.replace(hour=23, minute=59, second=59)
+            weather_list = [w for w in weather_list if w.datetime <= end_dt]
+
+        if weather_list:
+            logger.info(
+                f"Loaded {len(weather_list)} timesteps from UMEP met: "
+                f"{weather_list[0].datetime.strftime('%Y-%m-%d %H:%M')} → "
+                f"{weather_list[-1].datetime.strftime('%Y-%m-%d %H:%M')}"
+            )
+
+        return weather_list

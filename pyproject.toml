@@ -169,6 +169,7 @@ testpaths = ["tests"]
 addopts = "-s"
 markers = [
     "slow: marks tests as slow (full SOLWEIG computation, deselect with '-m \"not slow\"')",
+    "validation: marks tests requiring external validation datasets (deselect with '-m \"not validation\"')",
 ]
 
 [tool.ty.rules]

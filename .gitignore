@@ -9,6 +9,9 @@ demos/data/athens/shadow*
 demos/data/athens/svf*
 demos/data/athens/solweig*
 
+# validation data (downloaded from Zenodo, not checked in)
+tests/validation_data/
+
 # geopackage peripheral files
 *.gpkg-*
 
