@@ -119,7 +119,7 @@ repository = "https://github.com/UMEP-dev/solweig"
 verify_project = { shell = "ruff format && ruff check --fix && ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/ && pytest ./tests" }
 lint = { shell = "ruff format && ruff check --fix" }
 typecheck = { shell = "ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/" }
-test = { shell = "pytest tests/ -m 'not slow' -x -q" }
+test_quick = { shell = "pytest tests/ -m 'not slow' -x -q" }
 test_full = { shell = "pytest tests/ -x -q" }
 
 [tool.ruff]
