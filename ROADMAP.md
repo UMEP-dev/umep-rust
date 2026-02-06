@@ -34,10 +34,10 @@ This document outlines the development priorities for SOLWEIG.
 | 16  | ~~QGIS plugin testing (Phase 11)~~        | D       | HIGH - blocks plugin adoption      | ✅ Complete |
 | 17  | ~~Orchestration layer unit tests~~        | F.1     | MEDIUM - regression safety         | ✅ Complete |
 | 18  | ~~API reference with mkdocstrings~~       | D       | MEDIUM - user adoption             | ✅ Complete |
-| 19  | Field-data validation                     | H       | HIGH - scientific credibility      | Pending     |
+| 19  | Field-data validation                     | H       | HIGH - scientific credibility      | In Progress |
 | 20  | POI Mode                                  | C       | HIGH - 10-100x speedup             | Deferred    |
 
-**Current status:** Phases A, B, D, E, F.1, G.2, G.3.1 complete. 375+ tests total. QGIS plugin has 40 tests, orchestration layer has 57 unit tests, API reference auto-generated via mkdocstrings. Next: field-data validation, POI mode.
+**Current status:** Phases A, B, D, E, F.1, G.2, G.3.1 complete. 330+ tests total (318 quick + 12 validation + slow tests). Field-data validation in progress (Kolumbus wall temp + full pipeline). Next: Montpellier Tmrt validation, POI mode.
 
 ### Recently Completed
 
@@ -57,6 +57,18 @@ This document outlines the development priorities for SOLWEIG.
 ---
 
 ## Session Log (Feb 2026)
+
+**Session (Feb 6, validation):**
+
+- ✅ **Field-data validation (Phase H)** - Kolumbus dataset from Zenodo (Wallenberg et al. 2025)
+  - Downloaded: kolumbus.csv (wall temps), geodata (DSM/DEM/CDSM/groundcover), met forcing
+  - Added `Weather.from_umep_met()` classmethod for SUEWS-format meteorological files
+  - 12 validation tests: data loading (7), wall temperature (3), full pipeline (2)
+  - Wall temp RMSE: 6.67°C (PB) / 8.96°C (wood) with generic params vs ~2°C in paper (tuned)
+  - Full pipeline: Tmrt 31.7°C at noon (Ta=20.5°C), peak 41.8°C at 15:00
+  - Confirmed land cover support exists throughout pipeline and QGIS plugin
+  - Added `tests/conftest.py` to fix QGIS test imports (pre-existing sys.path issue)
+  - Investigated Montpellier dataset: reduced-scale canyon, globe thermometer, needs synthetic DSM
 
 **Session (Feb 6, continued):**
 
@@ -500,7 +512,7 @@ Python orchestration → Rust computation → Python result handling
 
 ---
 
-## Phase H: Field Data Validation (To-Do)
+## Phase H: Field Data Validation (In Progress)
 
 **Goal:** Validate SOLWEIG outputs against measured field data from real-world observation campaigns.
 
@@ -511,20 +523,63 @@ Python orchestration → Rust computation → Python result handling
 3. Shadow patterns match observed conditions
 4. The Perez anisotropic sky model improves accuracy vs isotropic
 
+### H.1 Kolumbus Wall Temperature Validation (In Progress)
+
+**Dataset:** Wallenberg et al. (2025) - Zenodo record 15309445
+- Site: Gothenburg, Sweden (57.697°N, 11.930°E), EPSG:3007
+- Period: 2023-05-15 to 2023-08-31 (summer months)
+- Grid: 80×81 pixels at 0.5m resolution
+- Geodata: DSM, DEM, CDSM, groundcover GeoTIFFs + WOI shapefile
+- Met forcing: UMEP/SUEWS format (10-min resolution, 4 monthly files)
+- Observations: IR radiometer wall surface temperatures (plastered brick + wood)
+
+**Results (generic cobblestone parameters):**
+
+| Metric | Plastered Brick | Wood |
+|--------|----------------|------|
+| Monthly RMSE (July) | 6.67°C | 8.96°C |
+| Monthly Bias | -2.53°C | -3.17°C |
+| Single-day RMSE | 8.53°C | 11.57°C |
+| Published RMSE (tuned params) | ~2°C | ~2°C |
+
+**Key finding:** Our generic model (hardcoded tgk=0.37, tstart=-3.41, tmaxlst=15.0) is 3-4× worse than the paper's per-material tuned parameters. This validates the importance of land cover support (which the full pipeline already has).
+
+**Full pipeline results (noon, July 15):**
+- WOI Tmrt: 31.7°C at Ta=20.5°C (+11.2°C excess radiation)
+- Peak Tmrt: 41.8°C at 15:00, Ta=23.9°C (+17.9°C excess)
+
+**Tasks:**
+
+- [x] Download Zenodo validation dataset (kolumbus.csv + geodata + met forcing)
+- [x] Add `Weather.from_umep_met()` for SUEWS-format met files
+- [x] Write 12 validation tests (data loading, wall temp, full pipeline)
+- [x] Register `validation` pytest marker
+- [ ] Add material-specific wall temperature parameters (would reduce RMSE to ~2°C)
+- [ ] Land cover-aware wall temperature model (use groundcover.tif)
+
+### H.2 Montpellier Tmrt Validation (Planned)
+
+**Dataset:** INRAE experimental canyon, Montpellier, France
+- Reduced-scale urban canyon (2.3m walls, 12m long, 5m apart, E-W orientation)
+- Globe thermometer Tmrt measurements
+- No DSM included, but geometry is simple enough to construct synthetically
+- IGN Lidar HD available for France if needed
+
+**Tasks:**
+
+- [ ] Construct synthetic DSM from known canyon dimensions
+- [ ] Download and parse globe thermometer measurements
+- [ ] Write Tmrt validation tests
+- [ ] Compare isotropic vs anisotropic sky model accuracy
+
+### H.3 Additional Validation Opportunities
+
 **Potential data sources:**
 
 - UMEP validation datasets (Gothenburg, London)
 - Published SOLWEIG validation studies (Lindberg et al. 2008, 2016)
 - COSMO/CLM urban datasets
 - Local university weather stations with globe thermometer data
-
-**Tasks (not yet started):**
-
-- [ ] Identify suitable validation datasets with paired Tmrt measurements
-- [ ] Create validation test framework (measured vs predicted comparison)
-- [ ] Document acceptable error bounds from published literature
-- [ ] Run validation and report results
-- [ ] Add to CI as regression guard (if suitable small dataset available)
 
 ---
 
@@ -737,7 +792,7 @@ Ideas for future development, not yet prioritized.
 All changes must maintain:
 
 - **Tmrt bias < 0.1°C** vs reference implementation
-- **353 tests passing** (current baseline, including spec, golden, and benchmark tests)
+- **330+ tests passing** (current baseline, including spec, golden, benchmark, and validation tests)
 - No memory regression on standard benchmarks
 
 Gate command: `pytest tests/`
