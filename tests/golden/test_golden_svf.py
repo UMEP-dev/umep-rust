@@ -19,6 +19,8 @@ import numpy as np
 import pytest
 from solweig.rustalgos import shadowing, skyview
 
+pytestmark = pytest.mark.slow
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 # Tolerance for components that match exactly (South, West)

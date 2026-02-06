@@ -22,6 +22,8 @@ from solweig.api import (
 )
 from solweig.errors import GridShapeMismatch, MissingPrecomputedData
 
+pytestmark = pytest.mark.slow
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

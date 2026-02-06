@@ -119,6 +119,8 @@ repository = "https://github.com/UMEP-dev/solweig"
 verify_project = { shell = "ruff format && ruff check --fix && ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/ && pytest ./tests" }
 lint = { shell = "ruff format && ruff check --fix" }
 typecheck = { shell = "ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/" }
+test = { shell = "pytest tests/ -m 'not slow' -x -q" }
+test_full = { shell = "pytest tests/ -x -q" }
 
 [tool.ruff]
 line-length = 120
@@ -159,6 +161,9 @@ log_cli = true
 log_cli_level = "INFO"
 testpaths = ["tests"]
 addopts = "-s"
+markers = [
+    "slow: marks tests as slow (full SOLWEIG computation, deselect with '-m \"not slow\"')",
+]
 
 [tool.ty.rules]
 # Ignore unresolved imports for external/optional modules that ty cannot resolve

@@ -14,6 +14,8 @@ import numpy as np
 import pytest
 from solweig import Location, SurfaceData, Weather, calculate
 
+pytestmark = pytest.mark.slow
+
 
 class TestMemoryBenchmark:
     """Memory usage benchmarks for CI."""

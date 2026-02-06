@@ -21,6 +21,8 @@ from solweig.constants import SBC
 from solweig.rustalgos import gvf as gvf_module
 from solweig.rustalgos import shadowing
 
+pytestmark = pytest.mark.slow
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 # Physical constants

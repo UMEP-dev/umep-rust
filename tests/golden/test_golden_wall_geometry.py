@@ -16,6 +16,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.slow
+
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 # Tolerance for wall geometry calculations

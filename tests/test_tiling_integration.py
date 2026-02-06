@@ -16,6 +16,8 @@ from solweig import (
     calculate_tiled,
 )
 
+pytestmark = pytest.mark.slow
+
 
 class TestMultiTileProcessing:
     """Tests that actually exercise multi-tile processing."""

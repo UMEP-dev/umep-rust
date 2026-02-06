@@ -22,6 +22,8 @@ from solweig.api import (
     generate_tiles,
 )
 
+pytestmark = pytest.mark.slow
+
 
 class TestSurfaceData:
     """Tests for SurfaceData dataclass."""
