@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime as dt
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -371,7 +371,7 @@ class Weather:
         global_rad: float,
         datetime: dt | None = None,
         ws: float = 1.0,
-        **kwargs,
+        **kwargs: Any,
     ) -> Weather:
         """
         Quick factory for creating Weather with minimal required values.
