@@ -31,13 +31,13 @@ This document outlines the development priorities for SOLWEIG.
 | 13  | ~~Move `cylindric_wedge` to Rust~~        | G.2     | HIGH - per-timestep hotspot        | ✅ Complete |
 | 14  | ~~GPU buffer reuse / persistence~~        | G.3     | HIGH - eliminates per-call alloc   | ✅ Complete |
 | 15  | ~~Move aniso patch loop to Rust~~         | G.2     | MEDIUM - anisotropic mode speedup  | ✅ Complete |
-| 16  | QGIS plugin testing (Phase 11)            | D       | HIGH - blocks plugin adoption      | Pending     |
-| 17  | Orchestration layer unit tests            | F.1     | MEDIUM - regression safety         | Pending     |
-| 18  | API reference with mkdocstrings           | D       | MEDIUM - user adoption             | Pending     |
+| 16  | ~~QGIS plugin testing (Phase 11)~~        | D       | HIGH - blocks plugin adoption      | ✅ Complete |
+| 17  | ~~Orchestration layer unit tests~~        | F.1     | MEDIUM - regression safety         | ✅ Complete |
+| 18  | ~~API reference with mkdocstrings~~       | D       | MEDIUM - user adoption             | ✅ Complete |
 | 19  | Field-data validation                     | H       | HIGH - scientific credibility      | Pending     |
 | 20  | POI Mode                                  | C       | HIGH - 10-100x speedup             | Deferred    |
 
-**Current status:** Phases A, B, E, G.2, G.3.1 complete. GPU buffer caching eliminates per-call allocation. CI expanded to 221 tests with quick/full split. Next: QGIS plugin testing, orchestration tests, API reference.
+**Current status:** Phases A, B, D, E, F.1, G.2, G.3.1 complete. 375+ tests total. QGIS plugin has 40 tests, orchestration layer has 57 unit tests, API reference auto-generated via mkdocstrings. Next: field-data validation, POI mode.
 
 ### Recently Completed
 
@@ -58,7 +58,24 @@ This document outlines the development priorities for SOLWEIG.
 
 ## Session Log (Feb 2026)
 
-**Latest session (Feb 6):**
+**Session (Feb 6, continued):**
+
+- ✅ **QGIS plugin tests (Phase 11)** - 40 tests for converters and base algorithm
+  - `tests/qgis_mocks.py`: shared mock infrastructure (install/uninstall osgeo separately)
+  - `tests/test_qgis_converters.py`: 25 tests (HumanParams, Weather, Location, EPW)
+  - `tests/test_qgis_base.py`: 15 tests (grid validation, output paths, georeferenced save)
+  - Fixed osgeo mock pollution (split install/install_osgeo to prevent cross-test contamination)
+- ✅ **Orchestration unit tests (F.1)** - 57 tests for computation internals
+  - `_nighttime_result()`: 13 tests (Tmrt=Ta, longwave physics, state reset)
+  - `_apply_thermal_delay()`: 7 tests (state transitions, Rust FFI mock, day/night flags)
+  - `_precompute_weather()`: 5 tests (altmax caching, multi-day, derived computation)
+  - ThermalState/TileSpec: 11 tests, tiling helpers: 21 tests
+- ✅ **API reference with mkdocstrings** - docs build with `--strict`
+  - Added mkdocs/mkdocstrings[python] to dev dependencies
+  - `poe docs` / `poe docs_build` tasks for local serving and strict build
+  - All 6 functions + 9 dataclasses + 5 error classes auto-documented from docstrings
+
+**Session (Feb 6, first half):**
 
 - ✅ **GPU buffer reuse (G.3.1)** - `CachedBuffers` struct persists 17 wgpu buffers across shadow calls
   - Buffers reallocated only when grid dimensions change
