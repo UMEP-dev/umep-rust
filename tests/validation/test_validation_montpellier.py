@@ -64,6 +64,69 @@ UTC_OFFSET = 2  # CEST (Central European Summer Time) for summer 2023
 # DSM resolution
 RESOLUTION = 0.5  # metres per pixel
 
+# Linke turbidity for clear Mediterranean sky (typical summer value)
+LINKE_TURBIDITY = 3.5
+
+
+# ---------------------------------------------------------------------------
+# Clear-sky radiation model
+# ---------------------------------------------------------------------------
+
+
+def clear_sky_ghi(sun_altitude_deg: float, day_of_year: int = 216) -> float:
+    """Estimate clear-sky Global Horizontal Irradiance (GHI) from sun altitude.
+
+    Uses a simplified Ineichen clear-sky model with Linke turbidity for
+    Mediterranean climate. This replaces in-canyon pyranometer readings
+    which are contaminated by wall shading and reflections.
+
+    Args:
+        sun_altitude_deg: Sun altitude in degrees above horizon.
+        day_of_year: Day of year (1-365). Default 216 = Aug 4.
+
+    Returns:
+        Clear-sky GHI in W/m².
+    """
+    if sun_altitude_deg <= 0:
+        return 0.0
+    # Solar constant with eccentricity correction
+    I0 = 1361.0 * (1 + 0.033 * np.cos(2 * np.pi * day_of_year / 365))
+    zen_rad = np.radians(90 - sun_altitude_deg)
+    cos_zen = np.cos(zen_rad)
+    # Air mass (Kasten & Young 1989)
+    am = 1.0 / (cos_zen + 0.50572 * (96.07995 - (90 - sun_altitude_deg)) ** (-1.6364))
+    am = min(am, 40.0)
+    # Ineichen clear-sky model (altitude = 50m for Montpellier)
+    fh1 = np.exp(-0.00050 / 8.434)
+    cg1 = 5.09e-5 * 50 + 0.868
+    cg2 = 3.92e-5 * 50 + 0.0387
+    ghi = cg1 * I0 * cos_zen * np.exp(-cg2 * am * (fh1 * LINKE_TURBIDITY - 1.0))
+    return max(float(ghi), 0.0)
+
+
+def compute_sun_altitude(dt: datetime, lat: float = LATITUDE, lon: float = LONGITUDE) -> float:
+    """Compute solar altitude angle for a given datetime and location.
+
+    Simple astronomical formula (no refraction correction).
+    """
+    doy = dt.timetuple().tm_yday
+    # Solar declination (Spencer 1971)
+    B = 2 * np.pi * (doy - 1) / 365
+    decl = np.degrees(
+        0.006918 - 0.399912 * np.cos(B) + 0.070257 * np.sin(B) - 0.006758 * np.cos(2 * B) + 0.000907 * np.sin(2 * B)
+    )
+    # Equation of time (minutes)
+    eot = 229.18 * (
+        0.000075 + 0.001868 * np.cos(B) - 0.032077 * np.sin(B) - 0.014615 * np.cos(2 * B) - 0.04089 * np.sin(2 * B)
+    )
+    # Solar time
+    solar_time = dt.hour + dt.minute / 60 + (lon - 15 * UTC_OFFSET) * 4 / 60 + eot / 60
+    ha = 15 * (solar_time - 12)  # Hour angle
+    sin_alt = np.sin(np.radians(lat)) * np.sin(np.radians(decl)) + np.cos(np.radians(lat)) * np.cos(
+        np.radians(decl)
+    ) * np.cos(np.radians(ha))
+    return float(np.degrees(np.arcsin(max(-1, min(1, sin_alt)))))
+
 
 # ---------------------------------------------------------------------------
 # Globe temperature -> Tmrt conversion (ISO 7726)
@@ -386,12 +449,16 @@ class TestTmrtValidation:
 
     @pytest.fixture
     def aug04_weather(self, location):
-        """Build hourly Weather objects for August 4, 2023."""
+        """Build hourly Weather objects for August 4, 2023.
+
+        Uses clear-sky GHI model instead of in-canyon pyranometers.
+        The in-canyon pyranometers are contaminated by wall shading and
+        reflections and cannot serve as open-sky radiation input.
+        """
         from solweig import Weather
 
         obs = load_presti_observations(day="2023-08-04")
 
-        # Build hourly Weather (take on-the-hour observations)
         weather_list = []
         for o in obs:
             if o["time"].minute != 0:
@@ -399,15 +466,16 @@ class TestTmrtValidation:
             if math.isnan(o["ta"]) or math.isnan(o["rh"]):
                 continue
 
-            # Use average of all 4 pyranometers as global radiation estimate
-            rads = [o[f"slr{i}"] for i in range(1, 5) if not math.isnan(o[f"slr{i}"])]
-            global_rad = np.mean(rads) if rads else 0.0
+            # Clear-sky GHI from sun position (not in-canyon pyranometers)
+            sun_alt = compute_sun_altitude(o["time"])
+            doy = o["time"].timetuple().tm_yday
+            global_rad = clear_sky_ghi(sun_alt, doy)
 
             w = Weather(
                 datetime=o["time"],
                 ta=o["ta"],
                 rh=o["rh"],
-                global_rad=max(global_rad, 0.0),
+                global_rad=global_rad,
                 ws=max(o["wspd"], 0.1) if not math.isnan(o["wspd"]) else 1.0,
             )
             weather_list.append(w)
@@ -425,7 +493,12 @@ class TestTmrtValidation:
         import solweig
 
         noon = [w for w in aug04_weather if w.datetime.hour == 14][0]
-        result = solweig.calculate(surface=surface, location=location, weather=noon)
+        result = solweig.calculate(
+            surface=surface,
+            location=location,
+            weather=noon,
+            wall_material="concrete",
+        )
 
         tmrt_center = result.tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
         print(f"\n--- Noon Tmrt at canyon center: {tmrt_center:.1f}°C (Ta={noon.ta:.1f}°C) ---")
@@ -444,6 +517,7 @@ class TestTmrtValidation:
             surface=surface,
             location=location,
             weather_series=aug04_weather,
+            wall_material="concrete",
         )
 
         assert len(results) == len(aug04_weather)
@@ -481,6 +555,7 @@ class TestTmrtValidation:
             surface=surface,
             location=location,
             weather_series=aug04_weather,
+            wall_material="concrete",
         )
 
         # Build model Tmrt dict by hour
@@ -541,7 +616,12 @@ class TestTmrtValidation:
 
         # Pick early afternoon (14:00) when sun is from the south
         afternoon = [w for w in aug04_weather if w.datetime.hour == 14][0]
-        result = solweig.calculate(surface=surface, location=location, weather=afternoon)
+        result = solweig.calculate(
+            surface=surface,
+            location=location,
+            weather=afternoon,
+            wall_material="concrete",
+        )
 
         # Near-south-wall pixel (row 18) vs near-north-wall pixel (row 12)
         # Avoid rows immediately adjacent to walls (may be NaN in SOLWEIG)
@@ -576,20 +656,21 @@ class TestTmrtValidation:
             if not obs_tmrt:
                 continue
 
-            # Build hourly Weather
+            # Build hourly Weather with clear-sky GHI
             weather_list = []
             for o in obs:
                 if o["time"].minute != 0:
                     continue
                 if math.isnan(o["ta"]) or math.isnan(o["rh"]):
                     continue
-                rads = [o[f"slr{i}"] for i in range(1, 5) if not math.isnan(o[f"slr{i}"])]
-                global_rad = np.mean(rads) if rads else 0.0
+                sun_alt = compute_sun_altitude(o["time"])
+                doy = o["time"].timetuple().tm_yday
+                global_rad = clear_sky_ghi(sun_alt, doy)
                 w = solweig.Weather(
                     datetime=o["time"],
                     ta=o["ta"],
                     rh=o["rh"],
-                    global_rad=max(global_rad, 0.0),
+                    global_rad=global_rad,
                     ws=max(o["wspd"], 0.1) if not math.isnan(o["wspd"]) else 1.0,
                 )
                 weather_list.append(w)
@@ -601,6 +682,7 @@ class TestTmrtValidation:
                 surface=surface,
                 location=location,
                 weather_series=weather_list,
+                wall_material="concrete",
             )
 
             model_tmrt = {}
@@ -668,13 +750,14 @@ class TestSkyModelComparison:
                 continue
             if math.isnan(o["ta"]) or math.isnan(o["rh"]):
                 continue
-            rads = [o[f"slr{i}"] for i in range(1, 5) if not math.isnan(o[f"slr{i}"])]
-            global_rad = np.mean(rads) if rads else 0.0
+            sun_alt = compute_sun_altitude(o["time"])
+            doy = o["time"].timetuple().tm_yday
+            global_rad = clear_sky_ghi(sun_alt, doy)
             w = Weather(
                 datetime=o["time"],
                 ta=o["ta"],
                 rh=o["rh"],
-                global_rad=max(global_rad, 0.0),
+                global_rad=global_rad,
                 ws=max(o["wspd"], 0.1) if not math.isnan(o["wspd"]) else 1.0,
             )
             weather_list.append(w)
