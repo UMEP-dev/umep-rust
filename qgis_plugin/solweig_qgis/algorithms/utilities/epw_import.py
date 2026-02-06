@@ -75,10 +75,10 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis."""
         )
 
     def group(self) -> str:
-        return self.tr("SOLWEIG > Utilities")
+        return ""
 
     def groupId(self) -> str:
-        return "solweig_utilities"
+        return ""
 
     def initAlgorithm(self, config=None):
         """Define algorithm parameters."""
@@ -288,15 +288,23 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis."""
 
         return {"OUTPUT_HTML": output_html}
 
+    @staticmethod
+    def _column_stats(df, col: str) -> tuple:
+        """Compute (min, max, mean, missing_count) for a column.
+
+        Works with both pandas DataFrames and the lightweight _EpwDataFrame.
+        """
+        import math
+
+        values = df[col]
+        valid = [v for v in values if isinstance(v, (int, float)) and not math.isnan(v)]
+        n_missing = len(values) - len(valid)
+        if valid:
+            return min(valid), max(valid), sum(valid) / len(valid), n_missing
+        return 0.0, 0.0, 0.0, n_missing
+
     def _generate_html_report(self, df, metadata: dict, epw_path: str) -> str:
         """Generate HTML report for EPW file."""
-        # Compute statistics
-        stats = df.describe()
-
-        # Check for missing values
-        missing = df.isnull().sum()
-        has_missing = missing.any()
-
         # Map column names to friendly names
         column_names = {
             "temp_air": "Air Temperature (°C)",
@@ -310,16 +318,20 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis."""
 
         # Build statistics table rows
         stats_rows = ""
+        has_missing = False
         for col in ["temp_air", "relative_humidity", "wind_speed", "ghi"]:
             if col in df.columns:
                 friendly_name = column_names.get(col, col)
+                col_min, col_max, col_mean, col_missing = self._column_stats(df, col)
+                if col_missing > 0:
+                    has_missing = True
                 stats_rows += f"""
                 <tr>
                     <td>{friendly_name}</td>
-                    <td>{stats.loc["min", col]:.1f}</td>
-                    <td>{stats.loc["max", col]:.1f}</td>
-                    <td>{stats.loc["mean", col]:.1f}</td>
-                    <td>{missing.get(col, 0)}</td>
+                    <td>{col_min:.1f}</td>
+                    <td>{col_max:.1f}</td>
+                    <td>{col_mean:.1f}</td>
+                    <td>{col_missing}</td>
                 </tr>
                 """
 

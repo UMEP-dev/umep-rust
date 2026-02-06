@@ -152,8 +152,10 @@ class SolweigResult:
                 logger.warning(f"Output '{name}' is None (not computed), skipping.")
                 continue
 
-            # Write to GeoTIFF
-            filepath = output_dir / f"{name}_{ts_str}.tif"
+            # Write to GeoTIFF in component subdirectory
+            comp_dir = output_dir / name
+            comp_dir.mkdir(parents=True, exist_ok=True)
+            filepath = comp_dir / f"{name}_{ts_str}.tif"
             io.save_raster(
                 out_path_str=str(filepath),
                 data_arr=array,

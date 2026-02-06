@@ -62,20 +62,9 @@ jobs:
           path: dist/*.whl
 
   build-plugin:
-    name: Build QGIS Plugin Package
+    name: Build Universal QGIS Plugin
     needs: build-wheels
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - platform_tag: linux_x86_64
-            artifact_name: wheel-linux_x86_64
-          - platform_tag: windows_x86_64
-            artifact_name: wheel-windows_x86_64
-          - platform_tag: macos_x86_64
-            artifact_name: wheel-macos_x86_64
-          - platform_tag: macos_aarch64
-            artifact_name: wheel-macos_aarch64
 
     steps:
       - uses: actions/checkout@v4
@@ -85,11 +74,15 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Download wheel
+      - name: Download all wheels
         uses: actions/download-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
           path: dist/
+          pattern: wheel-*
+          merge-multiple: true
+
+      - name: List downloaded wheels
+        run: ls -lh dist/
 
       - name: Get version
         id: version
@@ -101,33 +94,39 @@ jobs:
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build plugin package
+      - name: Build universal plugin package
+        run: python qgis_plugin/build_plugin.py --universal --version ${{ steps.version.outputs.version }}
+
+      - name: Validate bundle structure
         run: |
-          # Create bundle directory structure: _bundled/solweig/
-          # This allows `import solweig` to work when _bundled is in sys.path
-          mkdir -p qgis_plugin/solweig_qgis/_bundled/solweig
+          cd qgis_plugin
+          ZIP=$(ls solweig-qgis-*-universal.zip | head -1)
+          echo "Validating $ZIP..."
+          unzip -l "$ZIP" | tee /tmp/bundle_contents.txt
 
-          # Extract wheel
-          cd dist
-          WHEEL=$(ls *.whl | head -1)
-          unzip -o "$WHEEL" -d extracted
+          # Check _native/ has platform binaries
+          for platform in linux_x86_64 windows_x86_64 darwin_x86_64 darwin_arm64; do
+            if grep -q "_native/$platform/rustalgos" /tmp/bundle_contents.txt; then
+              echo "  OK: $platform binary found"
+            else
+              echo "  MISSING: $platform binary"
+            fi
+          done
 
-          # Copy entire solweig package from wheel to _bundled/solweig/
-          if [ -d "extracted/solweig" ]; then
-            cp -r extracted/solweig/* ../qgis_plugin/solweig_qgis/_bundled/solweig/
+          # Check _bundled/solweig/ has NO .so/.pyd files
+          if grep -qE "_bundled/solweig/rustalgos\.(abi3\.)?so" /tmp/bundle_contents.txt || \
+             grep -qE "_bundled/solweig/rustalgos\.(abi3\.)?pyd" /tmp/bundle_contents.txt; then
+            echo "ERROR: Found binary in _bundled/ (should be in _native/ only)"
+            exit 1
           fi
 
-          cd ..
+          echo "Bundle validation passed."
 
-          # Create ZIP package
-          cd qgis_plugin
-          zip -r ../solweig-qgis-${{ steps.version.outputs.version }}-${{ matrix.platform_tag }}.zip solweig_qgis/
-
-      - name: Upload plugin package
+      - name: Upload universal plugin package
         uses: actions/upload-artifact@v4
         with:
-          name: plugin-${{ matrix.platform_tag }}
-          path: solweig-qgis-*.zip
+          name: plugin-universal
+          path: qgis_plugin/solweig-qgis-*-universal.zip
 
   create-release:
     name: Create Release
@@ -136,16 +135,17 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
 
     steps:
-      - name: Download all artifacts
+      - name: Download universal plugin
         uses: actions/download-artifact@v4
         with:
+          name: plugin-universal
           path: artifacts/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/plugin-*/*.zip
+            artifacts/*.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

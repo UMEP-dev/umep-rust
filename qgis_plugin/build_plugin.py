@@ -9,7 +9,8 @@ Usage:
     python build_plugin.py              # Build for current platform
     python build_plugin.py --release    # Release build (optimized)
     python build_plugin.py --clean      # Clean build artifacts
-    python build_plugin.py --package    # Create distributable ZIP
+    python build_plugin.py --package    # Create distributable ZIP (single platform)
+    python build_plugin.py --universal  # Create universal ZIP from pre-built wheels in dist/
     python build_plugin.py --target x86_64-apple-darwin  # Cross-compile for Intel Mac
 """
 
@@ -30,7 +31,16 @@ PROJECT_ROOT = SCRIPT_DIR.parent
 PLUGIN_DIR = SCRIPT_DIR / "solweig_qgis"  # Plugin directory (renamed to avoid conflict)
 BUNDLE_ROOT = PLUGIN_DIR / "_bundled"  # Root of bundled libraries
 BUNDLE_DIR = BUNDLE_ROOT / "solweig"  # solweig package inside _bundled
+NATIVE_DIR = PLUGIN_DIR / "_native"  # Platform-specific binaries
 PYSRC_DIR = PROJECT_ROOT / "pysrc" / "solweig"
+
+# Map CI platform tags to wheel filename patterns and _native/ directory names
+PLATFORM_MAP = {
+    "linux_x86_64": {"wheel_glob": "*linux*x86_64*.whl", "ext": ".so"},
+    "windows_x86_64": {"wheel_glob": "*win*amd64*.whl", "ext": ".pyd"},
+    "darwin_x86_64": {"wheel_glob": "*macosx*x86_64*.whl", "ext": ".so"},
+    "darwin_arm64": {"wheel_glob": "*macosx*arm64*.whl", "ext": ".so"},
+}
 
 
 def run_command(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
@@ -92,10 +102,13 @@ def get_platform_info(target: str | None = None) -> dict:
 
 
 def clean_bundle_dir():
-    """Clean the bundle directory."""
+    """Clean the bundle and native directories."""
     if BUNDLE_ROOT.exists():
         print(f"  Cleaning {BUNDLE_ROOT}")
         shutil.rmtree(BUNDLE_ROOT)
+    if NATIVE_DIR.exists():
+        print(f"  Cleaning {NATIVE_DIR}")
+        shutil.rmtree(NATIVE_DIR)
     # Create _bundled/solweig/ structure
     BUNDLE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -208,7 +221,7 @@ def extract_solweig_from_wheel(wheel_path: Path) -> None:
 
 def create_bundle_init():
     """Create __init__.py for the bundled module if not present in wheel."""
-    print("\n[3/3] Verifying bundle __init__.py...")
+    print("\nVerifying bundle __init__.py...")
 
     init_path = BUNDLE_DIR / "__init__.py"
 
@@ -255,12 +268,173 @@ def create_package_zip(version: str = "0.1.0", target: str | None = None) -> Pat
     return zip_path
 
 
+# ---------------------------------------------------------------------------
+# Universal multi-platform build
+# ---------------------------------------------------------------------------
+
+
+def _extract_python_from_wheel(wheel_path: Path) -> None:
+    """Extract Python modules from wheel, excluding compiled binaries."""
+    print(f"\n[2/4] Extracting Python modules from {wheel_path.name}...")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+
+        with zipfile.ZipFile(wheel_path, "r") as zf:
+            zf.extractall(tmpdir)
+
+        solweig_pkg = tmpdir / "solweig"
+        if not solweig_pkg.exists():
+            print("  ERROR: No solweig/ directory found in wheel")
+            sys.exit(1)
+
+        for item in solweig_pkg.iterdir():
+            dest = BUNDLE_DIR / item.name
+
+            if item.is_dir():
+                if item.name == "__pycache__":
+                    continue
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(item, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+                print(f"  Copied: {item.name}/")
+            else:
+                if item.suffix == ".pyc":
+                    continue
+                # Skip compiled extensions — they go in _native/ instead
+                if item.suffix in (".so", ".pyd"):
+                    print(f"  Skipped: {item.name} (binary goes in _native/)")
+                    continue
+                shutil.copy2(item, dest)
+                print(f"  Copied: {item.name}")
+
+
+def _extract_binary_from_wheel(wheel_path: Path, platform_tag: str) -> bool:
+    """Extract only the rustalgos binary from a wheel into _native/<platform_tag>/.
+
+    Returns True if a binary was found and extracted.
+    """
+    ext = PLATFORM_MAP[platform_tag]["ext"]
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+
+        with zipfile.ZipFile(wheel_path, "r") as zf:
+            zf.extractall(tmpdir)
+
+        solweig_pkg = tmpdir / "solweig"
+        if not solweig_pkg.exists():
+            return False
+
+        # Find the rustalgos binary
+        for item in solweig_pkg.iterdir():
+            if item.suffix in (".so", ".pyd") and "rustalgos" in item.name:
+                target_dir = NATIVE_DIR / platform_tag
+                target_dir.mkdir(parents=True, exist_ok=True)
+                # Normalise name to rustalgos.abi3{ext}
+                dest = target_dir / f"rustalgos.abi3{ext}"
+                shutil.copy2(item, dest)
+                size_mb = dest.stat().st_size / 1024 / 1024
+                print(f"  {platform_tag}: {dest.name} ({size_mb:.1f} MB)")
+                return True
+
+    return False
+
+
+def _extract_wheel_version(wheel_path: Path) -> str:
+    """Extract version string from wheel filename (e.g. solweig-0.1.0-cp39-...)."""
+    parts = wheel_path.stem.split("-")
+    return parts[1] if len(parts) > 1 else "unknown"
+
+
+def build_universal(version: str = "0.1.0") -> Path:
+    """Build a universal multi-platform plugin ZIP from pre-built wheels in dist/.
+
+    Expects one wheel per supported platform. Extracts Python code from any
+    wheel (they're identical) and each platform's rustalgos binary separately.
+    """
+    print("\n" + "=" * 60)
+    print("Building Universal Multi-Platform Bundle")
+    print("=" * 60)
+
+    dist_dir = PROJECT_ROOT / "dist"
+    if not dist_dir.exists():
+        print("ERROR: dist/ directory not found. Build wheels first.")
+        sys.exit(1)
+
+    # Find wheels for each platform
+    found_wheels: dict[str, Path] = {}
+    for tag, info in PLATFORM_MAP.items():
+        wheels = list(dist_dir.glob(info["wheel_glob"]))
+        if wheels:
+            wheel = max(wheels, key=lambda p: p.stat().st_mtime)
+            found_wheels[tag] = wheel
+            print(f"  Found {tag}: {wheel.name}")
+
+    if not found_wheels:
+        print("ERROR: No wheels found in dist/")
+        print("Build platform-specific wheels first, or run CI to produce them.")
+        sys.exit(1)
+
+    # Version consistency check
+    versions = {_extract_wheel_version(w) for w in found_wheels.values()}
+    if len(versions) > 1:
+        print(f"  WARNING: Mixed wheel versions: {versions}")
+
+    print(f"\nBundling {len(found_wheels)} platform(s)...")
+
+    # Step 1: Clean
+    print("\n[1/4] Cleaning bundle directories...")
+    clean_bundle_dir()
+
+    # Step 2: Extract Python from first available wheel
+    first_wheel = next(iter(found_wheels.values()))
+    _extract_python_from_wheel(first_wheel)
+
+    # Step 3: Extract binaries from each platform wheel
+    print("\n[3/4] Extracting platform-specific binaries...")
+    for tag, wheel_path in found_wheels.items():
+        if not _extract_binary_from_wheel(wheel_path, tag):
+            print(f"  WARNING: No binary found in {wheel_path.name}")
+
+    # Step 4: Verify and create init
+    print("\n[4/4] Verifying bundle...")
+    create_bundle_init()
+
+    binary_count = sum(1 for _ in NATIVE_DIR.rglob("rustalgos.*")) if NATIVE_DIR.exists() else 0
+    print(f"  Python modules: {BUNDLE_DIR}")
+    print(f"  Native binaries: {binary_count} platform(s) in {NATIVE_DIR}")
+
+    # Create universal ZIP
+    zip_name = f"solweig-qgis-{version}-universal.zip"
+    zip_path = SCRIPT_DIR / zip_name
+
+    print(f"\nCreating {zip_name}...")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file_path in PLUGIN_DIR.rglob("*"):
+            if file_path.is_file():
+                if "__pycache__" in str(file_path) or file_path.suffix == ".pyc":
+                    continue
+                arcname = file_path.relative_to(SCRIPT_DIR)
+                zf.write(file_path, arcname)
+
+    size_mb = zip_path.stat().st_size / 1024 / 1024
+    print(f"  Created: {zip_path.name} ({size_mb:.1f} MB)")
+    return zip_path
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+
 def main():
     parser = argparse.ArgumentParser(description="Build SOLWEIG QGIS plugin")
     parser.add_argument("--release", action="store_true", default=True, help="Build release (optimized) version")
     parser.add_argument("--debug", action="store_true", help="Build debug version")
     parser.add_argument("--clean", action="store_true", help="Clean build artifacts")
-    parser.add_argument("--package", action="store_true", help="Create distributable ZIP")
+    parser.add_argument("--package", action="store_true", help="Create distributable ZIP (single platform)")
+    parser.add_argument("--universal", action="store_true", help="Create universal ZIP from pre-built wheels in dist/")
     parser.add_argument("--version", default="0.1.0", help="Version for package name")
     parser.add_argument(
         "--target",
@@ -275,12 +449,20 @@ def main():
     print("SOLWEIG QGIS Plugin Builder")
     print("=" * 60)
 
-    platform_info = get_platform_info(args.target)
-    if args.target:
-        print(f"\nCross-compiling for: {args.target}")
-    print(f"Platform: {platform_info['system']} {platform_info['arch']}")
-    print(f"Extension type: {platform_info['ext']}")
+    # --- Universal multi-platform build ---
+    if args.universal:
+        zip_path = build_universal(args.version)
+        print("\n" + "=" * 60)
+        print("Universal build complete!")
+        print("=" * 60)
+        print(f"\nPackage: {zip_path}")
+        print("\nThis single ZIP works on:")
+        for tag in PLATFORM_MAP:
+            marker = "  ✓" if (NATIVE_DIR / tag).exists() else "  ✗"
+            print(f"  {marker} {tag}")
+        return
 
+    # --- Clean ---
     if args.clean:
         print("\nCleaning build artifacts...")
         clean_bundle_dir()
@@ -291,6 +473,13 @@ def main():
             zip_file.unlink()
         print("Done!")
         return
+
+    # --- Single-platform build (local dev) ---
+    platform_info = get_platform_info(args.target)
+    if args.target:
+        print(f"\nCross-compiling for: {args.target}")
+    print(f"Platform: {platform_info['system']} {platform_info['arch']}")
+    print(f"Extension type: {platform_info['ext']}")
 
     # Clean and prepare
     clean_bundle_dir()

@@ -207,8 +207,8 @@ class TestAlgorithmMeta:
         assert type(new) is SolweigAlgorithmBase
 
     def test_group_id(self, algo):
-        """Group ID is 'solweig'."""
-        assert algo.groupId() == "solweig"
+        """Group ID is empty (algorithms appear directly under provider)."""
+        assert algo.groupId() == ""
 
     def test_help_url(self, algo):
         """Help URL points to UMEP docs."""

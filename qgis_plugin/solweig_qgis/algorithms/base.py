@@ -48,12 +48,12 @@ class SolweigAlgorithmBase(QgsProcessingAlgorithm):
         return self.__class__()
 
     def group(self) -> str:
-        """Return algorithm group name."""
-        return self.tr("SOLWEIG")
+        """Return algorithm group name (empty = directly under provider)."""
+        return ""
 
     def groupId(self) -> str:
-        """Return algorithm group ID."""
-        return "solweig"
+        """Return algorithm group ID (empty = directly under provider)."""
+        return ""
 
     def helpUrl(self) -> str:
         """Return URL to algorithm documentation."""

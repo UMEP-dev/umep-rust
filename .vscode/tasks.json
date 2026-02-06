@@ -2,79 +2,60 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Build Plugin Bundle (native)",
+      "label": "QGIS: Build & Install",
       "type": "shell",
-      "command": "uv run python build_plugin.py",
+      "command": "uv run python build_plugin.py && ln -sfn ${workspaceFolder}/qgis_plugin/solweig_qgis ~/Library/Application\\ Support/QGIS/QGIS3/profiles/default/python/plugins/solweig_qgis",
       "options": {
         "cwd": "${workspaceFolder}/qgis_plugin"
       },
       "problemMatcher": [],
-      "detail": "Build abi3 wheel for native architecture"
-    },
-    {
-      "label": "Build Plugin Bundle (Intel Mac)",
-      "type": "shell",
-      "command": "uv run python build_plugin.py --target x86_64-apple-darwin",
-      "options": {
-        "cwd": "${workspaceFolder}/qgis_plugin"
-      },
-      "problemMatcher": [],
-      "detail": "Build abi3 wheel for Intel Mac (x86_64) - for Intel QGIS on Apple Silicon"
-    },
-    {
-      "label": "Setup QGIS Plugin (symlink)",
-      "type": "shell",
-      "command": "ln -sfn ${workspaceFolder}/qgis_plugin/solweig_qgis ~/Library/Application\\ Support/QGIS/QGIS3/profiles/default/python/plugins/solweig_qgis",
-      "problemMatcher": [],
-      "detail": "Create symlink to QGIS plugins folder for development"
-    },
-    {
-      "label": "Setup QGIS Development (Intel)",
-      "dependsOn": ["Build Plugin Bundle (Intel Mac)", "Setup QGIS Plugin (symlink)"],
-      "dependsOrder": "sequence",
-      "problemMatcher": [],
-      "detail": "Build x86_64 plugin and setup symlink for Intel QGIS",
+      "detail": "Build Intel plugin bundle + symlink to QGIS plugins folder",
       "group": {
         "kind": "build",
         "isDefault": true
       }
     },
     {
-      "label": "Build Plugin Package (ZIP - native)",
+      "label": "Build: Rust Extension (dev)",
       "type": "shell",
-      "command": "uv run python build_plugin.py --package",
+      "command": "uv run maturin develop --release",
+      "problemMatcher": [],
+      "detail": "Build Rust extension for local Python (tests, demos)"
+    },
+    {
+      "label": "Build: All Wheels (4 platforms)",
+      "type": "shell",
+      "command": "uv run maturin build --release --out dist --target x86_64-apple-darwin && uv run maturin build --release --out dist --target aarch64-apple-darwin",
+      "problemMatcher": [],
+      "detail": "Build macOS Intel + ARM64 wheels (Linux/Windows need CI)"
+    },
+    {
+      "label": "QGIS: Universal Package",
+      "type": "shell",
+      "command": "uv run python build_plugin.py --universal",
       "options": {
         "cwd": "${workspaceFolder}/qgis_plugin"
       },
       "problemMatcher": [],
-      "detail": "Build distributable plugin ZIP for native architecture"
+      "detail": "Create universal ZIP from all wheels in dist/"
     },
     {
-      "label": "Build Plugin Package (ZIP - Intel Mac)",
+      "label": "Test: All",
       "type": "shell",
-      "command": "uv run python build_plugin.py --package --target x86_64-apple-darwin",
-      "options": {
-        "cwd": "${workspaceFolder}/qgis_plugin"
-      },
+      "command": "uv run pytest tests/ -x -q",
       "problemMatcher": [],
-      "detail": "Build distributable plugin ZIP for Intel Mac (x86_64)"
+      "detail": "Run full test suite",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
     },
     {
-      "label": "Clean Plugin Build",
+      "label": "Verify: Full Project",
       "type": "shell",
-      "command": "uv run python build_plugin.py --clean",
-      "options": {
-        "cwd": "${workspaceFolder}/qgis_plugin"
-      },
+      "command": "uv run poe verify_project",
       "problemMatcher": [],
-      "detail": "Clean build artifacts (_bundled/, dist/, ZIPs)"
-    },
-    {
-      "label": "Build Rust Extension (dev only)",
-      "type": "shell",
-      "command": "uv run maturin develop",
-      "problemMatcher": [],
-      "detail": "Build Rust extension for local Python (not for QGIS)"
+      "detail": "Format, lint, typecheck, and test"
     }
   ]
 }

@@ -14,7 +14,6 @@ from qgis.core import (
     QgsProcessingOutputNumber,
     QgsProcessingParameterBoolean,
     QgsProcessingParameterFolderDestination,
-    QgsProcessingParameterNumber,
     QgsProcessingParameterRasterLayer,
 )
 
@@ -35,7 +34,6 @@ class SvfPreprocessingAlgorithm(SolweigAlgorithmBase):
     CDSM = "CDSM"
     DEM = "DEM"
     TDSM = "TDSM"
-    TRANS_VEG = "TRANS_VEG"
     RELATIVE_HEIGHTS = "RELATIVE_HEIGHTS"
     OUTPUT_DIR = "OUTPUT_DIR"
 
@@ -43,26 +41,29 @@ class SvfPreprocessingAlgorithm(SolweigAlgorithmBase):
         return "svf_preprocessing"
 
     def displayName(self) -> str:
-        return self.tr("Compute Sky View Factor")
+        return self.tr("Compute Sky View Factor (for anisotropic sky)")
 
     def shortHelpString(self) -> str:
         return self.tr(
             """Pre-compute Sky View Factor (SVF) arrays for SOLWEIG calculations.
 
 <b>Purpose:</b>
-SVF computation is computationally expensive. Pre-computing SVF allows
-reuse across multiple timesteps, providing significant speedup.
+Required for the <b>anisotropic sky model</b>. Without pre-computed SVF,
+calculations use the simpler isotropic sky model.
+
+Pre-computing SVF also speeds up repeated calculations (~200x faster
+per timestep when reusing cached SVF).
 
 <b>Inputs:</b>
 - DSM (required): Digital Surface Model
 - CDSM (optional): Canopy/vegetation heights
 - DEM (optional): Ground elevation
 - TDSM (optional): Trunk zone heights
-- Vegetation transmissivity: Default 0.03
 
 <b>Output:</b>
-A directory containing SVF arrays (svf.tif, svf_north.tif, etc.)
-that can be used by calculation algorithms.
+A directory containing SVF arrays (svf.tif, svf_north.tif, etc.).
+Pass this directory to the SOLWEIG Calculation algorithm via the
+"Pre-computed SVF directory" parameter.
 
 <b>Typical runtime:</b>
 - 1000x1000 grid: 30-120 seconds
@@ -70,10 +71,10 @@ that can be used by calculation algorithms.
         )
 
     def group(self) -> str:
-        return self.tr("SOLWEIG > Preprocessing")
+        return ""
 
     def groupId(self) -> str:
-        return "solweig_preprocessing"
+        return ""
 
     def initAlgorithm(self, config=None):
         """Define algorithm parameters."""
@@ -106,17 +107,6 @@ that can be used by calculation algorithms.
                 self.TDSM,
                 self.tr("Trunk zone DSM"),
                 optional=True,
-            )
-        )
-
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                self.TRANS_VEG,
-                self.tr("Vegetation transmissivity"),
-                type=QgsProcessingParameterNumber.Double,
-                defaultValue=0.03,
-                minValue=0.0,
-                maxValue=1.0,
             )
         )
 
@@ -195,7 +185,6 @@ that can be used by calculation algorithms.
             return {}
 
         # Get parameters
-        trans_veg = self.parameterAsDouble(parameters, self.TRANS_VEG, context)
         relative_heights = self.parameterAsBool(parameters, self.RELATIVE_HEIGHTS, context)
         output_dir = self.parameterAsString(parameters, self.OUTPUT_DIR, context)
 
@@ -216,10 +205,13 @@ that can be used by calculation algorithms.
         surface._geotransform = geotransform
         surface._crs_wkt = crs_wkt
 
-        # Preprocess heights if needed
+        # Preprocess heights if needed (converts relative → absolute)
         if relative_heights and (cdsm is not None or tdsm is not None):
             feedback.pushInfo("Converting relative heights to absolute...")
             surface.preprocess()
+            # Use preprocessed arrays (now absolute heights)
+            cdsm = surface.cdsm
+            tdsm = surface.tdsm
 
         if feedback.isCanceled():
             return {}
@@ -228,11 +220,35 @@ that can be used by calculation algorithms.
         feedback.setProgressText("Computing Sky View Factor (this may take a while)...")
         feedback.setProgress(20)
 
+        import os
+
+        import numpy as np
+        from solweig.rustalgos import skyview
+
+        use_veg = cdsm is not None
+        max_height = float(np.nanmax(dsm))
+        if use_veg and cdsm is not None:
+            max_height = max(max_height, float(np.nanmax(cdsm)))
+
+        cdsm_svf = cdsm.astype(np.float32) if cdsm is not None else np.zeros_like(dsm, dtype=np.float32)
+        if tdsm is not None:
+            tdsm_svf = tdsm.astype(np.float32)
+        elif cdsm is not None:
+            tdsm_svf = (cdsm * 0.25).astype(np.float32)
+        else:
+            tdsm_svf = np.zeros_like(dsm, dtype=np.float32)
+
         try:
-            # Use prepare() which computes walls and SVF
-            surface.prepare(
-                working_dir=output_dir,
-                trans_veg=trans_veg,
+            svf_result = skyview.calculate_svf(
+                dsm.astype(np.float32),
+                cdsm_svf,
+                tdsm_svf,
+                pixel_size,
+                use_veg,
+                max_height,
+                2,  # patch_option (153 patches)
+                3.0,  # min_sun_elev_deg
+                None,  # progress callback
             )
         except Exception as e:
             raise QgsProcessingException(f"SVF computation failed: {e}") from e
@@ -242,30 +258,78 @@ that can be used by calculation algorithms.
 
         feedback.setProgress(90)
 
-        # Save SVF arrays as GeoTIFFs for inspection
+        # Save SVF as svfs.zip (format expected by PrecomputedData.prepare())
         feedback.setProgressText("Saving SVF arrays...")
 
-        import os
+        import tempfile
+        import zipfile
 
-        if surface.svf is not None:
-            svf_arrays = {
-                "svf": surface.svf.svf,
-                "svf_north": surface.svf.svf_north,
-                "svf_east": surface.svf.svf_east,
-                "svf_south": surface.svf.svf_south,
-                "svf_west": surface.svf.svf_west,
-            }
+        svf_files = {
+            "svf.tif": np.array(svf_result.svf),
+            "svfN.tif": np.array(svf_result.svf_north),
+            "svfE.tif": np.array(svf_result.svf_east),
+            "svfS.tif": np.array(svf_result.svf_south),
+            "svfW.tif": np.array(svf_result.svf_west),
+            "svfveg.tif": np.array(svf_result.svf_veg) if use_veg else np.ones_like(np.array(svf_result.svf)),
+            "svfNveg.tif": np.array(svf_result.svf_veg_north) if use_veg else np.ones_like(np.array(svf_result.svf)),
+            "svfEveg.tif": np.array(svf_result.svf_veg_east) if use_veg else np.ones_like(np.array(svf_result.svf)),
+            "svfSveg.tif": np.array(svf_result.svf_veg_south) if use_veg else np.ones_like(np.array(svf_result.svf)),
+            "svfWveg.tif": np.array(svf_result.svf_veg_west) if use_veg else np.ones_like(np.array(svf_result.svf)),
+            "svfaveg.tif": np.array(svf_result.svf_veg_blocks_bldg_sh)
+            if use_veg
+            else np.ones_like(np.array(svf_result.svf)),
+            "svfNaveg.tif": np.array(svf_result.svf_veg_blocks_bldg_sh_north)
+            if use_veg
+            else np.ones_like(np.array(svf_result.svf)),
+            "svfEaveg.tif": np.array(svf_result.svf_veg_blocks_bldg_sh_east)
+            if use_veg
+            else np.ones_like(np.array(svf_result.svf)),
+            "svfSaveg.tif": np.array(svf_result.svf_veg_blocks_bldg_sh_south)
+            if use_veg
+            else np.ones_like(np.array(svf_result.svf)),
+            "svfWaveg.tif": np.array(svf_result.svf_veg_blocks_bldg_sh_west)
+            if use_veg
+            else np.ones_like(np.array(svf_result.svf)),
+        }
 
-            for name, arr in svf_arrays.items():
-                if arr is not None:
-                    out_path = os.path.join(output_dir, f"{name}.tif")
-                    self.save_georeferenced_output(
-                        array=arr,
-                        output_path=out_path,
-                        geotransform=geotransform,
-                        crs_wkt=crs_wkt,
-                        feedback=feedback,
-                    )
+        svf_zip_path = os.path.join(output_dir, "svfs.zip")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for filename, arr in svf_files.items():
+                tif_path = os.path.join(tmpdir, filename)
+                self.save_georeferenced_output(
+                    array=arr,
+                    output_path=tif_path,
+                    geotransform=geotransform,
+                    crs_wkt=crs_wkt,
+                    feedback=feedback,
+                )
+            with zipfile.ZipFile(svf_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for filename in svf_files:
+                    zf.write(os.path.join(tmpdir, filename), filename)
+
+        feedback.pushInfo(f"Saved SVF arrays: {svf_zip_path}")
+
+        # Save shadow matrices as shadowmats.npz (for anisotropic sky)
+        feedback.setProgressText("Saving shadow matrices...")
+
+        shmat = np.array(svf_result.bldg_sh_matrix)
+        vegshmat = np.array(svf_result.veg_sh_matrix)
+        vbshmat = np.array(svf_result.veg_blocks_bldg_sh_matrix)
+
+        # Convert to uint8 for compact storage (0.0-1.0 → 0-255)
+        shmat_u8 = (np.clip(shmat, 0, 1) * 255).astype(np.uint8)
+        vegshmat_u8 = (np.clip(vegshmat, 0, 1) * 255).astype(np.uint8)
+        vbshmat_u8 = (np.clip(vbshmat, 0, 1) * 255).astype(np.uint8)
+
+        shadow_path = os.path.join(output_dir, "shadowmats.npz")
+        np.savez_compressed(
+            shadow_path,
+            shadowmat=shmat_u8,
+            vegshadowmat=vegshmat_u8,
+            vbshmat=vbshmat_u8,
+        )
+
+        feedback.pushInfo(f"Saved shadow matrices: {shadow_path}")
 
         computation_time = time.time() - start_time
         feedback.setProgress(100)

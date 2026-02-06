@@ -328,7 +328,7 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     algorithm.addParameter(
         QgsProcessingParameterBoolean(
             "USE_ANISOTROPIC_SKY",
-            algorithm.tr("Use anisotropic sky model"),
+            algorithm.tr("Use anisotropic sky model (requires pre-computed SVF)"),
             defaultValue=False,
         )
     )
@@ -344,7 +344,7 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     algorithm.addParameter(
         QgsProcessingParameterFile(
             "SVF_DIR",
-            algorithm.tr("Pre-computed SVF directory (optional)"),
+            algorithm.tr("Pre-computed SVF directory (required for anisotropic sky)"),
             behavior=QgsProcessingParameterFile.Folder,
             optional=True,
         )

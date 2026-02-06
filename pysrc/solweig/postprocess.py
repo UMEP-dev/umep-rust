@@ -153,8 +153,10 @@ def compute_utci(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Find all tmrt_*.tif files
+    # Find tmrt_*.tif files (check tmrt/ subdirectory first, then flat layout)
     tmrt_files = sorted(tmrt_dir.glob("tmrt_*.tif"))
+    if not tmrt_files and (tmrt_dir / "tmrt").exists():
+        tmrt_files = sorted((tmrt_dir / "tmrt").glob("tmrt_*.tif"))
     if not tmrt_files:
         logger.warning(f"No tmrt_*.tif files found in {tmrt_dir}")
         return 0
@@ -259,8 +261,10 @@ def compute_pet(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Find all tmrt_*.tif files
+    # Find tmrt_*.tif files (check tmrt/ subdirectory first, then flat layout)
     tmrt_files = sorted(tmrt_dir.glob("tmrt_*.tif"))
+    if not tmrt_files and (tmrt_dir / "tmrt").exists():
+        tmrt_files = sorted((tmrt_dir / "tmrt").glob("tmrt_*.tif"))
     if not tmrt_files:
         logger.warning(f"No tmrt_*.tif files found in {tmrt_dir}")
         return 0

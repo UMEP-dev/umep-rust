@@ -18,14 +18,84 @@ from ..loaders import get_lc_properties_from_params
 from ..rustalgos import skyview
 from ..solweig_logging import get_logger
 from ..utils import extract_bounds, intersect_bounds, resample_to_grid
-from .precomputed import SvfArrays
+from .precomputed import ShadowArrays, SvfArrays
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
-    from .precomputed import ShadowArrays, SvfArrays
-
 logger = get_logger(__name__)
+
+
+def _save_svfs_zip(svf_data: SvfArrays, svf_cache_dir: Path, aligned_rasters: dict) -> None:
+    """Save SVF arrays as svfs.zip for PrecomputedData.prepare() compatibility."""
+    import tempfile
+    import zipfile
+
+    geotransform = aligned_rasters.get("dsm_transform")
+    crs_wkt = aligned_rasters.get("dsm_crs")
+
+    # If geotransform/CRS not available, skip zip (memmap still works)
+    if geotransform is None:
+        logger.debug("  Skipping svfs.zip (no geotransform available)")
+        return
+
+    svf_files = {
+        "svf.tif": svf_data.svf,
+        "svfN.tif": svf_data.svf_north,
+        "svfE.tif": svf_data.svf_east,
+        "svfS.tif": svf_data.svf_south,
+        "svfW.tif": svf_data.svf_west,
+        "svfveg.tif": svf_data.svf_veg,
+        "svfNveg.tif": svf_data.svf_veg_north,
+        "svfEveg.tif": svf_data.svf_veg_east,
+        "svfSveg.tif": svf_data.svf_veg_south,
+        "svfWveg.tif": svf_data.svf_veg_west,
+        "svfaveg.tif": svf_data.svf_aveg,
+        "svfNaveg.tif": svf_data.svf_aveg_north,
+        "svfEaveg.tif": svf_data.svf_aveg_east,
+        "svfSaveg.tif": svf_data.svf_aveg_south,
+        "svfWaveg.tif": svf_data.svf_aveg_west,
+    }
+
+    # Convert Affine to GDAL geotransform list if needed
+    if isinstance(geotransform, AffineClass):
+        geotransform = [geotransform.c, geotransform.a, geotransform.b, geotransform.f, geotransform.d, geotransform.e]
+
+    svf_zip_path = svf_cache_dir / "svfs.zip"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        for filename, arr in svf_files.items():
+            if arr is not None:
+                tif_path = str(Path(tmpdir) / filename)
+                io.save_raster(tif_path, arr, geotransform, crs_wkt)
+        with zipfile.ZipFile(str(svf_zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
+            for filename in svf_files:
+                tif_file = Path(tmpdir) / filename
+                if tif_file.exists():
+                    zf.write(str(tif_file), filename)
+
+    logger.info(f"  ✓ SVF saved as {svf_zip_path}")
+
+
+def _save_shadow_matrices(svf_result, svf_cache_dir: Path) -> None:
+    """Save shadow matrices as shadowmats.npz for anisotropic sky model."""
+    shmat = np.array(svf_result.bldg_sh_matrix)
+    vegshmat = np.array(svf_result.veg_sh_matrix)
+    vbshmat = np.array(svf_result.veg_blocks_bldg_sh_matrix)
+
+    # Convert to uint8 for compact storage (0.0-1.0 → 0-255)
+    shmat_u8 = (np.clip(shmat, 0, 1) * 255).astype(np.uint8)
+    vegshmat_u8 = (np.clip(vegshmat, 0, 1) * 255).astype(np.uint8)
+    vbshmat_u8 = (np.clip(vbshmat, 0, 1) * 255).astype(np.uint8)
+
+    shadow_path = svf_cache_dir / "shadowmats.npz"
+    np.savez_compressed(
+        str(shadow_path),
+        shadowmat=shmat_u8,
+        vegshadowmat=vegshmat_u8,
+        vbshmat=vbshmat_u8,
+    )
+
+    logger.info(f"  ✓ Shadow matrices saved as {shadow_path}")
 
 
 @dataclass
@@ -849,6 +919,11 @@ class SurfaceData:
         """
         Compute SVF from DSM/CDSM/TDSM and cache to working_dir.
 
+        Saves three cache formats:
+        - memmap/ for fast reload in Python API
+        - svfs.zip for PrecomputedData.prepare() compatibility
+        - shadowmats.npz for anisotropic sky model
+
         Args:
             surface_data: SurfaceData instance to update with computed SVF.
             aligned_rasters: Dictionary with aligned raster data.
@@ -898,6 +973,8 @@ class SurfaceData:
             None,  # progress callback
         )
 
+        ones = np.ones_like(dsm_arr, dtype=np.float32)
+
         # Create SvfArrays from result
         svf_data = SvfArrays(
             svf=np.array(svf_result.svf),
@@ -905,26 +982,16 @@ class SurfaceData:
             svf_east=np.array(svf_result.svf_east),
             svf_south=np.array(svf_result.svf_south),
             svf_west=np.array(svf_result.svf_west),
-            svf_veg=np.array(svf_result.svf_veg) if use_veg else np.ones_like(dsm_arr, dtype=np.float32),
-            svf_veg_north=np.array(svf_result.svf_veg_north) if use_veg else np.ones_like(dsm_arr, dtype=np.float32),
-            svf_veg_east=np.array(svf_result.svf_veg_east) if use_veg else np.ones_like(dsm_arr, dtype=np.float32),
-            svf_veg_south=np.array(svf_result.svf_veg_south) if use_veg else np.ones_like(dsm_arr, dtype=np.float32),
-            svf_veg_west=np.array(svf_result.svf_veg_west) if use_veg else np.ones_like(dsm_arr, dtype=np.float32),
-            svf_aveg=np.array(svf_result.svf_veg_blocks_bldg_sh)
-            if use_veg
-            else np.ones_like(dsm_arr, dtype=np.float32),
-            svf_aveg_north=np.array(svf_result.svf_veg_blocks_bldg_sh_north)
-            if use_veg
-            else np.ones_like(dsm_arr, dtype=np.float32),
-            svf_aveg_east=np.array(svf_result.svf_veg_blocks_bldg_sh_east)
-            if use_veg
-            else np.ones_like(dsm_arr, dtype=np.float32),
-            svf_aveg_south=np.array(svf_result.svf_veg_blocks_bldg_sh_south)
-            if use_veg
-            else np.ones_like(dsm_arr, dtype=np.float32),
-            svf_aveg_west=np.array(svf_result.svf_veg_blocks_bldg_sh_west)
-            if use_veg
-            else np.ones_like(dsm_arr, dtype=np.float32),
+            svf_veg=np.array(svf_result.svf_veg) if use_veg else ones.copy(),
+            svf_veg_north=np.array(svf_result.svf_veg_north) if use_veg else ones.copy(),
+            svf_veg_east=np.array(svf_result.svf_veg_east) if use_veg else ones.copy(),
+            svf_veg_south=np.array(svf_result.svf_veg_south) if use_veg else ones.copy(),
+            svf_veg_west=np.array(svf_result.svf_veg_west) if use_veg else ones.copy(),
+            svf_aveg=np.array(svf_result.svf_veg_blocks_bldg_sh) if use_veg else ones.copy(),
+            svf_aveg_north=np.array(svf_result.svf_veg_blocks_bldg_sh_north) if use_veg else ones.copy(),
+            svf_aveg_east=np.array(svf_result.svf_veg_blocks_bldg_sh_east) if use_veg else ones.copy(),
+            svf_aveg_south=np.array(svf_result.svf_veg_blocks_bldg_sh_south) if use_veg else ones.copy(),
+            svf_aveg_west=np.array(svf_result.svf_veg_blocks_bldg_sh_west) if use_veg else ones.copy(),
         )
 
         # Cache to working_dir for future reuse
@@ -938,8 +1005,25 @@ class SurfaceData:
         memmap_dir = svf_cache_dir / "memmap"
         svf_data.to_memmap(memmap_dir, metadata=metadata)
 
+        # Save svfs.zip (for PrecomputedData.prepare() / QGIS plugin compatibility)
+        _save_svfs_zip(svf_data, svf_cache_dir, aligned_rasters)
+
+        # Save shadow matrices as shadowmats.npz (for anisotropic sky model)
+        _save_shadow_matrices(svf_result, svf_cache_dir)
+
         # Store on surface_data for immediate use
         surface_data.svf = svf_data
+
+        # Also store shadow matrices for anisotropic sky
+        shmat = np.array(svf_result.bldg_sh_matrix)
+        vegshmat = np.array(svf_result.veg_sh_matrix)
+        vbshmat = np.array(svf_result.veg_blocks_bldg_sh_matrix)
+        surface_data.shadow_matrices = ShadowArrays(
+            _shmat_u8=(np.clip(shmat, 0, 1) * 255).astype(np.uint8),
+            _vegshmat_u8=(np.clip(vegshmat, 0, 1) * 255).astype(np.uint8),
+            _vbshmat_u8=(np.clip(vbshmat, 0, 1) * 255).astype(np.uint8),
+        )
+
         logger.info(f"  ✓ SVF computed and cached to {svf_cache_dir}")
 
     def preprocess(self) -> None:

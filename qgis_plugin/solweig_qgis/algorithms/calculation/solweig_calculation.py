@@ -110,10 +110,10 @@ UTCI/PET results are saved in subdirectories.
         )
 
     def group(self) -> str:
-        return self.tr("SOLWEIG")
+        return ""
 
     def groupId(self) -> str:
-        return "solweig"
+        return ""
 
     def initAlgorithm(self, config=None):
         """Define algorithm parameters."""
@@ -318,8 +318,8 @@ UTCI/PET results are saved in subdirectories.
 
         # Step 4: Get options
         human = create_human_params_from_parameters(parameters)
-        use_anisotropic_sky = parameters.get("USE_ANISOTROPIC_SKY", False)
-        conifer = parameters.get("CONIFER", False)
+        use_anisotropic_sky = self.parameterAsBool(parameters, "USE_ANISOTROPIC_SKY", context)
+        conifer = self.parameterAsBool(parameters, "CONIFER", context)
         output_dir = self.parameterAsString(parameters, "OUTPUT_DIR", context)
 
         # Parse output components
@@ -334,7 +334,7 @@ UTCI/PET results are saved in subdirectories.
         if svf_dir:
             feedback.pushInfo(f"Loading pre-computed SVF from {svf_dir}")
             try:
-                precomputed = solweig.PrecomputedData.load(svf_dir=svf_dir)
+                precomputed = solweig.PrecomputedData.prepare(svf_dir=svf_dir)
             except Exception as e:
                 feedback.reportError(
                     f"Could not load SVF from {svf_dir}: {e}",
@@ -353,6 +353,20 @@ UTCI/PET results are saved in subdirectories.
 
         if feedback.isCanceled():
             return {}
+
+        # Auto-fallback: anisotropic sky requires precomputed shadow matrices
+        if use_anisotropic_sky:
+            has_shadow = (precomputed is not None and precomputed.shadow_matrices is not None) or (
+                surface.shadow_matrices is not None
+            )
+            if not has_shadow:
+                feedback.reportError(
+                    "Anisotropic sky requires pre-computed SVF with shadow matrices. "
+                    "Falling back to isotropic sky model. To use anisotropic sky, "
+                    "first run 'Compute Sky View Factor' and provide the SVF directory.",
+                    fatalError=False,
+                )
+                use_anisotropic_sky = False
 
         # Step 5: Validate inputs
         feedback.setProgressText("Validating inputs...")
@@ -441,7 +455,7 @@ UTCI/PET results are saved in subdirectories.
 
         # Step 8: Add first Tmrt to canvas (single timestep only)
         if is_single:
-            tmrt_files = sorted(Path(output_dir).glob("tmrt_*.tif"))
+            tmrt_files = sorted(Path(output_dir, "tmrt").glob("tmrt_*.tif"))
             if tmrt_files:
                 timestamp_str = weather_series[0].datetime.strftime("%Y-%m-%d %H:%M")
                 self.add_raster_to_canvas(
@@ -499,13 +513,15 @@ UTCI/PET results are saved in subdirectories.
 
         feedback.setProgress(80)
 
-        # Save selected outputs to folder
+        # Save selected outputs to component subdirectories
         timestamp = weather.datetime.strftime("%Y%m%d_%H%M")
         for component in selected_outputs:
             if hasattr(result, component):
                 array = getattr(result, component)
                 if array is not None:
-                    filepath = os.path.join(output_dir, f"{component}_{timestamp}.tif")
+                    comp_dir = os.path.join(output_dir, component)
+                    os.makedirs(comp_dir, exist_ok=True)
+                    filepath = os.path.join(comp_dir, f"{component}_{timestamp}.tif")
                     self.save_georeferenced_output(
                         array=array,
                         output_path=filepath,
@@ -576,9 +592,11 @@ UTCI/PET results are saved in subdirectories.
 
         feedback.setProgress(80)
 
-        # Save tmrt output
+        # Save tmrt output in subdirectory
         timestamp = weather.datetime.strftime("%Y%m%d_%H%M")
-        filepath = os.path.join(output_dir, f"tmrt_{timestamp}.tif")
+        tmrt_dir = os.path.join(output_dir, "tmrt")
+        os.makedirs(tmrt_dir, exist_ok=True)
+        filepath = os.path.join(tmrt_dir, f"tmrt_{timestamp}.tif")
         self.save_georeferenced_output(
             array=result.tmrt,
             output_path=filepath,
@@ -637,9 +655,11 @@ UTCI/PET results are saved in subdirectories.
 
         utci_dir = os.path.join(output_dir, "utci")
 
+        tmrt_dir = os.path.join(output_dir, "tmrt")
+
         try:
             n_files = solweig.compute_utci(
-                tmrt_dir=output_dir,
+                tmrt_dir=tmrt_dir,
                 weather_series=weather_series,
                 output_dir=utci_dir,
             )
@@ -661,11 +681,12 @@ UTCI/PET results are saved in subdirectories.
         estimated_time = len(weather_series) * 0.25
         feedback.pushInfo(f"Estimated time: {estimated_time:.0f}s ({len(weather_series)} timesteps)")
 
+        tmrt_dir = os.path.join(output_dir, "tmrt")
         pet_dir = os.path.join(output_dir, "pet")
 
         try:
             n_files = solweig.compute_pet(
-                tmrt_dir=output_dir,
+                tmrt_dir=tmrt_dir,
                 weather_series=weather_series,
                 output_dir=pet_dir,
                 human=human,

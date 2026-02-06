@@ -712,8 +712,6 @@ def load_raster(
         rast_arr[rast_arr == no_data_val] = np.nan
     if rast_arr.size == 0:
         raise ValueError("Raster array is empty after loading/cropping")
-    if rast_arr.min() < 0:
-        raise ValueError("Raster contains negative values")
     return rast_arr, trf_arr, crs_wkt, no_data_val
 
 
