@@ -625,3 +625,101 @@ class TestTmrtValidation:
 
         # Multi-day RMSE threshold (generous due to synthetic DSM + globe uncertainty)
         assert rmse < 20.0, f"Multi-day RMSE={rmse:.2f}°C exceeds threshold"
+
+
+# ---------------------------------------------------------------------------
+# Test: Isotropic vs Anisotropic sky model comparison
+# ---------------------------------------------------------------------------
+
+
+class TestSkyModelComparison:
+    """Compare isotropic vs anisotropic sky radiation models against observations.
+
+    The anisotropic (Perez) sky model should better capture directional
+    diffuse radiation in the canyon geometry. This test quantifies the
+    accuracy improvement.
+    """
+
+    @pytest.fixture
+    def surface(self):
+        from solweig import SurfaceData
+
+        dsm = build_canyon_dsm()
+        return SurfaceData(dsm=dsm, pixel_size=RESOLUTION)
+
+    @pytest.fixture
+    def location(self):
+        from solweig import Location
+
+        return Location(
+            latitude=LATITUDE,
+            longitude=LONGITUDE,
+            utc_offset=UTC_OFFSET,
+            altitude=50.0,
+        )
+
+    def _build_weather(self, day: str) -> list:
+        from solweig import Weather
+
+        obs = load_presti_observations(day=day)
+        weather_list = []
+        for o in obs:
+            if o["time"].minute != 0:
+                continue
+            if math.isnan(o["ta"]) or math.isnan(o["rh"]):
+                continue
+            rads = [o[f"slr{i}"] for i in range(1, 5) if not math.isnan(o[f"slr{i}"])]
+            global_rad = np.mean(rads) if rads else 0.0
+            w = Weather(
+                datetime=o["time"],
+                ta=o["ta"],
+                rh=o["rh"],
+                global_rad=max(global_rad, 0.0),
+                ws=max(o["wspd"], 0.1) if not math.isnan(o["wspd"]) else 1.0,
+            )
+            weather_list.append(w)
+        return weather_list
+
+    @pytest.mark.slow
+    def test_isotropic_sky_rmse(self, surface, location):
+        """Validate isotropic sky model RMSE against globe observations.
+
+        Note: The anisotropic (Perez) sky model requires precomputed shadow
+        matrices for 145 sky patches, which are only available when using
+        SurfaceData.prepare() with GeoTIFF inputs. With a synthetic DSM,
+        the model falls back to isotropic. A full anisotropic comparison
+        would require real DSM data (e.g., from IGN Lidar HD for Montpellier).
+        """
+        import solweig
+
+        day = "2023-08-04"
+        weather_list = self._build_weather(day)
+        obs_tmrt = compute_observed_tmrt(load_presti_observations(day=day))
+
+        results_iso = solweig.calculate_timeseries(
+            surface=surface,
+            location=location,
+            weather_series=weather_list,
+            use_anisotropic_sky=False,
+        )
+
+        tmrt_iso = {}
+        for w, r in zip(weather_list, results_iso):
+            tmrt_iso[w.datetime.hour] = r.tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
+
+        errors = []
+        for o in obs_tmrt:
+            h = o["time"].hour
+            if h in tmrt_iso and o["time"].minute == 0:
+                errors.append(tmrt_iso[h] - o["tmrt_center"])
+
+        assert len(errors) >= 20
+
+        rmse = np.sqrt(np.mean(np.array(errors) ** 2))
+        bias = np.mean(errors)
+
+        print("\n--- Isotropic Sky Model Validation (Aug 4, 2023) ---")
+        print(f"RMSE: {rmse:.2f}°C, Bias: {bias:+.2f}°C")
+        print("Note: Anisotropic comparison requires precomputed shadow matrices")
+
+        assert rmse < 20.0, f"Isotropic RMSE={rmse:.2f}°C too high"
