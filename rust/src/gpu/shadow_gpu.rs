@@ -1,6 +1,5 @@
 use ndarray::{Array2, ArrayView2};
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 /// Result struct for GPU shadow calculations
 pub struct GpuShadowResult {
@@ -15,6 +14,42 @@ pub struct GpuShadowResult {
     pub face_sun: Option<Array2<f32>>,
 }
 
+/// Cached GPU buffers for shadow calculations.
+/// Reused across calls when grid dimensions remain constant.
+struct CachedBuffers {
+    rows: usize,
+    cols: usize,
+    // Binding 0: Params (UNIFORM | COPY_DST)
+    params_buffer: wgpu::Buffer,
+    // Binding 1: DSM input (STORAGE | COPY_DST)
+    dsm_buffer: wgpu::Buffer,
+    // Binding 2: Building shadow output (STORAGE | COPY_SRC)
+    bldg_shadow_buffer: wgpu::Buffer,
+    // Binding 3: Propagated building height (STORAGE | COPY_SRC | COPY_DST)
+    propagated_bldg_height_buffer: wgpu::Buffer,
+    // Bindings 4-6: Vegetation inputs (STORAGE | COPY_DST)
+    veg_canopy_buffer: wgpu::Buffer,
+    veg_trunk_buffer: wgpu::Buffer,
+    bush_buffer: wgpu::Buffer,
+    // Bindings 7-9: Vegetation outputs (STORAGE | COPY_SRC)
+    veg_shadow_buffer: wgpu::Buffer,
+    propagated_veg_height_buffer: wgpu::Buffer,
+    veg_blocks_bldg_shadow_buffer: wgpu::Buffer,
+    // Bindings 10-11: Wall inputs (STORAGE | COPY_DST)
+    walls_buffer: wgpu::Buffer,
+    aspect_buffer: wgpu::Buffer,
+    // Bindings 12-16: Wall outputs (STORAGE | COPY_SRC)
+    wall_sh_buffer: wgpu::Buffer,
+    wall_sun_buffer: wgpu::Buffer,
+    wall_sh_veg_buffer: wgpu::Buffer,
+    face_sh_buffer: wgpu::Buffer,
+    face_sun_buffer: wgpu::Buffer,
+    // Staging buffer for GPU -> CPU readback (MAP_READ | COPY_DST)
+    staging_buffer: wgpu::Buffer,
+    // Bind group (references all buffer handles)
+    bind_group: wgpu::BindGroup,
+}
+
 /// GPU context for shadow calculations - maintains GPU resources across multiple calls
 pub struct ShadowGpuContext {
     device: Arc<wgpu::Device>,
@@ -22,6 +57,28 @@ pub struct ShadowGpuContext {
     pipeline: wgpu::ComputePipeline,
     wall_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
+    /// Cached buffers reused across calls with same grid dimensions
+    cached: std::sync::Mutex<Option<CachedBuffers>>,
+}
+
+/// Uniform buffer struct for shadow shader parameters
+#[repr(C)]
+#[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
+struct ShadowParams {
+    rows: u32,
+    cols: u32,
+    azimuth_rad: f32,
+    altitude_rad: f32,
+    sin_azimuth: f32,
+    cos_azimuth: f32,
+    tan_azimuth: f32,
+    tan_altitude_by_scale: f32,
+    scale: f32,
+    max_index: f32,
+    max_local_dsm_ht: f32,
+    has_veg: u32,
+    has_walls: u32,
+    _padding: u32,
 }
 
 impl ShadowGpuContext {
@@ -68,187 +125,188 @@ impl ShadowGpuContext {
         });
 
         // Create bind group layout for all shadow types
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Shadow Bind Group Layout"),
-            entries: &[
-                // Binding 0: Params buffer (uniforms)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Shadow Bind Group Layout"),
+                entries: &[
+                    // Binding 0: Params buffer (uniforms)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Binding 1: DSM input (read-only)
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // Binding 1: DSM input (read-only)
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Binding 2: Building shadow output
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // Binding 2: Building shadow output
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Binding 3: Propagated building height buffer
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // Binding 3: Propagated building height buffer
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Bindings 4-9: Vegetation inputs and outputs
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // Bindings 4-9: Vegetation inputs and outputs
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 4,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 6,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 6,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 7,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 7,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 8,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 8,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 9,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 9,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                // Bindings 10-16: Wall inputs and outputs
-                wgpu::BindGroupLayoutEntry {
-                    binding: 10,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    // Bindings 10-16: Wall inputs and outputs
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 10,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 11,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 11,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 12,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 12,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 13,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 13,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 14,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 14,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 15,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 15,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 16,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 16,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Shadow Pipeline Layout"),
@@ -280,263 +338,63 @@ impl ShadowGpuContext {
             pipeline,
             wall_pipeline,
             bind_group_layout,
+            cached: std::sync::Mutex::new(None),
         })
     }
 
-    /// Optimized version accepting ArrayView to avoid unnecessary copies
-    #[allow(clippy::too_many_arguments)]
-    pub fn compute_all_shadows_view(
-        &self,
-        dsm: ArrayView2<f32>,
-        veg_canopy_dsm_opt: Option<ArrayView2<f32>>,
-        veg_trunk_dsm_opt: Option<ArrayView2<f32>>,
-        bush_opt: Option<ArrayView2<f32>>,
-        walls_opt: Option<ArrayView2<f32>>,
-        aspect_opt: Option<ArrayView2<f32>>,
-        azimuth_deg: f32,
-        altitude_deg: f32,
-        scale: f32,
-        max_local_dsm_ht: f32,
-        min_sun_elev_deg: f32,
-    ) -> Result<GpuShadowResult, String> {
-        let (rows, cols) = dsm.dim();
+    /// Allocate a fresh set of GPU buffers for the given grid dimensions.
+    fn allocate_buffers(&self, rows: usize, cols: usize) -> CachedBuffers {
         let total_pixels = rows * cols;
-
-        // Check if vegetation inputs are provided
-        let has_veg =
-            veg_canopy_dsm_opt.is_some() && veg_trunk_dsm_opt.is_some() && bush_opt.is_some();
-        let has_walls = walls_opt.is_some() && aspect_opt.is_some();
-
-        // Helper to get contiguous slice or allocate temp buffer
-        let get_slice = |view: ArrayView2<f32>| -> Vec<f32> {
-            if view.is_standard_layout() {
-                view.as_slice().unwrap().to_vec()
-            } else {
-                view.iter().copied().collect()
-            }
-        };
-
-        // Use slice directly when contiguous, otherwise allocate
-        let dsm_data = get_slice(dsm);
-        let veg_canopy_data = veg_canopy_dsm_opt
-            .map(get_slice)
-            .unwrap_or_else(|| vec![0.0; total_pixels]);
-        let veg_trunk_data = veg_trunk_dsm_opt
-            .map(get_slice)
-            .unwrap_or_else(|| vec![0.0; total_pixels]);
-        let bush_data = bush_opt
-            .map(get_slice)
-            .unwrap_or_else(|| vec![0.0; total_pixels]);
-        let walls_data = walls_opt
-            .map(get_slice)
-            .unwrap_or_else(|| vec![0.0; total_pixels]);
-        let aspect_data = aspect_opt
-            .map(get_slice)
-            .unwrap_or_else(|| vec![0.0; total_pixels]);
-
-        // Precompute trigonometric values
-        let azimuth_rad = azimuth_deg.to_radians();
-        let altitude_rad = altitude_deg.to_radians();
-        let sin_azimuth = azimuth_rad.sin();
-        let cos_azimuth = azimuth_rad.cos();
-        let tan_azimuth = azimuth_rad.tan();
-        let tan_altitude_by_scale = altitude_rad.tan() / scale;
-        let min_sun_elev_rad = min_sun_elev_deg.to_radians();
-        let max_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
-        let max_index = (max_reach_m / scale).ceil();
-
-        // Create uniform buffer with parameters
-        #[repr(C)]
-        #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-        struct ShadowParams {
-            rows: u32,
-            cols: u32,
-            azimuth_rad: f32,
-            altitude_rad: f32,
-            sin_azimuth: f32,
-            cos_azimuth: f32,
-            tan_azimuth: f32,
-            tan_altitude_by_scale: f32,
-            scale: f32,
-            max_index: f32,
-            max_local_dsm_ht: f32,
-            has_veg: u32,
-            has_walls: u32,
-            _padding: u32,
-        }
-
-        let params = ShadowParams {
-            rows: rows as u32,
-            cols: cols as u32,
-            azimuth_rad,
-            altitude_rad,
-            sin_azimuth,
-            cos_azimuth,
-            tan_azimuth,
-            tan_altitude_by_scale,
-            scale,
-            max_index,
-            max_local_dsm_ht,
-            has_veg: if has_veg { 1 } else { 0 },
-            has_walls: if has_walls { 1 } else { 0 },
-            _padding: 0,
-        };
-
-        // Create GPU buffers
         let buffer_size = (total_pixels * std::mem::size_of::<f32>()) as u64;
+        let params_size = std::mem::size_of::<ShadowParams>() as u64;
 
-        let params_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Shadow Params Buffer"),
-                contents: bytemuck::cast_slice(&[params]),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            });
+        // Helper to create a storage buffer with given usage flags
+        let make_buffer = |label: &str, size: u64, usage: wgpu::BufferUsages| -> wgpu::Buffer {
+            self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
 
-        // Binding 1: DSM
-        let dsm_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("DSM Buffer"),
-                contents: bytemuck::cast_slice(&dsm_data),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
+        let input_usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;
+        let output_usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC;
+        let working_usage = wgpu::BufferUsages::STORAGE
+            | wgpu::BufferUsages::COPY_SRC
+            | wgpu::BufferUsages::COPY_DST;
 
-        // Binding 2: Building shadow output
-        let bldg_shadow_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Building Shadow Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
+        let params_buffer = make_buffer(
+            "Shadow Params Buffer",
+            params_size,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        let dsm_buffer = make_buffer("DSM Buffer", buffer_size, input_usage);
+        let bldg_shadow_buffer = make_buffer("Building Shadow Buffer", buffer_size, output_usage);
+        let propagated_bldg_height_buffer =
+            make_buffer("Propagated Building Height Buffer", buffer_size, working_usage);
+        let veg_canopy_buffer = make_buffer("Veg Canopy Buffer", buffer_size, input_usage);
+        let veg_trunk_buffer = make_buffer("Veg Trunk Buffer", buffer_size, input_usage);
+        let bush_buffer = make_buffer("Bush Buffer", buffer_size, input_usage);
+        let veg_shadow_buffer = make_buffer("Veg Shadow Buffer", buffer_size, output_usage);
+        let propagated_veg_height_buffer =
+            make_buffer("Propagated Veg Height Buffer", buffer_size, working_usage);
+        let veg_blocks_bldg_shadow_buffer =
+            make_buffer("Veg Blocks Bldg Shadow Buffer", buffer_size, output_usage);
+        let walls_buffer = make_buffer("Walls Buffer", buffer_size, input_usage);
+        let aspect_buffer = make_buffer("Aspect Buffer", buffer_size, input_usage);
+        let wall_sh_buffer = make_buffer("Wall Shadow Buffer", buffer_size, output_usage);
+        let wall_sun_buffer = make_buffer("Wall Sun Buffer", buffer_size, output_usage);
+        let wall_sh_veg_buffer = make_buffer("Wall Shadow Veg Buffer", buffer_size, output_usage);
+        let face_sh_buffer = make_buffer("Face Shadow Buffer", buffer_size, output_usage);
+        let face_sun_buffer = make_buffer("Face Sun Buffer", buffer_size, output_usage);
 
-        // Binding 3: Propagated building height
-        let propagated_bldg_height_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Propagated Building Height Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        self.queue.write_buffer(
-            &propagated_bldg_height_buffer,
-            0,
-            bytemuck::cast_slice(&dsm_data),
+        let staging_buffer = make_buffer(
+            "Staging Buffer",
+            buffer_size * 10,
+            wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
 
-        // Bindings 4-6: Vegetation input buffers
-        let veg_canopy_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Veg Canopy Buffer"),
-                contents: bytemuck::cast_slice(&veg_canopy_data),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
-
-        let veg_trunk_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Veg Trunk Buffer"),
-                contents: bytemuck::cast_slice(&veg_trunk_data),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
-
-        let bush_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Bush Buffer"),
-                contents: bytemuck::cast_slice(&bush_data),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
-
-        // Bindings 7-9: Vegetation output buffers
-        let veg_shadow_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Veg Shadow Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let propagated_veg_height_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Propagated Veg Height Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_SRC
-                | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        if has_veg {
-            self.queue.write_buffer(
-                &propagated_veg_height_buffer,
-                0,
-                bytemuck::cast_slice(&veg_canopy_data),
-            );
-        }
-
-        let veg_blocks_bldg_shadow_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Veg Blocks Bldg Shadow Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        // Bindings 10-11: Wall input buffers
-        let walls_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Walls Buffer"),
-                contents: bytemuck::cast_slice(&walls_data),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
-
-        let aspect_buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Aspect Buffer"),
-                contents: bytemuck::cast_slice(&aspect_data),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            });
-
-        // Bindings 12-16: Wall output buffers
-        let wall_sh_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Wall Shadow Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let wall_sun_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Wall Sun Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let wall_sh_veg_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Wall Shadow Veg Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let face_sh_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Face Shadow Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        let face_sun_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Face Sun Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-
-        // Create bind group with all buffers
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Shadow Bind Group"),
             layout: &self.bind_group_layout,
@@ -612,6 +470,182 @@ impl ShadowGpuContext {
             ],
         });
 
+        eprintln!(
+            "[GPU] Allocated buffer cache for {}x{} grid ({:.1} MB)",
+            rows,
+            cols,
+            (buffer_size * 17 + buffer_size * 10) as f64 / 1_048_576.0
+        );
+
+        CachedBuffers {
+            rows,
+            cols,
+            params_buffer,
+            dsm_buffer,
+            bldg_shadow_buffer,
+            propagated_bldg_height_buffer,
+            veg_canopy_buffer,
+            veg_trunk_buffer,
+            bush_buffer,
+            veg_shadow_buffer,
+            propagated_veg_height_buffer,
+            veg_blocks_bldg_shadow_buffer,
+            walls_buffer,
+            aspect_buffer,
+            wall_sh_buffer,
+            wall_sun_buffer,
+            wall_sh_veg_buffer,
+            face_sh_buffer,
+            face_sun_buffer,
+            staging_buffer,
+            bind_group,
+        }
+    }
+
+    /// Optimized version accepting ArrayView to avoid unnecessary copies
+    #[allow(clippy::too_many_arguments)]
+    pub fn compute_all_shadows_view(
+        &self,
+        dsm: ArrayView2<f32>,
+        veg_canopy_dsm_opt: Option<ArrayView2<f32>>,
+        veg_trunk_dsm_opt: Option<ArrayView2<f32>>,
+        bush_opt: Option<ArrayView2<f32>>,
+        walls_opt: Option<ArrayView2<f32>>,
+        aspect_opt: Option<ArrayView2<f32>>,
+        azimuth_deg: f32,
+        altitude_deg: f32,
+        scale: f32,
+        max_local_dsm_ht: f32,
+        min_sun_elev_deg: f32,
+    ) -> Result<GpuShadowResult, String> {
+        let (rows, cols) = dsm.dim();
+        let total_pixels = rows * cols;
+
+        // Check if vegetation inputs are provided
+        let has_veg =
+            veg_canopy_dsm_opt.is_some() && veg_trunk_dsm_opt.is_some() && bush_opt.is_some();
+        let has_walls = walls_opt.is_some() && aspect_opt.is_some();
+
+        // Helper to get contiguous slice or allocate temp buffer
+        let get_slice = |view: ArrayView2<f32>| -> Vec<f32> {
+            if view.is_standard_layout() {
+                view.as_slice().unwrap().to_vec()
+            } else {
+                view.iter().copied().collect()
+            }
+        };
+
+        // Use slice directly when contiguous, otherwise allocate
+        let dsm_data = get_slice(dsm);
+        let veg_canopy_data = veg_canopy_dsm_opt
+            .map(get_slice)
+            .unwrap_or_else(|| vec![0.0; total_pixels]);
+        let veg_trunk_data = veg_trunk_dsm_opt
+            .map(get_slice)
+            .unwrap_or_else(|| vec![0.0; total_pixels]);
+        let bush_data = bush_opt
+            .map(get_slice)
+            .unwrap_or_else(|| vec![0.0; total_pixels]);
+        let walls_data = walls_opt
+            .map(get_slice)
+            .unwrap_or_else(|| vec![0.0; total_pixels]);
+        let aspect_data = aspect_opt
+            .map(get_slice)
+            .unwrap_or_else(|| vec![0.0; total_pixels]);
+
+        // Precompute trigonometric values
+        let azimuth_rad = azimuth_deg.to_radians();
+        let altitude_rad = altitude_deg.to_radians();
+        let sin_azimuth = azimuth_rad.sin();
+        let cos_azimuth = azimuth_rad.cos();
+        let tan_azimuth = azimuth_rad.tan();
+        let tan_altitude_by_scale = altitude_rad.tan() / scale;
+        let min_sun_elev_rad = min_sun_elev_deg.to_radians();
+        let max_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+        let max_index = (max_reach_m / scale).ceil();
+
+        let params = ShadowParams {
+            rows: rows as u32,
+            cols: cols as u32,
+            azimuth_rad,
+            altitude_rad,
+            sin_azimuth,
+            cos_azimuth,
+            tan_azimuth,
+            tan_altitude_by_scale,
+            scale,
+            max_index,
+            max_local_dsm_ht,
+            has_veg: if has_veg { 1 } else { 0 },
+            has_walls: if has_walls { 1 } else { 0 },
+            _padding: 0,
+        };
+
+        // Get or create cached buffers for this grid size
+        let mut cache_guard = self
+            .cached
+            .lock()
+            .map_err(|e| format!("Failed to lock buffer cache: {}", e))?;
+
+        let needs_realloc = match cache_guard.as_ref() {
+            Some(c) => c.rows != rows || c.cols != cols,
+            None => true,
+        };
+        if needs_realloc {
+            *cache_guard = Some(self.allocate_buffers(rows, cols));
+        }
+
+        let buffers = cache_guard
+            .as_ref()
+            .ok_or_else(|| "Buffer cache unexpectedly empty".to_string())?;
+
+        let buffer_size = (total_pixels * std::mem::size_of::<f32>()) as u64;
+
+        // Write input data into cached buffers
+        self.queue.write_buffer(
+            &buffers.params_buffer,
+            0,
+            bytemuck::cast_slice(&[params]),
+        );
+        self.queue
+            .write_buffer(&buffers.dsm_buffer, 0, bytemuck::cast_slice(&dsm_data));
+        self.queue.write_buffer(
+            &buffers.veg_canopy_buffer,
+            0,
+            bytemuck::cast_slice(&veg_canopy_data),
+        );
+        self.queue.write_buffer(
+            &buffers.veg_trunk_buffer,
+            0,
+            bytemuck::cast_slice(&veg_trunk_data),
+        );
+        self.queue
+            .write_buffer(&buffers.bush_buffer, 0, bytemuck::cast_slice(&bush_data));
+        self.queue.write_buffer(
+            &buffers.walls_buffer,
+            0,
+            bytemuck::cast_slice(&walls_data),
+        );
+        self.queue.write_buffer(
+            &buffers.aspect_buffer,
+            0,
+            bytemuck::cast_slice(&aspect_data),
+        );
+
+        // Initialize working buffers (shader modifies these, must reset each call)
+        self.queue.write_buffer(
+            &buffers.propagated_bldg_height_buffer,
+            0,
+            bytemuck::cast_slice(&dsm_data),
+        );
+        if has_veg {
+            self.queue.write_buffer(
+                &buffers.propagated_veg_height_buffer,
+                0,
+                bytemuck::cast_slice(&veg_canopy_data),
+            );
+        }
+
         // Encode and submit compute passes
         let mut encoder = self
             .device
@@ -631,7 +665,7 @@ impl ShadowGpuContext {
                 timestamp_writes: None,
             });
             compute_pass.set_pipeline(&self.pipeline);
-            compute_pass.set_bind_group(0, &bind_group, &[]);
+            compute_pass.set_bind_group(0, &buffers.bind_group, &[]);
             compute_pass.dispatch_workgroups(num_workgroups_x, num_workgroups_y, 1);
         }
 
@@ -642,42 +676,40 @@ impl ShadowGpuContext {
                 timestamp_writes: None,
             });
             compute_pass.set_pipeline(&self.wall_pipeline);
-            compute_pass.set_bind_group(0, &bind_group, &[]);
+            compute_pass.set_bind_group(0, &buffers.bind_group, &[]);
             compute_pass.dispatch_workgroups(num_workgroups_x, num_workgroups_y, 1);
         }
 
-        // Create staging buffers and copy results
-        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Staging Buffer"),
-            size: buffer_size * 10, // Large enough for multiple outputs
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Copy building shadow
-        encoder.copy_buffer_to_buffer(&bldg_shadow_buffer, 0, &staging_buffer, 0, buffer_size);
+        // Copy results to cached staging buffer
+        encoder.copy_buffer_to_buffer(
+            &buffers.bldg_shadow_buffer,
+            0,
+            &buffers.staging_buffer,
+            0,
+            buffer_size,
+        );
 
         // Copy vegetation outputs if enabled
         let veg_offset = buffer_size;
         if has_veg {
             encoder.copy_buffer_to_buffer(
-                &veg_shadow_buffer,
+                &buffers.veg_shadow_buffer,
                 0,
-                &staging_buffer,
+                &buffers.staging_buffer,
                 veg_offset,
                 buffer_size,
             );
             encoder.copy_buffer_to_buffer(
-                &veg_blocks_bldg_shadow_buffer,
+                &buffers.veg_blocks_bldg_shadow_buffer,
                 0,
-                &staging_buffer,
+                &buffers.staging_buffer,
                 veg_offset + buffer_size,
                 buffer_size,
             );
             encoder.copy_buffer_to_buffer(
-                &propagated_veg_height_buffer,
+                &buffers.propagated_veg_height_buffer,
                 0,
-                &staging_buffer,
+                &buffers.staging_buffer,
                 veg_offset + buffer_size * 2,
                 buffer_size,
             );
@@ -687,37 +719,37 @@ impl ShadowGpuContext {
         let wall_offset = buffer_size * 4;
         if has_walls {
             encoder.copy_buffer_to_buffer(
-                &wall_sh_buffer,
+                &buffers.wall_sh_buffer,
                 0,
-                &staging_buffer,
+                &buffers.staging_buffer,
                 wall_offset,
                 buffer_size,
             );
             encoder.copy_buffer_to_buffer(
-                &wall_sun_buffer,
+                &buffers.wall_sun_buffer,
                 0,
-                &staging_buffer,
+                &buffers.staging_buffer,
                 wall_offset + buffer_size,
                 buffer_size,
             );
             encoder.copy_buffer_to_buffer(
-                &wall_sh_veg_buffer,
+                &buffers.wall_sh_veg_buffer,
                 0,
-                &staging_buffer,
+                &buffers.staging_buffer,
                 wall_offset + buffer_size * 2,
                 buffer_size,
             );
             encoder.copy_buffer_to_buffer(
-                &face_sh_buffer,
+                &buffers.face_sh_buffer,
                 0,
-                &staging_buffer,
+                &buffers.staging_buffer,
                 wall_offset + buffer_size * 3,
                 buffer_size,
             );
             encoder.copy_buffer_to_buffer(
-                &face_sun_buffer,
+                &buffers.face_sun_buffer,
                 0,
-                &staging_buffer,
+                &buffers.staging_buffer,
                 wall_offset + buffer_size * 4,
                 buffer_size,
             );
@@ -725,8 +757,8 @@ impl ShadowGpuContext {
 
         self.queue.submit(Some(encoder.finish()));
 
-        // Read back all results
-        let buffer_slice = staging_buffer.slice(..);
+        // Read back all results from cached staging buffer
+        let buffer_slice = buffers.staging_buffer.slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             sender.send(result).unwrap();
@@ -811,7 +843,7 @@ impl ShadowGpuContext {
         };
 
         drop(data);
-        staging_buffer.unmap();
+        buffers.staging_buffer.unmap();
 
         Ok(GpuShadowResult {
             bldg_sh,
