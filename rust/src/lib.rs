@@ -5,6 +5,7 @@ mod emissivity_models;
 mod gpu;
 mod ground;
 mod gvf;
+mod morphology;
 mod gvf_geometry;
 mod patch_radiation;
 mod pet;
@@ -35,6 +36,7 @@ fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_ground_module(py_module)?;
     register_tmrt_module(py_module)?;
     register_pipeline_module(py_module)?;
+    register_morphology_module(py_module)?;
 
     // Add GPU feature flag
     #[cfg(feature = "gpu")]
@@ -162,6 +164,14 @@ fn register_pipeline_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     submodule.add_class::<pipeline::PyGvfGeometryCache>()?;
     submodule.add_function(wrap_pyfunction!(pipeline::compute_timestep, &submodule)?)?;
     submodule.add_function(wrap_pyfunction!(pipeline::precompute_gvf_cache, &submodule)?)?;
+    py_module.add_submodule(&submodule)?;
+    Ok(())
+}
+
+fn register_morphology_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let submodule = PyModule::new(py_module.py(), "morphology")?;
+    submodule.add("__doc__", "Morphological operations (binary dilation).")?;
+    submodule.add_function(wrap_pyfunction!(morphology::binary_dilation, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }

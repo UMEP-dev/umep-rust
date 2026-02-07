@@ -344,12 +344,18 @@ pub(crate) fn calculate_shadows_rust(
             let mut bldg_sh_dst_slice = bldg_sh.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
 
             par_azip!((prop_h in &mut prop_bldg_h_dst_slice, &dsm_src in &dsm_src_slice) {
-                let shifted_dsm = dsm_src - dz;
-                *prop_h = prop_h.max(shifted_dsm);
+                if dsm_src.is_finite() {
+                    let shifted_dsm = dsm_src - dz;
+                    *prop_h = prop_h.max(shifted_dsm);
+                }
             });
 
             par_azip!((bldg_sh_flag in &mut bldg_sh_dst_slice, &prop_h in &prop_bldg_h_dst_slice, &dsm_target in &dsm_dst_slice) {
-                *bldg_sh_flag = if prop_h > dsm_target { 1.0 } else { 0.0 };
+                if dsm_target.is_finite() {
+                    *bldg_sh_flag = if prop_h > dsm_target { 1.0 } else { 0.0 };
+                } else {
+                    *bldg_sh_flag = f32::NAN;
+                }
             });
 
             // Vegetation shadow calculation on the slice
@@ -363,8 +369,10 @@ pub(crate) fn calculate_shadows_rust(
                     propagated_veg_sh_height.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
 
                 par_azip!((prop_veg_h in &mut prop_veg_h_dst_slice, &source_veg_canopy in &veg_canopy_src_slice) {
-                    let shifted_veg_canopy = source_veg_canopy - dz;
-                    *prop_veg_h = prop_veg_h.max(shifted_veg_canopy);
+                    if source_veg_canopy.is_finite() {
+                        let shifted_veg_canopy = source_veg_canopy - dz;
+                        *prop_veg_h = prop_veg_h.max(shifted_veg_canopy);
+                    }
                 });
 
                 let veg_trunk_src_slice =

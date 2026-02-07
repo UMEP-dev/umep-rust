@@ -94,8 +94,12 @@ pub(crate) fn compute_tmrt_pure(
             let row = idx / shape.1;
             let col = idx % shape.1;
 
-            // Extract radiation components at this pixel
+            // Skip NaN pixels — upstream NaN propagates as NaN output
             let kdown_val = kdown[[row, col]];
+            if !kdown_val.is_finite() {
+                *out = f32::NAN;
+                return;
+            }
             let kup_val = kup[[row, col]];
             let ldown_val = ldown[[row, col]];
             let lup_val = lup[[row, col]];

@@ -97,6 +97,26 @@ class SvfArrays:
         """Combined building + vegetation SVF. Computed on-demand."""
         return np.clip(self.svf + self.svf_veg - 1.0, 0.0, 1.0)
 
+    def crop(self, r0: int, r1: int, c0: int, c1: int) -> SvfArrays:
+        """Crop all SVF arrays to [r0:r1, c0:c1]."""
+        return SvfArrays(
+            svf=self.svf[r0:r1, c0:c1].copy(),
+            svf_north=self.svf_north[r0:r1, c0:c1].copy(),
+            svf_east=self.svf_east[r0:r1, c0:c1].copy(),
+            svf_south=self.svf_south[r0:r1, c0:c1].copy(),
+            svf_west=self.svf_west[r0:r1, c0:c1].copy(),
+            svf_veg=self.svf_veg[r0:r1, c0:c1].copy(),
+            svf_veg_north=self.svf_veg_north[r0:r1, c0:c1].copy(),
+            svf_veg_east=self.svf_veg_east[r0:r1, c0:c1].copy(),
+            svf_veg_south=self.svf_veg_south[r0:r1, c0:c1].copy(),
+            svf_veg_west=self.svf_veg_west[r0:r1, c0:c1].copy(),
+            svf_aveg=self.svf_aveg[r0:r1, c0:c1].copy(),
+            svf_aveg_north=self.svf_aveg_north[r0:r1, c0:c1].copy(),
+            svf_aveg_east=self.svf_aveg_east[r0:r1, c0:c1].copy(),
+            svf_aveg_south=self.svf_aveg_south[r0:r1, c0:c1].copy(),
+            svf_aveg_west=self.svf_aveg_west[r0:r1, c0:c1].copy(),
+        )
+
     @classmethod
     def from_bundle(cls, bundle) -> SvfArrays:
         """
@@ -429,6 +449,14 @@ class ShadowArrays:
             vegshmat = self.vegshmat
             return (shmat - (1 - vegshmat) * (1 - transmissivity)).astype(np.float32)
         return shmat
+
+    def crop(self, r0: int, r1: int, c0: int, c1: int) -> ShadowArrays:
+        """Crop all shadow matrices to [r0:r1, c0:c1] (3D: rows, cols, patches)."""
+        return ShadowArrays(
+            _shmat_u8=self._shmat_u8[r0:r1, c0:c1, :].copy(),
+            _vegshmat_u8=self._vegshmat_u8[r0:r1, c0:c1, :].copy(),
+            _vbshmat_u8=self._vbshmat_u8[r0:r1, c0:c1, :].copy(),
+        )
 
     @classmethod
     def from_npz(cls, npz_path: str | Path) -> ShadowArrays:

@@ -31,6 +31,14 @@ SOLWEIG provides a clean, minimal API for urban microclimate calculations.
 | [`compute_utci()`](functions.md#compute_utci) | Batch UTCI from Tmrt files |
 | [`compute_pet()`](functions.md#compute_pet) | Batch PET from Tmrt files |
 
+### GPU Utilities
+
+| Function | Description |
+|----------|-------------|
+| `is_gpu_available()` | Check if GPU acceleration is available |
+| `get_compute_backend()` | Returns `"gpu"` or `"cpu"` |
+| `disable_gpu()` | Disable GPU, fall back to CPU |
+
 ## Import Pattern
 
 ```python

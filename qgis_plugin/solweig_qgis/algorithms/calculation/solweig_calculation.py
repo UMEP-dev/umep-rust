@@ -21,6 +21,7 @@ from qgis.core import (
     QgsProcessingParameterBoolean,
     QgsProcessingParameterDefinition,
     QgsProcessingParameterEnum,
+    QgsProcessingParameterExtent,
     QgsProcessingParameterFolderDestination,
     QgsProcessingParameterNumber,
 )
@@ -97,9 +98,15 @@ Enable tiled processing for large rasters (>4000x4000 pixels) to reduce
 memory usage. Only available for single timestep mode.
 
 <b>Outputs:</b>
-GeoTIFF files in the output directory. Select which components to save:
-tmrt (required), shadow, kdown, kup, ldown, lup.
-UTCI/PET results are saved in subdirectories.
+GeoTIFF files organised into subfolders of the output directory:
+<pre>
+  output_dir/
+    tmrt/        tmrt_YYYYMMDD_HHMM.tif  (always)
+    shadow/      shadow_...              (if selected)
+    kdown/       kdown_...               (if selected)
+    utci/        utci_...                (if enabled)
+    pet/         pet_...                 (if enabled)
+</pre>
 
 <b>Tips:</b>
 <ol>
@@ -119,6 +126,15 @@ UTCI/PET results are saved in subdirectories.
         """Define algorithm parameters."""
         # --- Surface inputs ---
         add_surface_parameters(self)
+
+        # --- Processing extent (optional) ---
+        self.addParameter(
+            QgsProcessingParameterExtent(
+                "EXTENT",
+                self.tr("Processing extent (leave empty to use intersection of inputs)"),
+                optional=True,
+            )
+        )
 
         # --- Location ---
         add_location_parameters(self)
@@ -275,7 +291,27 @@ UTCI/PET results are saved in subdirectories.
         feedback.setProgressText("Loading surface data...")
         feedback.setProgress(5)
 
-        surface = create_surface_from_parameters(parameters, context, self, feedback)
+        # Extract optional processing extent
+        extent_rect = self.parameterAsExtent(parameters, "EXTENT", context)
+        bbox = None
+        if not extent_rect.isNull():
+            bbox = [
+                extent_rect.xMinimum(),
+                extent_rect.yMinimum(),
+                extent_rect.xMaximum(),
+                extent_rect.yMaximum(),
+            ]
+            feedback.pushInfo(f"Using custom extent: {bbox}")
+
+        output_dir = self.parameterAsString(parameters, "OUTPUT_DIR", context)
+        surface = create_surface_from_parameters(
+            parameters,
+            context,
+            self,
+            feedback,
+            bbox=bbox,
+            output_dir=output_dir,
+        )
 
         if feedback.isCanceled():
             return {}
@@ -622,30 +658,70 @@ UTCI/PET results are saved in subdirectories.
         selected_outputs,
         feedback,
     ) -> list:
-        """Run multi-timestep timeseries calculation."""
-        feedback.setProgressText(f"Running timeseries ({len(weather_series)} timesteps)...")
+        """Run multi-timestep timeseries with per-timestep progress.
+
+        Loops over timesteps using solweig.calculate() directly instead of
+        delegating to calculate_timeseries(), so we have full control over
+        the QGIS progress bar and cancellation between timesteps.
+        """
+        n_steps = len(weather_series)
+        feedback.setProgressText(f"Running timeseries ({n_steps} timesteps)...")
         feedback.setProgress(25)
 
-        # Map step progress into the 25-80% range of the overall QGIS progress bar
-        def _on_progress(current: int, total: int) -> None:
-            pct = 25 + int(55 * current / total) if total > 0 else 25
-            feedback.setProgress(pct)
-            feedback.setProgressText(f"Timestep {current}/{total}...")
+        # Initialize thermal state for accurate ground temperature modelling
+        state = solweig.ThermalState.initial(surface.dsm.shape)
+        if n_steps >= 2:
+            dt0 = weather_series[0].datetime
+            dt1 = weather_series[1].datetime
+            state.timestep_dec = (dt1 - dt0).total_seconds() / 86400.0
 
-        try:
-            results = solweig.calculate_timeseries(
-                surface=surface,
-                weather_series=weather_series,
-                location=location,
-                output_dir=output_dir,
-                outputs=selected_outputs,
-                use_anisotropic_sky=use_anisotropic_sky,
-                conifer=conifer,
-                precomputed=precomputed,
-                progress_callback=_on_progress,
-            )
-        except Exception as e:
-            raise QgsProcessingException(f"Timeseries calculation failed: {e}") from e
+        results = []
+        for i, weather in enumerate(weather_series):
+            if feedback.isCanceled():
+                break
+
+            try:
+                result = solweig.calculate(
+                    surface=surface,
+                    location=location,
+                    weather=weather,
+                    human=human,
+                    precomputed=precomputed,
+                    use_anisotropic_sky=use_anisotropic_sky,
+                    conifer=conifer,
+                    state=state,
+                )
+            except Exception as e:
+                raise QgsProcessingException(
+                    f"Calculation failed at timestep {i + 1}/{n_steps} ({weather.datetime}): {e}"
+                ) from e
+
+            # Carry forward thermal state
+            if result.state is not None:
+                state = result.state
+
+            # Save outputs incrementally
+            timestamp = weather.datetime.strftime("%Y%m%d_%H%M")
+            for component in selected_outputs:
+                array = getattr(result, component, None)
+                if array is not None:
+                    comp_dir = os.path.join(output_dir, component)
+                    os.makedirs(comp_dir, exist_ok=True)
+                    filepath = os.path.join(comp_dir, f"{component}_{timestamp}.tif")
+                    self.save_georeferenced_output(
+                        array=array,
+                        output_path=filepath,
+                        geotransform=surface._geotransform,
+                        crs_wkt=surface._crs_wkt,
+                        feedback=feedback,
+                    )
+
+            results.append(result)
+
+            # Update progress (25-80% range)
+            pct = 25 + int(55 * (i + 1) / n_steps)
+            feedback.setProgress(pct)
+            feedback.setProgressText(f"Timestep {i + 1}/{n_steps}...")
 
         feedback.setProgress(80)
         return results
@@ -655,35 +731,57 @@ UTCI/PET results are saved in subdirectories.
     # -------------------------------------------------------------------------
 
     def _run_utci(self, solweig, output_dir, weather_series, feedback) -> int:
-        """Compute UTCI from Tmrt results."""
+        """Compute UTCI from saved Tmrt GeoTIFFs with per-file progress."""
+        from osgeo import gdal
+
         feedback.setProgressText("Computing UTCI...")
         feedback.pushInfo("")
         feedback.pushInfo("Computing UTCI thermal comfort index...")
 
-        utci_dir = os.path.join(output_dir, "utci")
         tmrt_dir = os.path.join(output_dir, "tmrt")
+        utci_dir = os.path.join(output_dir, "utci")
+        os.makedirs(utci_dir, exist_ok=True)
 
-        # Map step progress into the 80-90% range
-        def _on_progress(current: int, total: int) -> None:
-            pct = 80 + int(10 * current / total) if total > 0 else 80
+        n_steps = len(weather_series)
+        processed = 0
+
+        for i, weather in enumerate(weather_series):
+            if feedback.isCanceled():
+                break
+
+            timestamp = weather.datetime.strftime("%Y%m%d_%H%M")
+            tmrt_path = os.path.join(tmrt_dir, f"tmrt_{timestamp}.tif")
+
+            if not os.path.exists(tmrt_path):
+                continue
+
+            # Load Tmrt GeoTIFF via GDAL
+            ds = gdal.Open(tmrt_path)
+            tmrt = ds.GetRasterBand(1).ReadAsArray().astype(np.float32)
+            geotransform = list(ds.GetGeoTransform())
+            crs_wkt = ds.GetProjection()
+            ds = None
+
+            # Compute UTCI
+            utci = solweig.compute_utci_grid(tmrt, weather.ta, weather.rh, weather.ws)
+
+            # Save
+            utci_path = os.path.join(utci_dir, f"utci_{timestamp}.tif")
+            self.save_georeferenced_output(utci, utci_path, geotransform, crs_wkt, feedback)
+            processed += 1
+
+            # Progress (80-90% range)
+            pct = 80 + int(10 * (i + 1) / n_steps)
             feedback.setProgress(pct)
-            feedback.setProgressText(f"UTCI {current}/{total}...")
+            feedback.setProgressText(f"UTCI {i + 1}/{n_steps}...")
 
-        try:
-            n_files = solweig.compute_utci(
-                tmrt_dir=tmrt_dir,
-                weather_series=weather_series,
-                output_dir=utci_dir,
-                progress_callback=_on_progress,
-            )
-        except Exception as e:
-            raise QgsProcessingException(f"UTCI computation failed: {e}") from e
-
-        feedback.pushInfo(f"UTCI: {n_files} files created in {utci_dir}")
-        return n_files
+        feedback.pushInfo(f"UTCI: {processed} files created in {utci_dir}")
+        return processed
 
     def _run_pet(self, solweig, output_dir, weather_series, human, feedback) -> int:
-        """Compute PET from Tmrt results."""
+        """Compute PET from saved Tmrt GeoTIFFs with per-file progress."""
+        from osgeo import gdal
+
         feedback.setProgressText("Computing PET (this may take a while)...")
         feedback.pushInfo("")
         feedback.pushInfo("Computing PET thermal comfort index...")
@@ -691,31 +789,45 @@ UTCI/PET results are saved in subdirectories.
             f"Human params: {human.weight}kg, {human.height}m, {human.age}y, {human.activity}W, {human.clothing}clo"
         )
 
-        estimated_time = len(weather_series) * 0.25
-        feedback.pushInfo(f"Estimated time: {estimated_time:.0f}s ({len(weather_series)} timesteps)")
-
         tmrt_dir = os.path.join(output_dir, "tmrt")
         pet_dir = os.path.join(output_dir, "pet")
+        os.makedirs(pet_dir, exist_ok=True)
 
-        # Map step progress into the 80-95% range (PET is slow)
-        def _on_progress(current: int, total: int) -> None:
-            pct = 80 + int(15 * current / total) if total > 0 else 80
+        n_steps = len(weather_series)
+        processed = 0
+
+        for i, weather in enumerate(weather_series):
+            if feedback.isCanceled():
+                break
+
+            timestamp = weather.datetime.strftime("%Y%m%d_%H%M")
+            tmrt_path = os.path.join(tmrt_dir, f"tmrt_{timestamp}.tif")
+
+            if not os.path.exists(tmrt_path):
+                continue
+
+            # Load Tmrt GeoTIFF via GDAL
+            ds = gdal.Open(tmrt_path)
+            tmrt = ds.GetRasterBand(1).ReadAsArray().astype(np.float32)
+            geotransform = list(ds.GetGeoTransform())
+            crs_wkt = ds.GetProjection()
+            ds = None
+
+            # Compute PET
+            pet = solweig.compute_pet_grid(tmrt, weather.ta, weather.rh, weather.ws, human)
+
+            # Save
+            pet_path = os.path.join(pet_dir, f"pet_{timestamp}.tif")
+            self.save_georeferenced_output(pet, pet_path, geotransform, crs_wkt, feedback)
+            processed += 1
+
+            # Progress (90-98% range)
+            pct = 90 + int(8 * (i + 1) / n_steps)
             feedback.setProgress(pct)
-            feedback.setProgressText(f"PET {current}/{total}...")
+            feedback.setProgressText(f"PET {i + 1}/{n_steps}...")
 
-        try:
-            n_files = solweig.compute_pet(
-                tmrt_dir=tmrt_dir,
-                weather_series=weather_series,
-                output_dir=pet_dir,
-                human=human,
-                progress_callback=_on_progress,
-            )
-        except Exception as e:
-            raise QgsProcessingException(f"PET computation failed: {e}") from e
-
-        feedback.pushInfo(f"PET: {n_files} files created in {pet_dir}")
-        return n_files
+        feedback.pushInfo(f"PET: {processed} files created in {pet_dir}")
+        return processed
 
     # -------------------------------------------------------------------------
     # Utility helpers

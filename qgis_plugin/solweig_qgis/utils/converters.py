@@ -62,77 +62,146 @@ def load_raster_from_layer(
         ds = None
 
 
+def _load_optional_raster(
+    parameters: dict[str, Any],
+    param_name: str,
+    context: QgsProcessingContext,
+    param_handler: Any,
+) -> tuple[NDArray[np.floating] | None, list[float] | None]:
+    """Load optional raster, returning (array, geotransform) or (None, None)."""
+    if param_name not in parameters or not parameters[param_name]:
+        return None, None
+    layer = param_handler.parameterAsRasterLayer(parameters, param_name, context)
+    if layer is None:
+        return None, None
+    arr, gt, _ = load_raster_from_layer(layer)
+    return arr, gt
+
+
+def _align_layer(
+    arr: NDArray[np.floating],
+    gt: list[float],
+    target_bbox: list[float],
+    pixel_size: float,
+    method: str,
+    crs_wkt: str,
+) -> NDArray[np.floating]:
+    """Resample a raster to the target grid if extents differ."""
+    from solweig.utils import extract_bounds, resample_to_grid
+
+    bounds = extract_bounds(gt, arr.shape)
+    needs_resample = (
+        abs(bounds[0] - target_bbox[0]) > 1e-6
+        or abs(bounds[1] - target_bbox[1]) > 1e-6
+        or abs(bounds[2] - target_bbox[2]) > 1e-6
+        or abs(bounds[3] - target_bbox[3]) > 1e-6
+        or abs(abs(gt[1]) - pixel_size) > 1e-6
+    )
+    if needs_resample:
+        arr, _ = resample_to_grid(arr, gt, target_bbox, pixel_size, method=method, src_crs=crs_wkt)
+    return arr
+
+
 def create_surface_from_parameters(
     parameters: dict[str, Any],
     context: QgsProcessingContext,
     param_handler: Any,  # Algorithm instance with parameterAsRasterLayer
     feedback: QgsProcessingFeedback,
+    bbox: list[float] | None = None,
+    output_dir: str | None = None,
 ) -> Any:  # Returns solweig.SurfaceData
     """
     Create SurfaceData from QGIS processing parameters.
 
-    Loads all surface rasters, handles height conversion, and
-    attaches geospatial metadata for output georeferencing.
+    Loads all surface rasters, aligns them to a common grid (intersection
+    of all extents or user-specified bbox), computes a unified valid mask,
+    and saves cleaned rasters to disk.
 
     Args:
         parameters: Algorithm parameters dict.
         context: Processing context.
         param_handler: Object with parameterAsRasterLayer method.
         feedback: Processing feedback.
+        bbox: Optional explicit bounding box [minx, miny, maxx, maxy].
+        output_dir: Optional directory for saving cleaned rasters.
 
     Returns:
-        solweig.SurfaceData instance with populated arrays and metadata.
+        solweig.SurfaceData instance with aligned, masked arrays.
 
     Raises:
         QgsProcessingException: If required DSM is missing or invalid.
     """
-    # Import solweig here to avoid import errors if not installed
     try:
         import solweig
+        from solweig.utils import extract_bounds, intersect_bounds
     except ImportError as e:
         raise QgsProcessingException("SOLWEIG library not found. Please install solweig package.") from e
 
-    # Load required DSM
+    # Load required DSM (with geotransform)
     dsm_layer = param_handler.parameterAsRasterLayer(parameters, "DSM", context)
     if dsm_layer is None:
         raise QgsProcessingException("DSM layer is required")
 
-    dsm, geotransform, crs_wkt = load_raster_from_layer(dsm_layer)
+    dsm, dsm_gt, crs_wkt = load_raster_from_layer(dsm_layer)
     feedback.pushInfo(f"Loaded DSM: {dsm.shape[1]}x{dsm.shape[0]} pixels")
 
-    # Extract pixel size from geotransform
-    pixel_size = abs(geotransform[1])
+    pixel_size = abs(dsm_gt[1])
     feedback.pushInfo(f"Pixel size: {pixel_size:.2f} m")
 
-    # Load optional surface rasters
-    cdsm = None
-    if "CDSM" in parameters and parameters["CDSM"]:
-        cdsm_layer = param_handler.parameterAsRasterLayer(parameters, "CDSM", context)
-        if cdsm_layer:
-            cdsm, _, _ = load_raster_from_layer(cdsm_layer)
-            feedback.pushInfo("Loaded CDSM (vegetation)")
+    # Load optional rasters (keeping geotransforms)
+    cdsm, cdsm_gt = _load_optional_raster(parameters, "CDSM", context, param_handler)
+    if cdsm is not None:
+        feedback.pushInfo("Loaded CDSM (vegetation)")
 
-    dem = None
-    if "DEM" in parameters and parameters["DEM"]:
-        dem_layer = param_handler.parameterAsRasterLayer(parameters, "DEM", context)
-        if dem_layer:
-            dem, _, _ = load_raster_from_layer(dem_layer)
-            feedback.pushInfo("Loaded DEM (ground elevation)")
+    dem, dem_gt = _load_optional_raster(parameters, "DEM", context, param_handler)
+    if dem is not None:
+        feedback.pushInfo("Loaded DEM (ground elevation)")
 
-    tdsm = None
-    if "TDSM" in parameters and parameters["TDSM"]:
-        tdsm_layer = param_handler.parameterAsRasterLayer(parameters, "TDSM", context)
-        if tdsm_layer:
-            tdsm, _, _ = load_raster_from_layer(tdsm_layer)
-            feedback.pushInfo("Loaded TDSM (trunk zone)")
+    tdsm, tdsm_gt = _load_optional_raster(parameters, "TDSM", context, param_handler)
+    if tdsm is not None:
+        feedback.pushInfo("Loaded TDSM (trunk zone)")
 
-    land_cover = None
-    if "LAND_COVER" in parameters and parameters["LAND_COVER"]:
-        lc_layer = param_handler.parameterAsRasterLayer(parameters, "LAND_COVER", context)
-        if lc_layer:
-            lc_arr, _, _ = load_raster_from_layer(lc_layer)
-            land_cover = lc_arr.astype(np.uint8)
-            feedback.pushInfo("Loaded land cover classification")
+    lc_arr, lc_gt = _load_optional_raster(parameters, "LAND_COVER", context, param_handler)
+    land_cover = lc_arr.astype(np.uint8) if lc_arr is not None else None
+    if land_cover is not None:
+        feedback.pushInfo("Loaded land cover classification")
+
+    # Compute extent intersection of all loaded layers
+    bounds_list = [extract_bounds(dsm_gt, dsm.shape)]
+    for arr, gt in [(cdsm, cdsm_gt), (dem, dem_gt), (tdsm, tdsm_gt), (lc_arr, lc_gt)]:
+        if arr is not None and gt is not None:
+            bounds_list.append(extract_bounds(gt, arr.shape))
+
+    if bbox is not None:
+        target_bbox = bbox
+    elif len(bounds_list) > 1:
+        target_bbox = intersect_bounds(bounds_list)
+        feedback.pushInfo(f"Auto-computed intersection extent: {target_bbox}")
+    else:
+        target_bbox = bounds_list[0]
+
+    # Align all layers to the target grid
+    dsm = _align_layer(dsm, dsm_gt, target_bbox, pixel_size, "bilinear", crs_wkt)
+    if cdsm is not None and cdsm_gt is not None:
+        cdsm = _align_layer(cdsm, cdsm_gt, target_bbox, pixel_size, "bilinear", crs_wkt)
+    if dem is not None and dem_gt is not None:
+        dem = _align_layer(dem, dem_gt, target_bbox, pixel_size, "bilinear", crs_wkt)
+    if tdsm is not None and tdsm_gt is not None:
+        tdsm = _align_layer(tdsm, tdsm_gt, target_bbox, pixel_size, "bilinear", crs_wkt)
+    if land_cover is not None and lc_gt is not None:
+        land_cover = _align_layer(
+            land_cover.astype(np.float32),
+            lc_gt,
+            target_bbox,
+            pixel_size,
+            "nearest",
+            crs_wkt,
+        ).astype(np.uint8)
+
+    feedback.pushInfo(f"Aligned grid: {dsm.shape[1]}x{dsm.shape[0]} pixels")
+
+    # Build aligned geotransform for the target bbox
+    aligned_gt = [target_bbox[0], pixel_size, 0, target_bbox[3], 0, -pixel_size]
 
     # Get height convention flag
     relative_heights = parameters.get("RELATIVE_HEIGHTS", True)
@@ -149,13 +218,23 @@ def create_surface_from_parameters(
     )
 
     # Store geospatial metadata for output georeferencing
-    surface._geotransform = geotransform
+    surface._geotransform = aligned_gt
     surface._crs_wkt = crs_wkt
 
     # Preprocess if using relative heights and we have vegetation data
     if relative_heights and (cdsm is not None or tdsm is not None):
         feedback.pushInfo("Converting relative vegetation heights to absolute...")
         surface.preprocess()
+
+    # Compute unified valid mask, apply across layers, crop to valid bbox
+    surface.compute_valid_mask()
+    surface.apply_valid_mask()
+    surface.crop_to_valid_bbox()
+    feedback.pushInfo(f"After NaN masking + crop: {surface.dsm.shape[1]}x{surface.dsm.shape[0]} pixels")
+
+    # Save cleaned rasters
+    if output_dir:
+        surface.save_cleaned(output_dir)
 
     return surface
 

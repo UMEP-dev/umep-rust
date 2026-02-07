@@ -13,7 +13,9 @@ from qgis.core import (
     QgsProcessingOutputFolder,
     QgsProcessingOutputNumber,
     QgsProcessingParameterBoolean,
+    QgsProcessingParameterDefinition,
     QgsProcessingParameterFolderDestination,
+    QgsProcessingParameterNumber,
     QgsProcessingParameterRasterLayer,
 )
 
@@ -35,6 +37,7 @@ class SvfPreprocessingAlgorithm(SolweigAlgorithmBase):
     DEM = "DEM"
     TDSM = "TDSM"
     RELATIVE_HEIGHTS = "RELATIVE_HEIGHTS"
+    TRUNK_RATIO = "TRUNK_RATIO"
     OUTPUT_DIR = "OUTPUT_DIR"
 
     def name(self) -> str:
@@ -118,6 +121,17 @@ Pass this directory to the SOLWEIG Calculation algorithm via the
             )
         )
 
+        trunk_ratio = QgsProcessingParameterNumber(
+            self.TRUNK_RATIO,
+            self.tr("Trunk ratio (fraction of canopy height, used when no TDSM provided)"),
+            type=QgsProcessingParameterNumber.Double,
+            defaultValue=0.25,
+            minValue=0.0,
+            maxValue=1.0,
+        )
+        trunk_ratio.setFlags(trunk_ratio.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        self.addParameter(trunk_ratio)
+
         self.addParameter(
             QgsProcessingParameterFolderDestination(
                 self.OUTPUT_DIR,
@@ -186,6 +200,7 @@ Pass this directory to the SOLWEIG Calculation algorithm via the
 
         # Get parameters
         relative_heights = self.parameterAsBool(parameters, self.RELATIVE_HEIGHTS, context)
+        trunk_ratio = self.parameterAsDouble(parameters, self.TRUNK_RATIO, context)
         output_dir = self.parameterAsString(parameters, self.OUTPUT_DIR, context)
 
         # Create SurfaceData
@@ -221,6 +236,7 @@ Pass this directory to the SOLWEIG Calculation algorithm via the
         feedback.setProgress(20)
 
         import os
+        import threading
 
         import numpy as np
         from solweig.rustalgos import skyview
@@ -234,24 +250,51 @@ Pass this directory to the SOLWEIG Calculation algorithm via the
         if tdsm is not None:
             tdsm_svf = tdsm.astype(np.float32)
         elif cdsm is not None:
-            tdsm_svf = (cdsm * 0.25).astype(np.float32)
+            tdsm_svf = (cdsm * trunk_ratio).astype(np.float32)
         else:
             tdsm_svf = np.zeros_like(dsm, dtype=np.float32)
 
-        try:
-            svf_result = skyview.calculate_svf(
-                dsm.astype(np.float32),
-                cdsm_svf,
-                tdsm_svf,
-                pixel_size,
-                use_veg,
-                max_height,
-                2,  # patch_option (153 patches)
-                3.0,  # min_sun_elev_deg
-                None,  # progress callback
-            )
-        except Exception as e:
-            raise QgsProcessingException(f"SVF computation failed: {e}") from e
+        # Use SkyviewRunner for progress polling (Rust releases GIL during computation)
+        total_patches = 153  # patch_option=2
+        runner = skyview.SkyviewRunner()
+        svf_result = None
+        svf_error = None
+
+        def _run_svf():
+            nonlocal svf_result, svf_error
+            try:
+                svf_result = runner.calculate_svf(
+                    dsm.astype(np.float32),
+                    cdsm_svf,
+                    tdsm_svf,
+                    pixel_size,
+                    use_veg,
+                    max_height,
+                    2,  # patch_option (153 patches)
+                    3.0,  # min_sun_elev_deg
+                )
+            except Exception as e:
+                svf_error = e
+
+        svf_thread = threading.Thread(target=_run_svf, daemon=True)
+        svf_thread.start()
+
+        # Poll progress while Rust computes (20-90% range)
+        while svf_thread.is_alive():
+            svf_thread.join(timeout=0.5)
+            patches_done = runner.progress()
+            pct = 20 + int(70 * patches_done / total_patches)
+            feedback.setProgress(min(pct, 89))
+            feedback.setProgressText(f"Computing SVF... patch {patches_done}/{total_patches}")
+            if feedback.isCanceled():
+                break
+
+        svf_thread.join()
+
+        if svf_error is not None:
+            raise QgsProcessingException(f"SVF computation failed: {svf_error}") from svf_error
+        if svf_result is None:
+            raise QgsProcessingException("SVF computation was cancelled")
 
         if feedback.isCanceled():
             return {}

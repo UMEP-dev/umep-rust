@@ -198,6 +198,7 @@ class SurfaceData:
     _crs_wkt: str | None = field(default=None, init=False, repr=False)  # CRS as WKT string
     _buffer_pool: BufferPool | None = field(default=None, init=False, repr=False)  # Reusable array pool
     _gvf_geometry_cache: object = field(default=None, init=False, repr=False)  # Rust GVF geometry cache
+    _valid_mask: NDArray[np.bool_] | None = field(default=None, init=False, repr=False)  # Combined valid mask
 
     def __post_init__(self):
         # Ensure dsm is float32 for memory efficiency
@@ -366,6 +367,12 @@ class SurfaceData:
         if relative_heights and surface_data.cdsm is not None:
             logger.debug("  Preprocessing CDSM/TDSM (relative → absolute heights)")
             surface_data.preprocess()
+
+        # Compute unified valid mask, apply across all layers, crop to valid bbox
+        surface_data.compute_valid_mask()
+        surface_data.apply_valid_mask()
+        surface_data.crop_to_valid_bbox()
+        surface_data.save_cleaned(working_path)
 
         logger.info("✓ Surface data prepared successfully")
         return surface_data
@@ -1116,6 +1123,141 @@ class SurfaceData:
     def crs(self) -> str | None:
         """Return CRS as WKT string, or None if not set."""
         return self._crs_wkt
+
+    @property
+    def valid_mask(self) -> NDArray[np.bool_] | None:
+        """Return computed valid mask, or None if not yet computed."""
+        return self._valid_mask
+
+    def compute_valid_mask(self) -> NDArray[np.bool_]:
+        """Compute combined valid mask: True where ALL provided layers have finite data.
+
+        A pixel is valid only if every provided layer has a finite (non-NaN) value.
+        For land_cover (uint8), 255 is treated as nodata.
+
+        Returns:
+            Boolean array with same shape as DSM. True = valid pixel.
+        """
+        valid = np.isfinite(self.dsm)
+        for arr in [self.cdsm, self.dem, self.tdsm, self.wall_height, self.wall_aspect]:
+            if arr is not None:
+                valid &= np.isfinite(arr)
+        if self.land_cover is not None:
+            valid &= self.land_cover != 255
+        self._valid_mask = valid
+        n_invalid = int(np.sum(~valid))
+        if n_invalid > 0:
+            pct = 100.0 * n_invalid / valid.size
+            logger.info(f"  Valid mask: {n_invalid} invalid pixels ({pct:.1f}%)")
+        else:
+            logger.info("  Valid mask: all pixels valid")
+        return valid
+
+    def apply_valid_mask(self) -> None:
+        """Set NaN in ALL layers where ANY layer has nodata.
+
+        Ensures consistent nodata across all surface arrays.
+        Must call compute_valid_mask() first (or it will be called automatically).
+        """
+        if self._valid_mask is None:
+            self.compute_valid_mask()
+        assert self._valid_mask is not None  # set by compute_valid_mask
+        invalid = ~self._valid_mask
+        if not np.any(invalid):
+            return
+        self.dsm[invalid] = np.nan
+        for attr in ("cdsm", "dem", "tdsm", "wall_height", "wall_aspect", "albedo", "emissivity"):
+            arr = getattr(self, attr)
+            if arr is not None:
+                arr[invalid] = np.nan
+        if self.land_cover is not None:
+            self.land_cover[invalid] = 255
+
+    def crop_to_valid_bbox(self) -> tuple[int, int, int, int]:
+        """Crop all arrays to minimum bounding box of valid pixels.
+
+        Eliminates edge NaN bands to reduce wasted computation.
+        Updates geotransform to reflect the new origin.
+
+        Returns:
+            (row_start, row_end, col_start, col_end) of the crop window.
+        """
+        if self._valid_mask is None:
+            self.compute_valid_mask()
+        assert self._valid_mask is not None  # set by compute_valid_mask
+        rows_any = np.any(self._valid_mask, axis=1)
+        cols_any = np.any(self._valid_mask, axis=0)
+        if not np.any(rows_any):
+            logger.warning("  No valid pixels found — cannot crop")
+            return (0, self.dsm.shape[0], 0, self.dsm.shape[1])
+        r0 = int(np.argmax(rows_any))
+        r1 = len(rows_any) - int(np.argmax(rows_any[::-1]))
+        c0 = int(np.argmax(cols_any))
+        c1 = len(cols_any) - int(np.argmax(cols_any[::-1]))
+
+        if r0 == 0 and r1 == self.dsm.shape[0] and c0 == 0 and c1 == self.dsm.shape[1]:
+            logger.info("  Crop: no trimming needed (valid bbox = full extent)")
+            return (r0, r1, c0, c1)
+
+        old_shape = self.dsm.shape
+        self.dsm = self.dsm[r0:r1, c0:c1].copy()
+        self._valid_mask = self._valid_mask[r0:r1, c0:c1].copy()
+        for attr in ("cdsm", "dem", "tdsm", "wall_height", "wall_aspect", "albedo", "emissivity", "land_cover"):
+            arr = getattr(self, attr)
+            if arr is not None:
+                setattr(self, attr, arr[r0:r1, c0:c1].copy())
+
+        # Update geotransform to reflect new origin
+        if self._geotransform is not None:
+            gt = self._geotransform
+            self._geotransform = [
+                gt[0] + c0 * gt[1] + r0 * gt[2],  # new origin X
+                gt[1],
+                gt[2],
+                gt[3] + c0 * gt[4] + r0 * gt[5],  # new origin Y
+                gt[4],
+                gt[5],
+            ]
+
+        # Crop SVF arrays if present
+        if self.svf is not None:
+            self.svf = self.svf.crop(r0, r1, c0, c1)
+        if self.shadow_matrices is not None:
+            self.shadow_matrices = self.shadow_matrices.crop(r0, r1, c0, c1)
+
+        # Clear buffer pool (shape changed)
+        self.clear_buffers()
+
+        logger.info(f"  Cropped: {old_shape[1]}x{old_shape[0]} → {c1 - c0}x{r1 - r0} pixels")
+        return (r0, r1, c0, c1)
+
+    def save_cleaned(self, output_dir: str | Path) -> None:
+        """Save cleaned, aligned rasters to disk for inspection.
+
+        Writes all present layers to output_dir/cleaned/ as GeoTIFFs.
+
+        Args:
+            output_dir: Parent directory. Files are saved under output_dir/cleaned/.
+        """
+        out = Path(output_dir) / "cleaned"
+        out.mkdir(parents=True, exist_ok=True)
+        gt = self._geotransform or [0, self.pixel_size, 0, 0, 0, -self.pixel_size]
+        crs = self._crs_wkt or ""
+        io.save_raster(str(out / "dsm.tif"), self.dsm, gt, crs)
+        for name, arr in [
+            ("cdsm", self.cdsm),
+            ("dem", self.dem),
+            ("tdsm", self.tdsm),
+            ("wall_height", self.wall_height),
+            ("wall_aspect", self.wall_aspect),
+        ]:
+            if arr is not None:
+                io.save_raster(str(out / f"{name}.tif"), arr, gt, crs)
+        if self.land_cover is not None:
+            io.save_raster(str(out / "land_cover.tif"), self.land_cover.astype(np.float32), gt, crs)
+        if self._valid_mask is not None:
+            io.save_raster(str(out / "valid_mask.tif"), self._valid_mask.astype(np.float32), gt, crs)
+        logger.info(f"  Cleaned rasters saved to {out}")
 
     def get_buffer_pool(self) -> BufferPool:
         """Get or create a buffer pool for this surface.

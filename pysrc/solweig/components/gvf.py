@@ -20,7 +20,19 @@ import numpy as np
 from ..buffers import as_float32
 from ..bundles import GvfBundle
 from ..constants import KELVIN_OFFSET, SBC
-from ..physics.morphology import binary_dilation, generate_binary_structure
+from ..physics.morphology import generate_binary_structure
+
+try:
+    from ..rustalgos import morphology as _rust_morph
+
+    def _binary_dilation(input_array, structure, iterations):
+        return _rust_morph.binary_dilation(
+            input_array.astype(np.uint8),
+            structure.astype(np.uint8),
+            iterations,
+        ).astype(bool)
+except ImportError:
+    from ..physics.morphology import binary_dilation as _binary_dilation
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -68,7 +80,7 @@ def detect_building_mask(
         # Dilate to capture building interiors (typical building width up to 50m)
         struct = generate_binary_structure(2, 2)  # 8-connectivity
         iterations = int(25 / pixel_size) + 1
-        dilated = binary_dilation(wall_mask, struct, iterations=iterations)
+        dilated = _binary_dilation(wall_mask, struct, iterations=iterations)
 
         # Also detect elevated areas (building roofs)
         ground_level = np.nanpercentile(dsm[~wall_mask], 10) if np.any(~wall_mask) else np.nanmin(dsm)

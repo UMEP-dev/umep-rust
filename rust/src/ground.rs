@@ -55,6 +55,10 @@ pub(crate) fn compute_ground_temperature_pure(
             let col = idx % shape.1;
 
             let tgamp_val = tgamp[[row, col]];
+            if !tgamp_val.is_finite() {
+                *out = f32::NAN;
+                return;
+            }
             let tmaxlst_frac_val = tmaxlst_frac[[row, col]];
 
             if dectime > snup_frac {
