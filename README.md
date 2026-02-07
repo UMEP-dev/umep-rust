@@ -200,52 +200,33 @@ mkdocs build
 
 ### QGIS Plugin Bundle Preparation
 
-> For uploading to the QGIS Plugin Repository: the easiest way is to let GitHub Actions build the package when pushing to GitHub. Download the zip file and upload it to the plug-in repository.
+> The easiest way is to let GitHub Actions build the package — push a version tag (e.g. `v0.1.0`) or trigger the workflow manually. Download the universal ZIP from the release artifacts and upload it to the QGIS Plugin Repository.
 
-To prepare the QGIS plugin for distribution:
+The plugin source lives in `qgis_plugin/solweig_qgis/` and is built using the `qgis_plugin/build_plugin.py` script, which compiles the Rust extension, bundles it with the Python library, and creates a distributable ZIP.
 
 #### 1. Update Plugin Metadata
 
-Edit `qgis_plugin/metadata.txt`:
+Edit `qgis_plugin/solweig_qgis/metadata.txt` and increment the version.
 
-```ini
-[general]
-name=SOLWEIG
-version=0.1.0              # Increment version
-experimental=True          # Set to False when stable
-description=Urban microclimate model for thermal comfort analysis
-qgisMinimumVersion=3.0
-author=Your Name
-email=your.email@example.com
-repository=https://github.com/UMEP-dev/solweig
-tracker=https://github.com/UMEP-dev/solweig/issues
-```
-
-#### 2. Create Distribution ZIP
+#### 2. Build the Plugin
 
 ```bash
-# Create a clean build directory
-cd /Users/gareth/dev/umep/solweig
-mkdir -p build/solweig
+# Build for current platform (builds Rust extension + bundles Python library)
+python qgis_plugin/build_plugin.py
 
-# Copy plugin files (excluding build artifacts)
-cp -r qgis_plugin/* build/solweig/
+# Build and create a distributable ZIP for the current platform
+python qgis_plugin/build_plugin.py --package
 
-# Create ZIP with correct structure
-cd build
-zip -r solweig.zip solweig/ -x "*.pyc" -x "*__pycache__*" -x "*.DS_Store"
+# Create a universal multi-platform ZIP from pre-built wheels in dist/
+# (this is what GitHub Actions uses)
+python qgis_plugin/build_plugin.py --universal
 ```
 
 #### 3. Test Plugin Locally
 
-Before uploading, test the plugin in QGIS:
-
 ```bash
-# Copy to QGIS plugins directory (macOS)
-cp -r build/solweig ~/Library/Application\ Support/QGIS/QGIS3/profiles/default/python/plugins/
-
-# Or use symlink for development
-ln -s /Users/gareth/dev/umep/solweig/qgis_plugin ~/Library/Application\ Support/QGIS/QGIS3/profiles/default/python/plugins/solweig
+# Symlink for development (macOS)
+ln -s "$(pwd)/qgis_plugin/solweig_qgis" ~/Library/Application\ Support/QGIS/QGIS3/profiles/default/python/plugins/solweig_qgis
 ```
 
 Then:
@@ -259,16 +240,14 @@ Then:
 
 1. Register at <https://plugins.qgis.org/>
 2. Log in → **My Plugins** → **Upload a plugin**
-3. Select `build/solweig.zip`
+3. Select the ZIP from `qgis_plugin/solweig-qgis-*-universal.zip`
 4. Check **"Experimental"** for pre-release versions
 5. Add changelog/release notes
 6. Click **Upload**
 
-Review typically takes 1-3 days.
-
 ### Release Checklist
 
-- [ ] Version incremented in `qgis_plugin/metadata.txt`
+- [ ] Version incremented in `qgis_plugin/solweig_qgis/metadata.txt`
 - [ ] All tests passing (`pytest tests/`)
 - [ ] Documentation updated
 - [ ] CHANGELOG.md updated

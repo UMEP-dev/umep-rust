@@ -101,6 +101,17 @@ def get_platform_info(target: str | None = None) -> dict:
     }
 
 
+def copy_license():
+    """Copy LICENSE from project root into the plugin directory (required by QGIS repo)."""
+    src = PROJECT_ROOT / "LICENSE"
+    dest = PLUGIN_DIR / "LICENSE"
+    if src.exists():
+        shutil.copy2(src, dest)
+        print(f"  Copied LICENSE into {PLUGIN_DIR.name}/")
+    else:
+        print("  WARNING: No LICENSE file found at project root")
+
+
 def clean_bundle_dir():
     """Clean the bundle and native directories."""
     if BUNDLE_ROOT.exists():
@@ -257,8 +268,10 @@ def create_package_zip(version: str = "0.1.0", target: str | None = None) -> Pat
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for file_path in PLUGIN_DIR.rglob("*"):
             if file_path.is_file():
-                # Skip __pycache__ and .pyc files
+                # Skip __pycache__, .pyc, and macOS metadata files
                 if "__pycache__" in str(file_path) or file_path.suffix == ".pyc":
+                    continue
+                if file_path.name in (".DS_Store", "._DS_Store"):
                     continue
                 arcname = file_path.relative_to(SCRIPT_DIR)
                 zf.write(file_path, arcname)
@@ -399,6 +412,7 @@ def build_universal(version: str = "0.1.0") -> Path:
 
     # Step 4: Verify and create init
     print("\n[4/4] Verifying bundle...")
+    copy_license()
     create_bundle_init()
 
     binary_count = sum(1 for _ in NATIVE_DIR.rglob("rustalgos.*")) if NATIVE_DIR.exists() else 0
@@ -414,6 +428,8 @@ def build_universal(version: str = "0.1.0") -> Path:
         for file_path in PLUGIN_DIR.rglob("*"):
             if file_path.is_file():
                 if "__pycache__" in str(file_path) or file_path.suffix == ".pyc":
+                    continue
+                if file_path.name in (".DS_Store", "._DS_Store"):
                     continue
                 arcname = file_path.relative_to(SCRIPT_DIR)
                 zf.write(file_path, arcname)
@@ -485,6 +501,7 @@ def main():
     clean_bundle_dir()
 
     # Build steps
+    copy_license()
     wheel_path = build_rust_extension(release=args.release, target=args.target)
     extract_solweig_from_wheel(wheel_path)
     create_bundle_init()

@@ -1,7 +1,7 @@
 [general]
 name=SOLWEIG
 qgisMinimumVersion=3.28
-description=Calculate Mean Radiant Temperature (Tmrt), UTCI, and PET thermal comfort indices using the SOLWEIG model.
+description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
 version=0.1.0-beta1
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
