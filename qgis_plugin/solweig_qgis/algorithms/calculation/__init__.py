@@ -1,0 +1,1 @@
+"""Unified SOLWEIG calculation algorithm."""

@@ -1,0 +1,131 @@
+# Contributing
+
+Thank you for your interest in contributing to SOLWEIG!
+
+## Development Setup
+
+### Prerequisites
+
+- Python 3.10+
+- Rust toolchain (for building extensions)
+- uv (package manager)
+
+### Clone and Install
+
+```bash
+git clone https://github.com/UMEP-dev/solweig.git
+cd solweig
+
+# Install dependencies
+uv sync
+
+# Build Rust extension
+maturin develop
+```
+
+### Verify Installation
+
+```bash
+# Run tests
+pytest ./tests
+
+# Full verification (format, lint, typecheck, test)
+poe verify_project
+```
+
+## Development Workflow
+
+### Making Changes
+
+1. Create a feature branch: `git checkout -b feature/my-feature`
+2. Make your changes
+3. Run verification: `poe verify_project`
+4. Commit with clear messages
+5. Open a pull request
+
+### Code Style
+
+We use these tools (configured in `pyproject.toml`):
+
+| Tool | Purpose |
+|------|---------|
+| **ruff** | Linting and formatting |
+| **ty** | Type checking |
+| **pytest** | Testing |
+
+Run all checks:
+
+```bash
+poe verify_project
+```
+
+### Testing
+
+Tests are in `tests/`:
+
+- `tests/spec/` - Physical property tests (shadows, SVF, radiation)
+- `tests/golden/` - Reference data validation
+- `tests/test_api.py` - Integration tests
+
+Add tests for new functionality:
+
+```bash
+# Run specific test file
+pytest tests/test_api.py
+
+# Run with coverage
+pytest --cov=solweig tests/
+```
+
+## Project Structure
+
+```
+pysrc/solweig/          # Python source
+  api.py                # Public API
+  models/               # Dataclasses (SurfaceData, Weather, etc.)
+  components/           # Modular calculation functions
+  computation.py        # Core orchestration
+rust/                   # Rust extensions
+specs/                  # Module specifications
+tests/                  # Test suite
+docs/                   # Documentation (MkDocs)
+```
+
+## Types of Contributions
+
+### Bug Reports
+
+Open an issue with:
+
+- Clear description of the bug
+- Steps to reproduce
+- Expected vs actual behavior
+- Version information
+
+### Feature Requests
+
+Open an issue describing:
+
+- The use case
+- Proposed solution
+- Alternatives considered
+
+### Code Contributions
+
+1. Check existing issues for related work
+2. Discuss major changes in an issue first
+3. Follow the code style guidelines
+4. Add tests for new functionality
+5. Update documentation as needed
+
+## Acknowledgements
+
+SOLWEIG is adapted from the original UMEP (Urban Multi-scale Environmental Predictor) code by Fredrik Lindberg, Ting Sun, Sue Grimmond, Yihao Tang, and Nils Wallenberg.
+
+If you use SOLWEIG in research, please cite:
+
+> Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services. Environmental Modelling and Software 99, 70-87 [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the GNU General Public License v3.0.

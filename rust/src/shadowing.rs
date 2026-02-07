@@ -22,7 +22,7 @@ static GPU_CONTEXT: OnceLock<Option<ShadowGpuContext>> = OnceLock::new();
 static GPU_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 #[cfg(feature = "gpu")]
-fn get_gpu_context() -> Option<&'static ShadowGpuContext> {
+pub(crate) fn get_gpu_context() -> Option<&'static ShadowGpuContext> {
     // Check if GPU is enabled
     if !GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
         return None;
@@ -128,6 +128,24 @@ pub(crate) fn calculate_shadows_rust(
     let num_rows = shape[0];
     let num_cols = shape[1];
     let dim = (num_rows, num_cols);
+
+    // Handle zenith case (altitude >= 89.5°): no shadows cast from directly overhead.
+    // This avoids tan(90°) = infinity which breaks the shadow propagation loop.
+    // For SVF calculations, zenith patches represent looking straight up - all points
+    // can see the sky in this direction (no obstruction).
+    if altitude_deg >= 89.5 {
+        return ShadowingResultRust {
+            bldg_sh: Array2::<f32>::ones(dim),
+            veg_sh: Array2::<f32>::ones(dim),
+            veg_blocks_bldg_sh: Array2::<f32>::ones(dim),
+            wall_sh: walls_view_opt.map(|_| Array2::<f32>::zeros(dim)),
+            wall_sun: walls_view_opt.map(|w| w.to_owned()),
+            wall_sh_veg: walls_view_opt.map(|_| Array2::<f32>::zeros(dim)),
+            face_sh: walls_view_opt.map(|_| Array2::<f32>::zeros(dim)),
+            face_sun: walls_view_opt.map(|w| w.mapv(|v| if v > 0.0 { 1.0 } else { 0.0 })),
+            sh_on_wall: walls_scheme_view_opt.map(|_| Array2::<f32>::zeros(dim)),
+        };
+    }
 
     // GPU acceleration path: use GPU if available for all shadow types
     #[cfg(feature = "gpu")]
@@ -326,12 +344,18 @@ pub(crate) fn calculate_shadows_rust(
             let mut bldg_sh_dst_slice = bldg_sh.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
 
             par_azip!((prop_h in &mut prop_bldg_h_dst_slice, &dsm_src in &dsm_src_slice) {
-                let shifted_dsm = dsm_src - dz;
-                *prop_h = prop_h.max(shifted_dsm);
+                if dsm_src.is_finite() {
+                    let shifted_dsm = dsm_src - dz;
+                    *prop_h = prop_h.max(shifted_dsm);
+                }
             });
 
             par_azip!((bldg_sh_flag in &mut bldg_sh_dst_slice, &prop_h in &prop_bldg_h_dst_slice, &dsm_target in &dsm_dst_slice) {
-                *bldg_sh_flag = if prop_h > dsm_target { 1.0 } else { 0.0 };
+                if dsm_target.is_finite() {
+                    *bldg_sh_flag = if prop_h > dsm_target { 1.0 } else { 0.0 };
+                } else {
+                    *bldg_sh_flag = f32::NAN;
+                }
             });
 
             // Vegetation shadow calculation on the slice
@@ -345,8 +369,10 @@ pub(crate) fn calculate_shadows_rust(
                     propagated_veg_sh_height.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
 
                 par_azip!((prop_veg_h in &mut prop_veg_h_dst_slice, &source_veg_canopy in &veg_canopy_src_slice) {
-                    let shifted_veg_canopy = source_veg_canopy - dz;
-                    *prop_veg_h = prop_veg_h.max(shifted_veg_canopy);
+                    if source_veg_canopy.is_finite() {
+                        let shifted_veg_canopy = source_veg_canopy - dz;
+                        *prop_veg_h = prop_veg_h.max(shifted_veg_canopy);
+                    }
                 });
 
                 let veg_trunk_src_slice =
