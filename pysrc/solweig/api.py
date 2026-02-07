@@ -71,9 +71,6 @@ from .tiling import (
 from .timeseries import calculate_timeseries
 from .utils import dict_to_namespace, extract_bounds, intersect_bounds, namespace_to_dict, resample_to_grid
 
-# Version for cache validation
-__version__ = "0.0.1a1"
-
 if TYPE_CHECKING:
     pass
 

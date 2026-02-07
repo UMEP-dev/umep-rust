@@ -2,7 +2,7 @@ name: publish package
 on:
   push:
     tags-ignore:
-      - "*.*.*[a]*"
+      - "*.*.*[a]*"  # Skip alpha tags (e.g. v0.1.0a1); beta/rc/release tags publish to PyPI
 permissions:
   contents: read
 jobs:

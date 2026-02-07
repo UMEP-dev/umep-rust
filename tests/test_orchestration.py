@@ -683,8 +683,8 @@ class TestValidateTileSize:
     """Tests for validate_tile_size() in tiling.py."""
 
     def test_valid_size_passes(self):
-        adjusted, warning = validate_tile_size(1024, buffer_pixels=50, pixel_size=1.0)
-        assert adjusted == 1024
+        adjusted, warning = validate_tile_size(800, buffer_pixels=50, pixel_size=1.0)
+        assert adjusted == 800
         assert warning is None
 
     def test_below_minimum_adjusted(self):

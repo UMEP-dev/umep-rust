@@ -38,11 +38,15 @@ temperature (Tmrt) and other urban climate parameters.
 
 import contextlib
 import logging
+from importlib.metadata import PackageNotFoundError, version
 
 logger = logging.getLogger(__name__)
 
-# Version
-__version__ = "0.0.1a1"
+# Version: single source of truth is pyproject.toml
+try:
+    __version__ = version("solweig")
+except PackageNotFoundError:
+    __version__ = "0.0.0.dev0"  # Fallback for editable/source installs without metadata
 
 # Import simplified API
 # Import utility modules
