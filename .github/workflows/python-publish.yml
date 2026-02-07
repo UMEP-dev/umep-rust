@@ -2,7 +2,7 @@ name: publish package
 on:
   push:
     tags-ignore:
-      - "*.*.*[a]*"  # Skip alpha tags (e.g. v0.1.0a1); beta/rc/release tags publish to PyPI
+      - "*.*.*[a]*" # Skip alpha tags (e.g. v0.1.0a1); beta/rc/release tags publish to PyPI
 permissions:
   contents: read
 jobs:
@@ -103,9 +103,9 @@ jobs:
     strategy:
       matrix:
         platform:
-          - runner: macos-14-large  # Intel x86_64 (GitHub's recommended replacement)
+          - runner: macos-15-intel # Intel x86_64 (GitHub's recommended replacement)
             target: x86_64
-          - runner: macos-14  # Apple Silicon ARM64
+          - runner: macos-14 # Apple Silicon ARM64
             target: aarch64
     steps:
       - uses: actions/checkout@v4

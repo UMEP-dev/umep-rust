@@ -29,7 +29,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             platform_tag: windows_x86_64
           # macOS x86_64 (Intel)
-          - os: macos-14-large # Intel x86_64 (GitHub's recommended replacement)
+          - os: macos-15-intel # Intel x86_64
             target: x86_64-apple-darwin
             platform_tag: macos_x86_64
           # macOS ARM64 (Apple Silicon)

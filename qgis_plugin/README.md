@@ -251,7 +251,7 @@ python build_plugin.py --clean
 
 This creates a platform-specific ZIP file (e.g., `solweig-qgis-0.1.0-linux_x86_64.zip`) that can be installed directly in QGIS.
 
-**Supported platforms:**
+**Supported platforms (CI builds):**
 
 - Linux x86_64
 - Windows x86_64
