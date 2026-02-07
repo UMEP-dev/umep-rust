@@ -215,3 +215,19 @@ h_c = 12.1 × √v                      (forced convection, v in m/s)
 ```
 
 The larger of the two values is used.
+
+## References
+
+**Primary UMEP Citation:**
+
+- Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) "Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services." Environmental Modelling and Software 99, 70-87. [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
+
+**PET Model:**
+
+- Höppe P (1999) "The physiological equivalent temperature - a universal index for the biometeorological assessment of the thermal environment." International Journal of Biometeorology 43(2), 71-75.
+- Matzarakis A, Mayer H, Iziomon MG (1999) "Applications of a universal thermal index: physiological equivalent temperature." International Journal of Biometeorology 43(2), 76-84.
+
+**Human Thermal Balance:**
+
+- Fanger PO (1970) "Thermal Comfort: Analysis and Applications in Environmental Engineering." Danish Technical Press, Copenhagen.
+- Gagge AP, Fobelets AP, Berglund LG (1986) "A standard predictive index of human response to the thermal environment." ASHRAE Transactions 92, 709-731.

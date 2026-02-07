@@ -4,9 +4,10 @@ SOLWEIG (Solar and Longwave Environmental Irradiance Geometry) calculates mean r
 
 **Primary References:**
 
-- Lindberg et al. (2008) - SOLWEIG 1.0 core model
-- Lindberg & Grimmond (2011) - Vegetation and building morphology
-- Lindberg et al. (2015) - Sunlit fractions methodology
+- Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) "Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services." Environmental Modelling and Software 99, 70-87. [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
+- Lindberg F, Holmer B, Thorsson S (2008) "SOLWEIG 1.0 - Modelling spatial variations of 3D radiant fluxes and mean radiant temperature in complex urban settings." International Journal of Biometeorology 52(7), 697-713.
+- Lindberg F, Grimmond CSB (2011) "The influence of vegetation and building morphology on shadow patterns and mean radiant temperatures in urban areas: model development and evaluation." Theoretical and Applied Climatology 105, 311-323.
+- Lindberg F, Grimmond CSB, Martilli A (2015) "Sunlit fractions on urban facets - Impact of spatial resolution and approach." Urban Climate 12, 65-84.
 
 ## Specification Files
 
@@ -148,16 +149,6 @@ UTCI and PET translate the physical environment (Tmrt, Ta, wind, humidity) into 
 - **Altitude**: 0° = horizon, 90° = zenith (directly overhead)
 
 ## Units
-
-| Quantity         | Unit                 |
-| ---------------- | -------------------- |
-| Elevation/height | meters (m)           |
-| Temperature      | degrees Celsius (°C) |
-| Radiation        | W/m²                 |
-| Wind speed       | m/s                  |
-| Humidity         | % (relative)         |
-| SVF/GVF          | dimensionless (0-1)  |
-| Pixel size       | meters               |
 
 | Quantity         | Unit                 |
 | ---------------- | -------------------- |

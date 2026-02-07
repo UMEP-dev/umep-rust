@@ -45,6 +45,7 @@ If Kt ≥ 0.78 (clear):
 ```
 
 Where:
+
 - α = solar altitude angle (radians)
 - Ta = air temperature (°C)
 - RH = relative humidity (fraction, 0-1)
@@ -87,16 +88,16 @@ Where:
 
 Sky clearness parameter ε determines coefficient bins:
 
-| Bin | ε Range    | Description      | Typical Condition    |
-| --- | ---------- | ---------------- | -------------------- |
-| 1   | ε < 1.065  | Very overcast    | Heavy cloud cover    |
-| 2   | 1.065-1.23 | Overcast         | Thick clouds         |
-| 3   | 1.23-1.50  | Cloudy           | Medium clouds        |
-| 4   | 1.50-1.95  | Partly cloudy    | Scattered clouds     |
-| 5   | 1.95-2.80  | Partly clear     | Few clouds           |
-| 6   | 2.80-4.50  | Clear            | Mostly clear         |
-| 7   | 4.50-6.20  | Very clear       | Exceptionally clear  |
-| 8   | ε > 6.20   | Extremely clear  | Desert/high altitude |
+| Bin | ε Range    | Description     | Typical Condition    |
+| --- | ---------- | --------------- | -------------------- |
+| 1   | ε < 1.065  | Very overcast   | Heavy cloud cover    |
+| 2   | 1.065-1.23 | Overcast        | Thick clouds         |
+| 3   | 1.23-1.50  | Cloudy          | Medium clouds        |
+| 4   | 1.50-1.95  | Partly cloudy   | Scattered clouds     |
+| 5   | 1.95-2.80  | Partly clear    | Few clouds           |
+| 6   | 2.80-4.50  | Clear           | Mostly clear         |
+| 7   | 4.50-6.20  | Very clear      | Exceptionally clear  |
+| 8   | ε > 6.20   | Extremely clear | Desert/high altitude |
 
 The clearness parameter ε is computed from:
 
@@ -184,12 +185,14 @@ msteg = 46.5 × (ea / Ta_K)
 ```
 
 Where:
+
 - ea = water vapor pressure (hPa)
 - Ta = air temperature (°C)
 - Ta_K = air temperature (K)
 - RH = relative humidity (%)
 
 **Typical values:**
+
 - Clear dry sky: ε_sky ≈ 0.60-0.75
 - Clear humid sky: ε_sky ≈ 0.75-0.85
 - Cloudy sky: ε_sky → 1.0
@@ -212,6 +215,7 @@ Ldown = ε_sky × σ × T_air^4 × SVF
 ```
 
 Where:
+
 - ε_sky = sky emissivity (computed above)
 - σ = Stefan-Boltzmann constant (5.67 × 10⁻⁸ W/m²K⁴)
 - T_air = air temperature (K)
@@ -259,40 +263,40 @@ Lside = ε_wall × σ × T_wall^4 × wall_view_factor
 
 ### Shadow Effects
 
-3. **Shadows block direct shortwave only**
+1. **Shadows block direct shortwave only**
    - Diffuse and longwave unaffected by shadows
    - Shaded areas still receive Kdown, Ldown, Lup
 
-4. **Shadow reduces total K significantly**
+2. **Shadow reduces total K significantly**
    - Sun to shade: ΔK ≈ 200-800 W/m² (depending on direct beam)
 
 ### SVF Effects
 
-5. **Low SVF reduces sky radiation**
+1. **Low SVF reduces sky radiation**
    - Both Kdown and Ldown reduced
    - But Lside from walls increases
 
-6. **Urban canyon radiation balance**
+2. **Urban canyon radiation balance**
    - Lower Kdown, Ldown (less sky)
    - Higher Kup, Lside (more surfaces)
 
 ### Temperature Effects
 
-7. **Hot surfaces increase longwave**
+1. **Hot surfaces increase longwave**
    - Lup increases with ground temperature
    - Can dominate radiation budget on hot days
 
 ### Typical Values
 
-| Component | Clear Day Noon | Shaded | Night |
-| --------- | -------------- | ------ | ----- |
-| Kdown | 100-200 | 100-200 | 0 |
-| Kup | 50-150 | 30-100 | 0 |
-| Kside (sunlit) | 200-600 | 0 | 0 |
-| I (direct) | 600-900 | 0 | 0 |
-| Ldown | 300-400 | 300-400 | 250-350 |
-| Lup | 400-600 | 350-500 | 300-450 |
-| Lside | 350-550 | 350-500 | 300-450 |
+| Component      | Clear Day Noon | Shaded  | Night   |
+| -------------- | -------------- | ------- | ------- |
+| Kdown          | 100-200        | 100-200 | 0       |
+| Kup            | 50-150         | 30-100  | 0       |
+| Kside (sunlit) | 200-600        | 0       | 0       |
+| I (direct)     | 600-900        | 0       | 0       |
+| Ldown          | 300-400        | 300-400 | 250-350 |
+| Lup            | 400-600        | 350-500 | 300-450 |
+| Lside          | 350-550        | 350-500 | 300-450 |
 
 All values in W/m².
 
@@ -310,6 +314,7 @@ CI = G / I0
 ```
 
 Where transmission coefficients account for:
+
 - Trpg = Rayleigh scattering and permanent gases
 - Tw = water vapor absorption
 - Tar = aerosol attenuation
@@ -323,6 +328,29 @@ The model supports two diffuse radiation modes:
 2. **Anisotropic** (Perez): Non-uniform sky luminance, requires shadow matrices
 
 Use anisotropic mode when:
+
 - High accuracy required near buildings
 - Studying directional radiation effects
 - SVF < 0.7 (urban canyons)
+
+## References
+
+**Primary UMEP Citation:**
+
+- Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) "Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services." Environmental Modelling and Software 99, 70-87. [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
+
+**Radiation Model:**
+
+- Lindberg F, Holmer B, Thorsson S (2008) "SOLWEIG 1.0 - Modelling spatial variations of 3D radiant fluxes and mean radiant temperature in complex urban settings." International Journal of Biometeorology 52(7), 697-713.
+
+**Diffuse Fraction:**
+
+- Reindl DT, Beckman WA, Duffie JA (1990) "Diffuse fraction correlations." Solar Energy 45(1), 1-7.
+
+**Anisotropic Sky:**
+
+- Perez R, Seals R, Michalsky J (1993) "All-weather model for sky luminance distribution - Preliminary configuration and validation." Solar Energy 50(3), 235-245.
+
+**Sky Emissivity:**
+
+- Jonsson P, Bennet C, Eliasson I, Selin Lindgren E (2006) "Suspended particulate matter and its relations to the urban climate in Dar es Salaam, Tanzania." Atmospheric Environment 40(25), 4797-4807.

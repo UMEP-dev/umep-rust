@@ -323,6 +323,18 @@ sys.path.insert(0, '/path/to/solweig/pysrc')
 | `pysrc/solweig/models/surface.py` | SurfaceData with height conversion |
 | `pysrc/solweig/models/weather.py` | Weather.from_epw() |
 
+## Citation
+
+If you use SOLWEIG in your research, please cite the original UMEP paper:
+
+> Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services. Environmental Modelling and Software 99, 70-87 [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
+
+## Original Code
+
+This plugin is adapted from the GPLv3-licensed [UMEP-processing](https://github.com/UMEP-dev/UMEP-processing) by Fredrik Lindberg, Ting Sun, Sue Grimmond, Yihao Tang, and Nils Wallenberg.
+
+SOLWEIG plugin maintained by Gareth Simons and the SOLWEIG Development Team.
+
 ## License
 
-Same license as SOLWEIG core library.
+GNU General Public License v3.0. Same license as SOLWEIG core library and original UMEP code.

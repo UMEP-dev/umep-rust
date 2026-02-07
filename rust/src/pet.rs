@@ -4,7 +4,7 @@ use rayon::prelude::*;
 
 /// Physical constants for PET calculation
 const PO: f32 = 1013.25; // Reference pressure (hPa)
-const P: f32 = 1013.25;  // Atmospheric pressure (hPa)
+const P: f32 = 1013.25; // Atmospheric pressure (hPa)
 const ROB: f32 = 1.06;
 const CB: f32 = 3.64 * 1000.0;
 const EMSK: f32 = 0.99;
@@ -46,8 +46,12 @@ fn pet_single(
     let eta = 0.0;
 
     // INBODY - metabolic rate calculation
-    let metbf = 3.19 * mbody.powf(0.75) * (1.0 + 0.004 * (30.0 - age) + 0.018 * ((ht * 100.0 / mbody.powf(1.0 / 3.0)) - 42.1));
-    let metbm = 3.45 * mbody.powf(0.75) * (1.0 + 0.004 * (30.0 - age) + 0.010 * ((ht * 100.0 / mbody.powf(1.0 / 3.0)) - 43.4));
+    let metbf = 3.19
+        * mbody.powf(0.75)
+        * (1.0 + 0.004 * (30.0 - age) + 0.018 * ((ht * 100.0 / mbody.powf(1.0 / 3.0)) - 42.1));
+    let metbm = 3.45
+        * mbody.powf(0.75)
+        * (1.0 + 0.004 * (30.0 - age) + 0.010 * ((ht * 100.0 / mbody.powf(1.0 / 3.0)) - 43.4));
 
     let met = if sex == 1 { metbm + work } else { metbf + work };
 
@@ -134,8 +138,13 @@ fn pet_single(
                 tsk = 1.0 / htcl * (hc * (tcl - ta) + rclo2) + tcl;
 
                 // Radiation balance
-                let rbare = aeff * (1.0 - facl) * EMSK * SIGMA * ((tmrt + 273.2).powi(4) - (tsk + 273.2).powi(4));
-                let rclo = feff * acl * EMCL * SIGMA * ((tmrt + 273.2).powi(4) - (tcl + 273.2).powi(4));
+                let rbare = aeff
+                    * (1.0 - facl)
+                    * EMSK
+                    * SIGMA
+                    * ((tmrt + 273.2).powi(4) - (tsk + 273.2).powi(4));
+                let rclo =
+                    feff * acl * EMCL * SIGMA * ((tmrt + 273.2).powi(4) - (tcl + 273.2).powi(4));
                 let rsum = rbare + rclo;
 
                 // Convection
@@ -155,7 +164,9 @@ fn pet_single(
                 let tsk_adj = if tsk == 36.0 { 36.01 } else { tsk };
 
                 tcore[7] = c_1 / (5.28 * adu + c_2 * 6.3 / 3600.0) + tsk_adj;
-                tcore[3] = c_1 / (5.28 * adu + (c_2 * 6.3 / 3600.0) / (1.0 + 0.5 * (34.0 - tsk_adj))) + tsk_adj;
+                tcore[3] = c_1
+                    / (5.28 * adu + (c_2 * 6.3 / 3600.0) / (1.0 + 0.5 * (34.0 - tsk_adj)))
+                    + tsk_adj;
 
                 if c_11 >= 0.0 {
                     tcore[6] = (-c_10 - c_11.sqrt()) / (2.0 * c_5);
@@ -266,7 +277,8 @@ fn pet_single(
             enbal2 = enbal;
 
             // Radiation balance
-            let rbare = aeff * (1.0 - facl) * EMSK * SIGMA * ((tx + 273.2).powi(4) - (tsk + 273.2).powi(4));
+            let rbare =
+                aeff * (1.0 - facl) * EMSK * SIGMA * ((tx + 273.2).powi(4) - (tsk + 273.2).powi(4));
             let rclo = feff * acl * EMCL * SIGMA * ((tx + 273.2).powi(4) - (tcl + 273.2).powi(4));
             let rsum = rbare + rclo;
 
@@ -378,7 +390,9 @@ pub fn pet_grid<'py>(
             if !tmrt_val.is_finite() || !va_val.is_finite() || va_val <= 0.0 || tmrt_val <= -999.0 {
                 *out = f32::NAN;
             } else {
-                *out = pet_single(ta, rh, tmrt_val, va_val, mbody, age, height, activity, clo, sex);
+                *out = pet_single(
+                    ta, rh, tmrt_val, va_val, mbody, age, height, activity, clo, sex,
+                );
             }
         });
 

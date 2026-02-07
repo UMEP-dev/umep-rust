@@ -166,3 +166,15 @@ The TsWaveDelay model parameters (decay constant 33.27) require validation again
 - [ ] Sensitivity analysis for different surface types
 
 The current parameterization is empirical and may need adjustment for specific climates or surface materials.
+
+## References
+
+**Primary UMEP Citation:**
+
+- Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) "Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services." Environmental Modelling and Software 99, 70-87. [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
+
+**Ground Temperature Model:**
+
+- Lindberg F, Holmer B, Thorsson S (2008) "SOLWEIG 1.0 - Modelling spatial variations of 3D radiant fluxes and mean radiant temperature in complex urban settings." International Journal of Biometeorology 52(7), 697-713.
+- Lindberg F, Onomura S, Grimmond CSB (2016) "Influence of ground surface characteristics on the mean radiant temperature in urban areas." International Journal of Biometeorology 60(9), 1439-1452.
+- Offerle B, Grimmond CSB, Oke TR (2003) "Parameterization of net all-wave radiation for urban areas." Journal of Applied Meteorology 42(8), 1157-1173.

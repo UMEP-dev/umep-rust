@@ -155,3 +155,13 @@ Lwall = ε × σ × Twall^4 × wall_view_factor
 | Street canyon | ~0.4 | ~0.6 | Mixed |
 | Courtyard | ~0.2 | ~0.8 | Surface-dominated |
 | Under canopy | ~0.1 | ~0.9 | Enclosed |
+
+## References
+
+**Primary UMEP Citation:**
+
+- Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) "Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services." Environmental Modelling and Software 99, 70-87. [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
+
+**GVF Model:**
+
+- Lindberg F, Holmer B, Thorsson S (2008) "SOLWEIG 1.0 - Modelling spatial variations of 3D radiant fluxes and mean radiant temperature in complex urban settings." International Journal of Biometeorology 52(7), 697-713.

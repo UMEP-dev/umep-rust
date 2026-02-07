@@ -312,3 +312,14 @@ Some legacy implementations used -273.2 (rounded). The modern implementation use
 ### Numerical Stability
 
 When Sstr ≤ 0 (very rare, indicates model error), the implementation clamps to a minimum value to avoid invalid fourth-root operations.
+
+## References
+
+**Primary UMEP Citation:**
+
+- Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) "Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services." Environmental Modelling and Software 99, 70-87. [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
+
+**Tmrt Model:**
+
+- Lindberg F, Holmer B, Thorsson S (2008) "SOLWEIG 1.0 - Modelling spatial variations of 3D radiant fluxes and mean radiant temperature in complex urban settings." International Journal of Biometeorology 52(7), 697-713.
+- Höppe P (1992) "A new procedure to determine the mean radiant temperature outdoors." Wetter und Leben 44, 147-151.

@@ -3,6 +3,17 @@ SOLWEIG QGIS Plugin
 
 Provides QGIS Processing algorithms for calculating Mean Radiant Temperature (Tmrt),
 UTCI, and PET thermal comfort indices using the SOLWEIG model.
+
+Adapted from UMEP (Urban Multi-scale Environmental Predictor).
+Original code by Fredrik Lindberg, Ting Sun, Sue Grimmond, Yihao Tang, and Nils Wallenberg.
+
+Citation:
+    Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L,
+    Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F,
+    Tan JG, Wästberg D, Xue L, Zhang Z (2018) Urban Multi-scale Environmental Predictor
+    (UMEP) - An integrated tool for city-based climate services.
+    Environmental Modelling and Software 99, 70-87
+    https://doi.org/10.1016/j.envsoft.2017.09.020
 """
 
 from __future__ import annotations

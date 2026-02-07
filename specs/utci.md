@@ -125,3 +125,14 @@ The offset is a complex polynomial function (~200 terms) of:
 3. **Extrapolation warning**
    - Results outside valid ranges may be unreliable
    - Clamp or flag out-of-range inputs
+
+## References
+
+**Primary UMEP Citation:**
+
+- Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) "Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services." Environmental Modelling and Software 99, 70-87. [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
+
+**UTCI Model:**
+
+- Błażejczyk K, Jendritzky G, Bröde P, Fiala D, Havenith G, Epstein Y, Psikuta A, Kampmann B (2013) "An introduction to the Universal Thermal Climate Index (UTCI)." Geographia Polonica 86(1), 5-10.
+- Bröde P, Fiala D, Błażejczyk K, Holmér I, Jendritzky G, Kampmann B, Tinz B, Havenith G (2012) "Deriving the operational procedure for the Universal Thermal Climate Index (UTCI)." International Journal of Biometeorology 56(3), 481-494.

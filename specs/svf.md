@@ -167,3 +167,18 @@ Trees reduce SVF but not completely (light passes through canopy):
 - **SVF_veg**: Sky view through vegetation canopy
 - Accounts for leaf area index and transmissivity
 - SVF_veg ≥ SVF (vegetation blocks less than buildings)
+
+## References
+
+**Primary UMEP Citation:**
+
+- Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) "Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services." Environmental Modelling and Software 99, 70-87. [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
+
+**SVF Algorithm:**
+
+- Lindberg F, Holmer B, Thorsson S (2008) "SOLWEIG 1.0 - Modelling spatial variations of 3D radiant fluxes and mean radiant temperature in complex urban settings." International Journal of Biometeorology 52(7), 697-713.
+- Lindberg F, Grimmond CSB (2011) "The influence of vegetation and building morphology on shadow patterns and mean radiant temperatures in urban areas: model development and evaluation." Theoretical and Applied Climatology 105, 311-323.
+
+**Patch-Based Method:**
+
+- Robinson D, Stone A (1990) "Solar Radiation Modelling in the Urban Context." Building and Environment 25(3), 201-209.
