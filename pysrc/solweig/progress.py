@@ -76,12 +76,19 @@ class ProgressReporter:
         desc: str = "",
         feedback: Any = None,
         disable: bool = False,
+        progress_range: tuple[float, float] | None = None,
     ):
         self.total = total
         self.desc = desc
         self.current = 0
         self.disable = disable
         self._closed = False
+
+        # Optional QGIS percentage sub-range mapping.
+        # When set, maps internal 0..total to progress_range[0]..progress_range[1]
+        # instead of the default 0..100.  Useful when SVF is one phase of a
+        # larger QGIS algorithm (e.g. surface preprocessing maps SVF to 35-74%).
+        self._progress_range = progress_range
 
         # Determine which backend to use
         self._qgis_feedback = None
@@ -121,7 +128,12 @@ class ProgressReporter:
 
         if self._qgis_feedback is not None:
             # QGIS expects percentage 0-100
-            percent = min(100, int(100 * self.current / self.total)) if self.total > 0 else 0
+            frac = min(1.0, self.current / self.total) if self.total > 0 else 0.0
+            if self._progress_range is not None:
+                lo, hi = self._progress_range
+                percent = int(lo + frac * (hi - lo))
+            else:
+                percent = int(100 * frac)
             self._qgis_feedback.setProgress(percent)
         elif self._tqdm_bar is not None:
             self._tqdm_bar.update(n)

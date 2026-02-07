@@ -44,6 +44,7 @@ pub(crate) fn lside_veg_pure(
     LupW: ArrayView2<f32>,
     LupN: ArrayView2<f32>,
     anisotropic_longwave: bool,
+    valid: Option<ArrayView2<u8>>,
 ) -> LsideVegPureResult {
     let shape = svfE.shape();
     let (rows, cols) = (shape[0], shape[1]);
@@ -86,6 +87,15 @@ pub(crate) fn lside_veg_pure(
         .for_each(|(idx, (((least, lsouth), lwest), lnorth))| {
             let r = idx / cols;
             let c = idx % cols;
+            if let Some(ref v) = valid {
+                if v[[r, c]] == 0 {
+                    *least = f32::NAN;
+                    *lsouth = f32::NAN;
+                    *lwest = f32::NAN;
+                    *lnorth = f32::NAN;
+                    return;
+                }
+            }
             let compute = |svf: f32,
                            svfveg: f32,
                            svfaveg: f32,
@@ -217,6 +227,7 @@ pub(crate) fn kside_veg_isotropic_pure(
     KupW: ArrayView2<f32>,
     KupN: ArrayView2<f32>,
     cyl: bool,
+    valid: Option<ArrayView2<u8>>,
 ) -> KsideVegPureResult {
     let shape = svfE.shape();
     let (rows, cols) = (shape[0], shape[1]);
@@ -251,6 +262,9 @@ pub(crate) fn kside_veg_isotropic_pure(
 
     for r in 0..rows {
         for c in 0..cols {
+            if let Some(ref v) = valid {
+                if v[[r, c]] == 0 { continue; }
+            }
             let (vveg, vwall) = kvikt_veg(svfE[(r, c)], svfEveg[(r, c)], vikttot);
             svfviktbuvegE[(r, c)] = vwall + vveg * (1.0 - psi);
             let (vveg, vwall) = kvikt_veg(svfS[(r, c)], svfSveg[(r, c)], vikttot);
@@ -307,6 +321,7 @@ pub(crate) fn kside_veg_isotropic_pure(
     let kup_s_slice = KupS.as_slice().unwrap();
     let kup_w_slice = KupW.as_slice().unwrap();
     let kup_n_slice = KupN.as_slice().unwrap();
+    let valid_slice = valid.as_ref().map(|v| v.as_slice().unwrap());
     ke_slice
         .par_iter_mut()
         .zip(ks_slice.par_iter_mut())
@@ -314,6 +329,15 @@ pub(crate) fn kside_veg_isotropic_pure(
         .zip(kn_slice.par_iter_mut())
         .enumerate()
         .for_each(|(idx, (((ke, ks), kw), kn))| {
+            if let Some(ref vs) = valid_slice {
+                if vs[idx] == 0 {
+                    *ke = f32::NAN;
+                    *ks = f32::NAN;
+                    *kw = f32::NAN;
+                    *kn = f32::NAN;
+                    return;
+                }
+            }
             let fsh = fsh_slice[idx];
             let svf_e = svf_e_slice[idx];
             let svf_s = svf_s_slice[idx];
@@ -417,6 +441,7 @@ pub fn lside_veg(
         LupW.as_array(),
         LupN.as_array(),
         anisotropic_longwave,
+        None,
     );
 
     Py::new(

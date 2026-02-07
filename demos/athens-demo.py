@@ -70,7 +70,7 @@ surface = solweig.SurfaceData.prepare(
 weather_list = solweig.Weather.from_epw(
     str(input_path / "athens_2023.epw"),
     start="2023-07-01",
-    end="2023-07-03",  # 3 days: July 1-3
+    end="2023-07-04",  # 4 days: July 1-4
 )
 
 # %%

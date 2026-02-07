@@ -38,7 +38,7 @@ if TYPE_CHECKING:
 
 # Constants for tiled processing
 MIN_TILE_SIZE = 256  # Minimum tile size in pixels
-MAX_TILE_SIZE = 1000  # Maximum tile size in pixels (memory limit)
+MAX_TILE_SIZE = 2500  # Maximum tile size in pixels (GPU needs 5M+ px for good utilization)
 MIN_SUN_ELEVATION_DEG = 3.0  # Minimum sun elevation for shadow calculations
 MAX_BUFFER_M = 500.0  # Maximum buffer distance in meters
 
@@ -97,7 +97,7 @@ def validate_tile_size(
 
     Constraints:
         - tile_size >= MIN_TILE_SIZE (256)
-        - tile_size <= MAX_TILE_SIZE (1000)
+        - tile_size <= MAX_TILE_SIZE (2500)
         - Core area (tile_size - 2*buffer) >= 128 pixels
     """
     warning = None
@@ -203,7 +203,7 @@ def calculate_tiled(
 
     This function processes the raster in tiles with overlapping buffers to ensure
     accurate shadow calculations at tile boundaries. Use this for rasters larger
-    than ~1000x1000 pixels to manage memory usage.
+    than ~2500x2500 pixels to manage memory usage.
 
     The buffer distance is calculated dynamically based on the maximum DSM height:
         buffer = min(max_height / tan(3°), 500m)

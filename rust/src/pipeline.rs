@@ -15,7 +15,7 @@ use crate::ground::{
 use crate::gvf::{gvf_calc_pure, gvf_calc_with_cache, GvfResultPure};
 use crate::gvf_geometry::{precompute_gvf_geometry, GvfGeometryCache};
 use crate::shadowing::{calculate_shadows_rust, ShadowingResultRust};
-use crate::sky::{anisotropic_sky_pure, cylindric_wedge_pure, weighted_patch_sum_pure};
+use crate::sky::{anisotropic_sky_pure, cylindric_wedge_pure_masked, weighted_patch_sum_pure};
 use crate::tmrt::compute_tmrt_pure;
 use crate::vegetation::{kside_veg_isotropic_pure, lside_veg_pure};
 
@@ -262,6 +262,7 @@ fn compute_kup(
     gvfalbnosh_s: ArrayView2<f32>,
     gvfalbnosh_w: ArrayView2<f32>,
     gvfalbnosh_n: ArrayView2<f32>,
+    valid: ArrayView2<u8>,
 ) -> (Array2<f32>, Array2<f32>, Array2<f32>, Array2<f32>, Array2<f32>) {
     let rad_i_sin_alt = rad_i * (altitude * PI / 180.0).sin();
 
@@ -279,6 +280,14 @@ fn compute_kup(
     for idx in 0..shape.0 * shape.1 {
         let r = idx / ncols;
         let c = idx % ncols;
+        if valid[[r, c]] == 0 {
+            kup[[r, c]] = f32::NAN;
+            kup_e[[r, c]] = f32::NAN;
+            kup_s[[r, c]] = f32::NAN;
+            kup_w[[r, c]] = f32::NAN;
+            kup_n[[r, c]] = f32::NAN;
+            continue;
+        }
         let sv = svfbuveg[[r, c]];
         let fsh = f_sh[[r, c]];
         let ct = rad_d * sv + albedo_b * (1.0 - sv) * (rad_g * (1.0 - fsh) + rad_d * fsh);
@@ -304,6 +313,7 @@ fn compute_ldown(
     svf_aveg: ArrayView2<f32>,
     emis_wall: f32,
     ci: f32,
+    valid: ArrayView2<u8>,
 ) -> Array2<f32> {
     let ta_k = ta + KELVIN_OFFSET;
     let ta_k4 = ta_k.powi(4);
@@ -315,6 +325,10 @@ fn compute_ldown(
     for idx in 0..shape.0 * shape.1 {
         let r = idx / ncols;
         let c = idx % ncols;
+        if valid[[r, c]] == 0 {
+            ldown[[r, c]] = f32::NAN;
+            continue;
+        }
         let sv = svf[[r, c]];
         let sv_veg = svf_veg[[r, c]];
         let sv_aveg = svf_aveg[[r, c]];
@@ -351,6 +365,7 @@ fn compute_kdown(
     albedo_wall: f32,
     f_sh: ArrayView2<f32>,
     drad: ArrayView2<f32>,
+    valid: ArrayView2<u8>,
 ) -> Array2<f32> {
     let shape = shadow.dim();
     let mut kdown = Array2::<f32>::zeros(shape);
@@ -359,6 +374,10 @@ fn compute_kdown(
     for idx in 0..shape.0 * shape.1 {
         let r = idx / ncols;
         let c = idx % ncols;
+        if valid[[r, c]] == 0 {
+            kdown[[r, c]] = f32::NAN;
+            continue;
+        }
         kdown[[r, c]] = rad_i * shadow[[r, c]] * sin_alt
             + drad[[r, c]]
             + albedo_wall * (1.0 - svfbuveg[[r, c]]) * (rad_g * (1.0 - f_sh[[r, c]]) + rad_d * f_sh[[r, c]]);
@@ -487,8 +506,11 @@ pub fn compute_timestep(
     tgmap1_w: PyReadonlyArray2<f32>,
     tgmap1_n: PyReadonlyArray2<f32>,
     tgout1: PyReadonlyArray2<f32>,
+    // Valid pixel mask (1=valid, 0=NaN/nodata — skip computation for invalid pixels)
+    valid_mask: PyReadonlyArray2<u8>,
 ) -> PyResult<TimestepResult> {
     // Borrow all arrays (zero-copy from numpy)
+    let valid_v = valid_mask.as_array();
     let dsm_v = dsm.as_array();
     let cdsm_v = cdsm.as_ref().map(|a| a.as_array());
     let tdsm_v = tdsm.as_ref().map(|a| a.as_array());
@@ -652,6 +674,10 @@ pub fn compute_timestep(
             for idx in 0..shape.0 * shape.1 {
                 let r = idx / ncols;
                 let c = idx % ncols;
+                if valid_v[[r, c]] == 0 {
+                    arr[[r, c]] = f32::NAN;
+                    continue;
+                }
                 let t = weather.ta + tg_with_shadow[[r, c]] + KELVIN_OFFSET;
                 arr[[r, c]] = emis_grid_v[[r, c]] * SBC * t.powi(4);
             }
@@ -712,7 +738,7 @@ pub fn compute_timestep(
 
     // F_sh (cylindric wedge shadow fraction) — shared by both paths
     let zen_rad = weather.sun_zenith * PI / 180.0;
-    let f_sh = cylindric_wedge_pure(zen_rad, svfalfa_v);
+    let f_sh = cylindric_wedge_pure_masked(zen_rad, svfalfa_v, Some(valid_v));
 
     // Kup — shared by both paths
     let (kup, kup_e, kup_s, kup_w, kup_n) = compute_kup(
@@ -733,6 +759,7 @@ pub fn compute_timestep(
         gvf.gvfalbnosh_s.view(),
         gvf.gvfalbnosh_w.view(),
         gvf.gvfalbnosh_n.view(),
+        valid_v,
     );
 
     // Branch: anisotropic vs isotropic
@@ -762,6 +789,9 @@ pub fn compute_timestep(
         let mut diffsh = Array3::<f32>::zeros((shape.0, shape.1, n_patches));
         for r in 0..shape.0 {
             for c in 0..shape.1 {
+                if valid_v[[r, c]] == 0 {
+                    continue; // Leave as zeros — NaN set by downstream functions
+                }
                 for i in 0..n_patches {
                     let sh = shmat_a[[r, c, i]] as f32 / 255.0;
                     let vsh = vegshmat_a[[r, c, i]] as f32 / 255.0;
@@ -783,6 +813,7 @@ pub fn compute_timestep(
             svf_aveg_v,
             config.emis_wall,
             weather.clearness_index,
+            valid_v,
         );
 
         // lside_veg with anisotropic=true (returns lup * 0.5 for each direction)
@@ -815,6 +846,7 @@ pub fn compute_timestep(
             delay.lup_w.view(),
             delay.lup_n.view(),
             true, // anisotropic
+            Some(valid_v),
         );
 
         // Full anisotropic sky calculation (ldown, kside, lside totals)
@@ -845,6 +877,7 @@ pub fn compute_timestep(
             kup_n.view(),
             None, // voxel_table
             None, // voxel_maps
+            Some(valid_v),
         );
 
         // Kdown (shared formula, but with anisotropic drad)
@@ -858,6 +891,7 @@ pub fn compute_timestep(
             config.albedo_wall,
             f_sh.view(),
             drad.view(),
+            valid_v,
         );
 
         // From anisotropic: ldown from ani_sky, lside from lside_veg, kside from ani_sky
@@ -891,6 +925,7 @@ pub fn compute_timestep(
             svf_aveg_v,
             config.emis_wall,
             weather.clearness_index,
+            valid_v,
         );
 
         // kside_veg (isotropic)
@@ -918,6 +953,7 @@ pub fn compute_timestep(
             kup_w.view(),
             kup_n.view(),
             cyl,
+            Some(valid_v),
         );
 
         // lside_veg (isotropic)
@@ -950,6 +986,7 @@ pub fn compute_timestep(
             delay.lup_w.view(),
             delay.lup_n.view(),
             false, // isotropic
+            Some(valid_v),
         );
 
         // Kdown
@@ -963,6 +1000,7 @@ pub fn compute_timestep(
             config.albedo_wall,
             f_sh.view(),
             drad.view(),
+            valid_v,
         );
 
         // Isotropic: kside_total = kside_i, lside_total = zeros

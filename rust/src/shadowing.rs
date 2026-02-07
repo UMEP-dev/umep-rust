@@ -22,7 +22,7 @@ static GPU_CONTEXT: OnceLock<Option<ShadowGpuContext>> = OnceLock::new();
 static GPU_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 #[cfg(feature = "gpu")]
-fn get_gpu_context() -> Option<&'static ShadowGpuContext> {
+pub(crate) fn get_gpu_context() -> Option<&'static ShadowGpuContext> {
     // Check if GPU is enabled
     if !GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
         return None;

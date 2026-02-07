@@ -723,6 +723,16 @@ GeoTIFF files organised into subfolders of the output directory:
         feedback.setProgressText(f"Running timeseries ({n_steps} timesteps)...")
         feedback.setProgress(25)
 
+        # Pre-compute sun positions and radiation splits for all timesteps.
+        # Without this, each calculate() call independently computes altmax
+        # (96 sun-position iterations per day per timestep), creating a CPU
+        # bottleneck between GPU shadow dispatches.
+        feedback.pushInfo("Pre-computing sun positions and radiation splits...")
+        from solweig.timeseries import _precompute_weather
+
+        _precompute_weather(weather_series, location)
+        feedback.pushInfo(f"  Pre-computed {n_steps} timesteps")
+
         # Initialize thermal state for accurate ground temperature modelling
         from solweig.models.state import ThermalState
 

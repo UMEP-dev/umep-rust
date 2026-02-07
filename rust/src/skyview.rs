@@ -9,8 +9,132 @@ use std::sync::Arc;
 // Import the correct result struct from shadowing
 use crate::shadowing::{calculate_shadows_rust, ShadowingResultRust};
 
+/// Compute shadows for SVF: uses GPU-optimized path when available, CPU fallback otherwise.
+///
+/// The GPU path skips the wall shader and copies only 3 arrays (instead of 10),
+/// saving ~70% staging bandwidth per patch.
+fn compute_svf_shadows(
+    dsm: ArrayView2<f32>,
+    veg_canopy: Option<ArrayView2<f32>>,
+    veg_trunk: Option<ArrayView2<f32>>,
+    bush: Option<ArrayView2<f32>>,
+    azimuth: f32,
+    altitude: f32,
+    scale: f32,
+    max_dsm_ht: f32,
+    min_sun_elev: f32,
+) -> ShadowingResultRust {
+    #[cfg(feature = "gpu")]
+    {
+        if let Some(gpu_ctx) = crate::shadowing::get_gpu_context() {
+            match gpu_ctx.compute_shadows_for_svf(
+                dsm,
+                veg_canopy,
+                veg_trunk,
+                bush,
+                azimuth,
+                altitude,
+                scale,
+                max_dsm_ht,
+                min_sun_elev,
+            ) {
+                Ok(r) => {
+                    let dim = dsm.dim();
+                    return ShadowingResultRust {
+                        bldg_sh: r.bldg_sh,
+                        veg_sh: r.veg_sh.unwrap_or_else(|| Array2::ones(dim)),
+                        veg_blocks_bldg_sh: r
+                            .veg_blocks_bldg_sh
+                            .unwrap_or_else(|| Array2::ones(dim)),
+                        wall_sh: None,
+                        wall_sun: None,
+                        wall_sh_veg: None,
+                        face_sh: None,
+                        face_sun: None,
+                        sh_on_wall: None,
+                    };
+                }
+                Err(e) => {
+                    eprintln!("[GPU] SVF shadow failed: {}. Falling back to CPU.", e);
+                }
+            }
+        }
+    }
+
+    // CPU fallback
+    calculate_shadows_rust(
+        azimuth,
+        altitude,
+        scale,
+        max_dsm_ht,
+        dsm,
+        veg_canopy,
+        veg_trunk,
+        bush,
+        None,
+        None,
+        None,
+        None,
+        min_sun_elev,
+    )
+}
+
 // Correction factor applied in finalize step
 const LAST_ANNULUS_CORRECTION: f32 = 3.0459e-4;
+
+/// Pre-computed total weights for a single sky patch.
+///
+/// Since the shadow array is identical across all annuli within a patch, the
+/// accumulation `Σ(wᵢ × sh) = (Σwᵢ) × sh` allows collapsing the inner annulus
+/// loop from ~10 iterations to a single weighted accumulation.
+struct PatchWeights {
+    weight_iso: f32,
+    weight_n: f32,
+    weight_e: f32,
+    weight_s: f32,
+    weight_w: f32,
+}
+
+/// Sum annulus weights for a patch, collapsing ~10 annuli to scalar totals.
+fn precompute_patch_weights(patch: &PatchInfo) -> PatchWeights {
+    let n = 90.0_f32;
+    let common_w_factor = (1.0 / (2.0 * PI)) * (PI / (2.0 * n)).sin();
+    let steprad_iso = (360.0 / patch.azimuth_patches) * (PI / 180.0);
+    let steprad_aniso = (360.0 / patch.azimuth_patches_aniso) * (PI / 180.0);
+
+    let mut sin_term_sum = 0.0_f32;
+    for annulus_idx in patch.annulino_start..=patch.annulino_end {
+        let annulus = 91.0 - annulus_idx as f32;
+        sin_term_sum += ((PI * (2.0 * annulus - 1.0)) / (2.0 * n)).sin();
+    }
+
+    let total_iso = steprad_iso * common_w_factor * sin_term_sum;
+    let total_aniso = steprad_aniso * common_w_factor * sin_term_sum;
+
+    PatchWeights {
+        weight_iso: total_iso,
+        weight_n: if patch.azimuth >= 270.0 || patch.azimuth < 90.0 {
+            total_aniso
+        } else {
+            0.0
+        },
+        weight_e: if patch.azimuth >= 0.0 && patch.azimuth < 180.0 {
+            total_aniso
+        } else {
+            0.0
+        },
+        weight_s: if patch.azimuth >= 90.0 && patch.azimuth < 270.0 {
+            total_aniso
+        } else {
+            0.0
+        },
+        weight_w: if patch.azimuth >= 180.0 && patch.azimuth < 360.0 {
+            total_aniso
+        } else {
+            0.0
+        },
+    }
+}
 
 // Struct to hold patch configurations
 
@@ -108,11 +232,11 @@ pub struct SvfResult {
     #[pyo3(get)]
     pub svf_veg_blocks_bldg_sh_west: Py<PyArray2<f32>>,
     #[pyo3(get)]
-    pub bldg_sh_matrix: Py<PyArray3<f32>>,
+    pub bldg_sh_matrix: Py<PyArray3<u8>>,
     #[pyo3(get)]
-    pub veg_sh_matrix: Py<PyArray3<f32>>,
+    pub veg_sh_matrix: Py<PyArray3<u8>>,
     #[pyo3(get)]
-    pub veg_blocks_bldg_sh_matrix: Py<PyArray3<f32>>,
+    pub veg_blocks_bldg_sh_matrix: Py<PyArray3<u8>>,
 }
 
 // Intermediate (pure Rust) SVF result used to avoid holding the GIL during compute
@@ -132,16 +256,18 @@ pub struct SvfIntermediate {
     pub svf_veg_blocks_bldg_sh_e: Array2<f32>,
     pub svf_veg_blocks_bldg_sh_s: Array2<f32>,
     pub svf_veg_blocks_bldg_sh_w: Array2<f32>,
-    pub bldg_sh_matrix: Array3<f32>,
-    pub veg_sh_matrix: Array3<f32>,
-    pub veg_blocks_bldg_sh_matrix: Array3<f32>,
+    pub bldg_sh_matrix: Array3<u8>,
+    pub veg_sh_matrix: Array3<u8>,
+    pub veg_blocks_bldg_sh_matrix: Array3<u8>,
 }
 
 impl SvfIntermediate {
     /// Create a zero-initialized SvfIntermediate with the given dimensions.
+    /// Shadow matrices use bitpacked format: shape (rows, cols, ceil(patches/8)).
     pub fn zeros(num_rows: usize, num_cols: usize, total_patches: usize) -> Self {
         let shape2 = (num_rows, num_cols);
-        let shape3 = (num_rows, num_cols, total_patches);
+        let n_pack = pack_bytes(total_patches);
+        let shape3_packed = (num_rows, num_cols, n_pack);
 
         SvfIntermediate {
             svf: Array2::<f32>::zeros(shape2),
@@ -159,12 +285,19 @@ impl SvfIntermediate {
             svf_veg_blocks_bldg_sh_e: Array2::<f32>::zeros(shape2),
             svf_veg_blocks_bldg_sh_s: Array2::<f32>::zeros(shape2),
             svf_veg_blocks_bldg_sh_w: Array2::<f32>::zeros(shape2),
-            bldg_sh_matrix: Array3::<f32>::zeros(shape3),
-            veg_sh_matrix: Array3::<f32>::zeros(shape3),
-            veg_blocks_bldg_sh_matrix: Array3::<f32>::zeros(shape3),
+            bldg_sh_matrix: Array3::<u8>::zeros(shape3_packed),
+            veg_sh_matrix: Array3::<u8>::zeros(shape3_packed),
+            veg_blocks_bldg_sh_matrix: Array3::<u8>::zeros(shape3_packed),
         }
     }
 }
+
+/// Number of packed bytes needed for n_patches: ceil(n / 8).
+#[inline(always)]
+fn pack_bytes(n_patches: usize) -> usize {
+    (n_patches + 7) / 8
+}
+
 
 fn prepare_bushes(vegdem: ArrayView2<f32>, vegdem2: ArrayView2<f32>) -> Array2<f32> {
     // Allocate output array with same shape as input
@@ -177,6 +310,65 @@ fn prepare_bushes(vegdem: ArrayView2<f32>, vegdem2: ArrayView2<f32>) -> Array2<f
             *bush = if v2 > 0.0 { 0.0 } else { v1 };
         });
     bush_areas
+}
+
+/// Bitpack GPU uint8 shadow bytes into the shadow matrices.
+///
+/// The `shadow_bytes` layout (from shadow_to_u8.wgsl):
+///   [0 .. Q*4)         bldg_sh as uint8
+///   [Q*4 .. 2*Q*4)     veg_sh as uint8      (only if usevegdem)
+///   [2*Q*4 .. 3*Q*4)   vbsh as uint8        (only if usevegdem)
+/// where Q = ceil(total_pixels / 4), and within each section the first
+/// `total_pixels` bytes are the uint8 shadow values (0 or 255) in row-major order.
+///
+/// This function sets bit `patch_idx` in the bitpacked matrices for each pixel
+/// where the u8 shadow value is >= 128 (i.e., was 255).
+#[cfg(feature = "gpu")]
+fn write_shadow_u8_to_matrix(
+    inter: &mut SvfIntermediate,
+    shadow_bytes: &[u8],
+    patch_idx: usize,
+    _total_pixels: usize,
+    num_quads: usize,
+    num_rows: usize,
+    num_cols: usize,
+    usevegdem: bool,
+) {
+    let q4 = num_quads * 4; // byte stride between sections
+    let byte_idx = patch_idx >> 3;
+    let bit_mask = 1u8 << (patch_idx & 7);
+
+    // bldg_sh: first section — set bit for pixels where shadow value >= 128
+    for r in 0..num_rows {
+        let row_offset = r * num_cols;
+        for c in 0..num_cols {
+            if shadow_bytes[row_offset + c] >= 128 {
+                inter.bldg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
+            }
+        }
+    }
+
+    if usevegdem {
+        // veg_sh: second section
+        for r in 0..num_rows {
+            let row_offset = r * num_cols;
+            for c in 0..num_cols {
+                if shadow_bytes[q4 + row_offset + c] >= 128 {
+                    inter.veg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
+                }
+            }
+        }
+
+        // veg_blocks_bldg_sh: third section
+        for r in 0..num_rows {
+            let row_offset = r * num_cols;
+            for c in 0..num_cols {
+                if shadow_bytes[2 * q4 + row_offset + c] >= 128 {
+                    inter.veg_blocks_bldg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
+                }
+            }
+        }
+    }
 }
 
 // --- Main Calculation Function ---
@@ -212,13 +404,11 @@ fn calculate_svf_inner(
     // Create a single intermediate result and allocate all arrays there
     let mut inter = SvfIntermediate::zeros(num_rows, num_cols, total_patches);
 
-    // Process patches sequentially: compute shadows (may be parallel internally),
-    // immediately write shadow slices, then compute the per-patch contribution
-    // using local parallelism (row-chunked) and merge into accumulator.
-    for (patch_idx, patch) in patches.iter().enumerate() {
-        let dsm_view = dsm_f32.view();
-        // Only pass vegetation views if usevegdem is true, otherwise pass None
-        let (vegdem_view, vegdem2_view, bush_view) = if usevegdem {
+    // Try GPU SVF accumulation path: shadow + accumulate in one GPU submission per patch,
+    // SVF values stay on GPU (no per-patch readback), read once at end.
+    #[cfg(feature = "gpu")]
+    let use_gpu_svf = if let Some(gpu_ctx) = crate::shadowing::get_gpu_context() {
+        let (vc, vt, b) = if usevegdem {
             (
                 Some(vegdem_f32.view()),
                 Some(vegdem2_f32.view()),
@@ -227,76 +417,213 @@ fn calculate_svf_inner(
         } else {
             (None, None, None)
         };
-        // Calculate shadows for this patch
-        let shadow_result: ShadowingResultRust = calculate_shadows_rust(
-            patch.azimuth,
-            patch.altitude,
-            scale,
-            max_local_dsm_ht,
-            dsm_view,
-            vegdem_view,
-            vegdem2_view,
-            bush_view,
-            None,
-            None,
-            None,
-            None,
-            min_sun_elev_deg.unwrap_or(5.0_f32),
-        );
-        // --- Assign the shadow slices into the 3D matrices ---
-        inter
-            .bldg_sh_matrix
-            .slice_mut(ndarray::s![.., .., patch_idx])
-            .assign(&shadow_result.bldg_sh);
-        if usevegdem {
-            inter
-                .veg_sh_matrix
-                .slice_mut(ndarray::s![.., .., patch_idx])
-                .assign(&shadow_result.veg_sh);
-            inter
-                .veg_blocks_bldg_sh_matrix
-                .slice_mut(ndarray::s![.., .., patch_idx])
-                .assign(&shadow_result.veg_blocks_bldg_sh);
+        match gpu_ctx.init_svf_accumulation(num_rows, num_cols, usevegdem, dsm_f32.view(), vc, vt, b)
+        {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!(
+                    "[GPU] SVF accumulation init failed: {}. CPU fallback.",
+                    e
+                );
+                false
+            }
         }
+    } else {
+        false
+    };
+    #[cfg(not(feature = "gpu"))]
+    let use_gpu_svf = false;
 
-        // --- Per-patch vectorized accumulation (per-pixel) ---
-        // --- Algorithmic block: Patch/annulus loop, weights, and accumulation ---
-        let n = 90.0;
-        let common_w_factor = (1.0 / (2.0 * PI)) * (PI / (2.0 * n)).sin();
-        let steprad_iso = (360.0 / patch.azimuth_patches) * (PI / 180.0);
-        let steprad_aniso = (360.0 / patch.azimuth_patches_aniso) * (PI / 180.0);
+    // Process patches: GPU pipelined path or CPU fallback
+    if use_gpu_svf {
+        #[cfg(feature = "gpu")]
+        {
+            let gpu_ctx = crate::shadowing::get_gpu_context().unwrap();
+            let total_pixels = num_rows * num_cols;
+            let num_quads = (total_pixels + 3) / 4;
+            let min_elev = min_sun_elev_deg.unwrap_or(5.0_f32);
 
-        for annulus_idx in patch.annulino_start..=patch.annulino_end {
-            let annulus = 91.0 - annulus_idx as f32;
-            let sin_term = ((PI * (2.0 * annulus - 1.0)) / (2.0 * n)).sin();
-            let common_w_part = common_w_factor * sin_term;
+            // Double-buffered pipeline: dispatch current patch, read previous
+            let mut prev = None;
 
-            let weight_iso = steprad_iso * common_w_part;
-            let weight_aniso = steprad_aniso * common_w_part;
+            for (patch_idx, patch) in patches.iter().enumerate() {
+                let slot = patch_idx % 2;
+                let pw = precompute_patch_weights(patch);
+                let sub_idx = gpu_ctx
+                    .dispatch_shadow_and_accumulate_svf(
+                        slot,
+                        patch.azimuth,
+                        patch.altitude,
+                        scale,
+                        max_local_dsm_ht,
+                        min_elev,
+                        pw.weight_iso,
+                        pw.weight_n,
+                        pw.weight_e,
+                        pw.weight_s,
+                        pw.weight_w,
+                    )
+                    .map_err(|e| {
+                        pyo3::exceptions::PyRuntimeError::new_err(format!(
+                            "GPU SVF dispatch failed at patch {}: {}",
+                            patch_idx, e
+                        ))
+                    })?;
 
-            // Precompute directional anisotropic weights for this patch
-            let weight_e = if patch.azimuth >= 0.0 && patch.azimuth < 180.0 {
-                weight_aniso
+                // Read PREVIOUS patch (overlapped with current GPU work)
+                if let Some((prev_slot, prev_sub, prev_pi)) = prev.take() {
+                    let bytes = gpu_ctx
+                        .read_shadow_staging(prev_slot, prev_sub)
+                        .map_err(|e| {
+                            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                                "GPU shadow readback failed at patch {}: {}",
+                                prev_pi, e
+                            ))
+                        })?;
+                    write_shadow_u8_to_matrix(
+                        &mut inter,
+                        &bytes,
+                        prev_pi,
+                        total_pixels,
+                        num_quads,
+                        num_rows,
+                        num_cols,
+                        usevegdem,
+                    );
+                    if let Some(ref counter) = progress_counter {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+
+                prev = Some((slot, sub_idx, patch_idx));
+
+                // Check cancellation flag between patches
+                if let Some(ref flag) = cancel_flag {
+                    if flag.load(Ordering::SeqCst) {
+                        return Err(pyo3::exceptions::PyInterruptedError::new_err(
+                            "SVF computation cancelled",
+                        ));
+                    }
+                }
+            }
+
+            // Read final patch
+            if let Some((slot, sub_idx, pi)) = prev {
+                let bytes = gpu_ctx.read_shadow_staging(slot, sub_idx).map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "GPU shadow readback failed at final patch {}: {}",
+                        pi, e
+                    ))
+                })?;
+                write_shadow_u8_to_matrix(
+                    &mut inter, &bytes, pi, total_pixels, num_quads, num_rows, num_cols,
+                    usevegdem,
+                );
+                if let Some(ref counter) = progress_counter {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+
+            // Read back accumulated SVF values from GPU
+            let svf = gpu_ctx.read_svf_results().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "GPU SVF readback failed: {}",
+                    e
+                ))
+            })?;
+
+            inter.svf = svf.svf;
+            inter.svf_n = svf.svf_n;
+            inter.svf_e = svf.svf_e;
+            inter.svf_s = svf.svf_s;
+            inter.svf_w = svf.svf_w;
+
+            if usevegdem {
+                if let Some(v) = svf.svf_veg {
+                    inter.svf_veg = v;
+                }
+                if let Some(v) = svf.svf_veg_n {
+                    inter.svf_veg_n = v;
+                }
+                if let Some(v) = svf.svf_veg_e {
+                    inter.svf_veg_e = v;
+                }
+                if let Some(v) = svf.svf_veg_s {
+                    inter.svf_veg_s = v;
+                }
+                if let Some(v) = svf.svf_veg_w {
+                    inter.svf_veg_w = v;
+                }
+                if let Some(v) = svf.svf_aveg {
+                    inter.svf_veg_blocks_bldg_sh = v;
+                }
+                if let Some(v) = svf.svf_aveg_n {
+                    inter.svf_veg_blocks_bldg_sh_n = v;
+                }
+                if let Some(v) = svf.svf_aveg_e {
+                    inter.svf_veg_blocks_bldg_sh_e = v;
+                }
+                if let Some(v) = svf.svf_aveg_s {
+                    inter.svf_veg_blocks_bldg_sh_s = v;
+                }
+                if let Some(v) = svf.svf_aveg_w {
+                    inter.svf_veg_blocks_bldg_sh_w = v;
+                }
+            }
+        }
+    } else {
+        for (patch_idx, patch) in patches.iter().enumerate() {
+            // CPU fallback path
+            let dsm_view = dsm_f32.view();
+            let (vegdem_view, vegdem2_view, bush_view) = if usevegdem {
+                (
+                    Some(vegdem_f32.view()),
+                    Some(vegdem2_f32.view()),
+                    Some(bush_f32.view()),
+                )
             } else {
-                0.0
-            };
-            let weight_s = if patch.azimuth >= 90.0 && patch.azimuth < 270.0 {
-                weight_aniso
-            } else {
-                0.0
-            };
-            let weight_w = if patch.azimuth >= 180.0 && patch.azimuth < 360.0 {
-                weight_aniso
-            } else {
-                0.0
-            };
-            let weight_n = if patch.azimuth >= 270.0 || patch.azimuth < 90.0 {
-                weight_aniso
-            } else {
-                0.0
+                (None, None, None)
             };
 
-            // Accumulate building shadows (parallel, SIMD-friendly)
+            let shadow_result = compute_svf_shadows(
+                dsm_view,
+                vegdem_view,
+                vegdem2_view,
+                bush_view,
+                patch.azimuth,
+                patch.altitude,
+                scale,
+                max_local_dsm_ht,
+                min_sun_elev_deg.unwrap_or(5.0_f32),
+            );
+
+            // Bitpack f32 shadows into matrices (bit=1 means shadow value >= 0.5)
+            {
+                let byte_idx = patch_idx >> 3;
+                let bit_mask = 1u8 << (patch_idx & 7);
+                for r in 0..num_rows {
+                    for c in 0..num_cols {
+                        if shadow_result.bldg_sh[[r, c]] >= 0.5 {
+                            inter.bldg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
+                        }
+                    }
+                }
+                if usevegdem {
+                    for r in 0..num_rows {
+                        for c in 0..num_cols {
+                            if shadow_result.veg_sh[[r, c]] >= 0.5 {
+                                inter.veg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
+                            }
+                            if shadow_result.veg_blocks_bldg_sh[[r, c]] >= 0.5 {
+                                inter.veg_blocks_bldg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let pw = precompute_patch_weights(patch);
+
             Zip::from(&shadow_result.bldg_sh)
                 .and(&mut inter.svf)
                 .and(&mut inter.svf_e)
@@ -304,15 +631,14 @@ fn calculate_svf_inner(
                 .and(&mut inter.svf_w)
                 .and(&mut inter.svf_n)
                 .par_for_each(|&b, svf, svf_e, svf_s, svf_w, svf_n| {
-                    *svf += weight_iso * b;
-                    *svf_e += weight_e * b;
-                    *svf_s += weight_s * b;
-                    *svf_w += weight_w * b;
-                    *svf_n += weight_n * b;
+                    *svf += pw.weight_iso * b;
+                    *svf_e += pw.weight_e * b;
+                    *svf_s += pw.weight_s * b;
+                    *svf_w += pw.weight_w * b;
+                    *svf_n += pw.weight_n * b;
                 });
 
             if usevegdem {
-                // Accumulate vegetation shadows
                 Zip::from(&shadow_result.veg_sh)
                     .and(&mut inter.svf_veg)
                     .and(&mut inter.svf_veg_e)
@@ -320,14 +646,13 @@ fn calculate_svf_inner(
                     .and(&mut inter.svf_veg_w)
                     .and(&mut inter.svf_veg_n)
                     .par_for_each(|&veg, svf_v, svf_v_e, svf_v_s, svf_v_w, svf_v_n| {
-                        *svf_v += weight_iso * veg;
-                        *svf_v_e += weight_e * veg;
-                        *svf_v_s += weight_s * veg;
-                        *svf_v_w += weight_w * veg;
-                        *svf_v_n += weight_n * veg;
+                        *svf_v += pw.weight_iso * veg;
+                        *svf_v_e += pw.weight_e * veg;
+                        *svf_v_s += pw.weight_s * veg;
+                        *svf_v_w += pw.weight_w * veg;
+                        *svf_v_n += pw.weight_n * veg;
                     });
 
-                // Accumulate veg-blocks-building shadows
                 Zip::from(&shadow_result.veg_blocks_bldg_sh)
                     .and(&mut inter.svf_veg_blocks_bldg_sh)
                     .and(&mut inter.svf_veg_blocks_bldg_sh_e)
@@ -336,30 +661,30 @@ fn calculate_svf_inner(
                     .and(&mut inter.svf_veg_blocks_bldg_sh_n)
                     .par_for_each(
                         |&veg_bldg, svf_v_b, svf_v_be, svf_v_bs, svf_v_bw, svf_v_bn| {
-                            *svf_v_b += weight_iso * veg_bldg;
-                            *svf_v_be += weight_e * veg_bldg;
-                            *svf_v_bs += weight_s * veg_bldg;
-                            *svf_v_bw += weight_w * veg_bldg;
-                            *svf_v_bn += weight_n * veg_bldg;
+                            *svf_v_b += pw.weight_iso * veg_bldg;
+                            *svf_v_be += pw.weight_e * veg_bldg;
+                            *svf_v_bs += pw.weight_s * veg_bldg;
+                            *svf_v_bw += pw.weight_w * veg_bldg;
+                            *svf_v_bn += pw.weight_n * veg_bldg;
                         },
                     );
-            } // end if usevegdem
-        } // end annulus loop
+            }
 
-        // Update progress counter after this patch is fully processed
-        if let Some(ref counter) = progress_counter {
-            counter.fetch_add(1, Ordering::SeqCst);
-        }
+            // Update progress counter
+            if let Some(ref counter) = progress_counter {
+                counter.fetch_add(1, Ordering::SeqCst);
+            }
 
-        // Check cancellation flag between patches
-        if let Some(ref flag) = cancel_flag {
-            if flag.load(Ordering::SeqCst) {
-                return Err(pyo3::exceptions::PyInterruptedError::new_err(
-                    "SVF computation cancelled",
-                ));
+            // Check cancellation flag
+            if let Some(ref flag) = cancel_flag {
+                if flag.load(Ordering::SeqCst) {
+                    return Err(pyo3::exceptions::PyInterruptedError::new_err(
+                        "SVF computation cancelled",
+                    ));
+                }
             }
         }
-    } // end patch loop
+    }
 
     // Finalize: apply last-annulus correction and clamp values, same semantics as the previous finalize
     inter.svf_s += LAST_ANNULUS_CORRECTION;
@@ -448,15 +773,16 @@ fn calculate_svf_inner(
             });
     }
 
-    // Set NaN in shadow matrices for NaN pixels in DSM
+    // Zero out bitpacked shadow matrices for NaN pixels in DSM
+    let n_pack = pack_bytes(total_patches);
     for row in 0..num_rows {
         for col in 0..num_cols {
             if dsm_f32[[row, col]].is_nan() {
-                for patch_idx in 0..total_patches {
-                    inter.bldg_sh_matrix[[row, col, patch_idx]] = f32::NAN;
+                for bi in 0..n_pack {
+                    inter.bldg_sh_matrix[[row, col, bi]] = 0;
                     if usevegdem {
-                        inter.veg_sh_matrix[[row, col, patch_idx]] = f32::NAN;
-                        inter.veg_blocks_bldg_sh_matrix[[row, col, patch_idx]] = f32::NAN;
+                        inter.veg_sh_matrix[[row, col, bi]] = 0;
+                        inter.veg_blocks_bldg_sh_matrix[[row, col, bi]] = 0;
                     }
                 }
             }

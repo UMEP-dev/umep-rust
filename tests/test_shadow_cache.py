@@ -14,10 +14,12 @@ if TYPE_CHECKING:
 
 @pytest.fixture()
 def shadow_arrays():
-    """Small ShadowArrays for testing cache behavior."""
-    shape = (10, 10, 5)  # rows, cols, patches
+    """Small ShadowArrays for testing cache behavior (bitpacked format)."""
+    n_patches = 5
+    n_pack = (n_patches + 7) // 8  # 1 byte for 5 patches
+    shape = (10, 10, n_pack)
     rng = np.random.default_rng(42)
-    # Explicit cast to satisfy type checker
+    # Random bitpacked data (each byte holds up to 8 patch bits)
     shmat: NDArray[np.uint8] = rng.integers(0, 256, shape, dtype=np.uint8).astype(np.uint8)
     vegshmat: NDArray[np.uint8] = rng.integers(0, 256, shape, dtype=np.uint8).astype(np.uint8)
     vbshmat: NDArray[np.uint8] = rng.integers(0, 256, shape, dtype=np.uint8).astype(np.uint8)
@@ -25,6 +27,7 @@ def shadow_arrays():
         _shmat_u8=shmat,
         _vegshmat_u8=vegshmat,
         _vbshmat_u8=vbshmat,
+        _n_patches=n_patches,
     )
 
 

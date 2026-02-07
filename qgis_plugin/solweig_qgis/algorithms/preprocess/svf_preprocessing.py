@@ -151,7 +151,10 @@ Calculation algorithm loads these automatically.
         trunk_ratio = self.parameterAsDouble(parameters, self.TRUNK_RATIO, context)
 
         import os
-        import threading
+        import tempfile
+        import zipfile
+
+        import numpy as np
 
         output_dir = self.parameterAsString(parameters, self.OUTPUT_DIR, context)
         # QGIS auto-generates a temp path ending in the parameter name when left blank
@@ -160,66 +163,47 @@ Calculation algorithm loads these automatically.
             feedback.pushInfo(f"SVF output will be saved to prepared surface directory: {output_dir}")
         os.makedirs(output_dir, exist_ok=True)
 
-        # Compute SVF
-        feedback.setProgressText("Computing Sky View Factor (this may take a while)...")
+        # Compute SVF using the same Python API as SurfaceData.prepare() —
+        # automatically tiles large grids to stay within GPU buffer limits.
+        feedback.setProgressText("Computing Sky View Factor...")
         feedback.setProgress(20)
 
-        import numpy as np
-        from solweig.rustalgos import skyview
+        from pathlib import Path
+
+        from solweig.models.surface import SurfaceData as SD
 
         use_veg = cdsm is not None
-        max_height = float(np.nanmax(dsm))
-        if use_veg and cdsm is not None:
-            max_height = max(max_height, float(np.nanmax(cdsm)))
+        dsm_f32 = dsm.astype(np.float32)
 
-        cdsm_svf = cdsm.astype(np.float32) if cdsm is not None else np.zeros_like(dsm, dtype=np.float32)
-        if tdsm is not None:
-            tdsm_svf = tdsm.astype(np.float32)
-        elif cdsm is not None:
-            tdsm_svf = (cdsm * trunk_ratio).astype(np.float32)
-        else:
-            tdsm_svf = np.zeros_like(dsm, dtype=np.float32)
+        aligned_rasters = {
+            "dsm_arr": dsm_f32,
+            "cdsm_arr": cdsm.astype(np.float32) if use_veg else None,
+            "tdsm_arr": (
+                tdsm.astype(np.float32)
+                if tdsm is not None
+                else (cdsm * trunk_ratio).astype(np.float32)
+                if use_veg
+                else None
+            ),
+            "pixel_size": pixel_size,
+            "dsm_transform": geotransform,
+            "dsm_crs": crs_wkt,
+        }
 
-        # Use SkyviewRunner for progress polling (Rust releases GIL during computation)
-        total_patches = 153  # patch_option=2
-        runner = skyview.SkyviewRunner()
-        svf_result = None
-        svf_error = None
+        rows, cols = dsm_f32.shape
+        if rows * cols > 6_700_000:
+            feedback.pushInfo(f"Large grid ({rows}x{cols} = {rows * cols:,} px) — using tiled GPU computation")
 
-        def _run_svf():
-            nonlocal svf_result, svf_error
-            try:
-                svf_result = runner.calculate_svf(
-                    dsm.astype(np.float32),
-                    cdsm_svf,
-                    tdsm_svf,
-                    pixel_size,
-                    use_veg,
-                    max_height,
-                    2,  # patch_option (153 patches)
-                    3.0,  # min_sun_elev_deg
-                )
-            except Exception as e:
-                svf_error = e
-
-        svf_thread = threading.Thread(target=_run_svf, daemon=True)
-        svf_thread.start()
-
-        # Poll progress while Rust computes (20-90% range)
-        while svf_thread.is_alive():
-            svf_thread.join(timeout=0.5)
-            patches_done = runner.progress()
-            pct = 20 + int(70 * patches_done / total_patches)
-            feedback.setProgress(min(pct, 89))
-            if feedback.isCanceled():
-                break
-
-        svf_thread.join()
-
-        if svf_error is not None:
-            raise QgsProcessingException(f"SVF computation failed: {svf_error}") from svf_error
-        if svf_result is None:
-            raise QgsProcessingException("SVF computation was cancelled")
+        try:
+            SD._compute_and_cache_svf(
+                surface,
+                aligned_rasters,
+                Path(output_dir),
+                trunk_ratio=trunk_ratio,
+                feedback=feedback,
+            )
+        except Exception as e:
+            raise QgsProcessingException(f"SVF computation failed: {e}") from e
 
         if feedback.isCanceled():
             return {}
@@ -229,35 +213,23 @@ Calculation algorithm loads these automatically.
         # Save SVF as svfs.zip (format expected by PrecomputedData.prepare())
         feedback.setProgressText("Saving SVF arrays...")
 
-        import tempfile
-        import zipfile
-
+        svf_data = surface.svf
         svf_files = {
-            "svf.tif": np.array(svf_result.svf),
-            "svfN.tif": np.array(svf_result.svf_north),
-            "svfE.tif": np.array(svf_result.svf_east),
-            "svfS.tif": np.array(svf_result.svf_south),
-            "svfW.tif": np.array(svf_result.svf_west),
-            "svfveg.tif": np.array(svf_result.svf_veg) if use_veg else np.ones_like(np.array(svf_result.svf)),
-            "svfNveg.tif": np.array(svf_result.svf_veg_north) if use_veg else np.ones_like(np.array(svf_result.svf)),
-            "svfEveg.tif": np.array(svf_result.svf_veg_east) if use_veg else np.ones_like(np.array(svf_result.svf)),
-            "svfSveg.tif": np.array(svf_result.svf_veg_south) if use_veg else np.ones_like(np.array(svf_result.svf)),
-            "svfWveg.tif": np.array(svf_result.svf_veg_west) if use_veg else np.ones_like(np.array(svf_result.svf)),
-            "svfaveg.tif": np.array(svf_result.svf_veg_blocks_bldg_sh)
-            if use_veg
-            else np.ones_like(np.array(svf_result.svf)),
-            "svfNaveg.tif": np.array(svf_result.svf_veg_blocks_bldg_sh_north)
-            if use_veg
-            else np.ones_like(np.array(svf_result.svf)),
-            "svfEaveg.tif": np.array(svf_result.svf_veg_blocks_bldg_sh_east)
-            if use_veg
-            else np.ones_like(np.array(svf_result.svf)),
-            "svfSaveg.tif": np.array(svf_result.svf_veg_blocks_bldg_sh_south)
-            if use_veg
-            else np.ones_like(np.array(svf_result.svf)),
-            "svfWaveg.tif": np.array(svf_result.svf_veg_blocks_bldg_sh_west)
-            if use_veg
-            else np.ones_like(np.array(svf_result.svf)),
+            "svf.tif": svf_data.svf,
+            "svfN.tif": svf_data.svf_north,
+            "svfE.tif": svf_data.svf_east,
+            "svfS.tif": svf_data.svf_south,
+            "svfW.tif": svf_data.svf_west,
+            "svfveg.tif": svf_data.svf_veg,
+            "svfNveg.tif": svf_data.svf_veg_north,
+            "svfEveg.tif": svf_data.svf_veg_east,
+            "svfSveg.tif": svf_data.svf_veg_south,
+            "svfWveg.tif": svf_data.svf_veg_west,
+            "svfaveg.tif": svf_data.svf_aveg,
+            "svfNaveg.tif": svf_data.svf_aveg_north,
+            "svfEaveg.tif": svf_data.svf_aveg_east,
+            "svfSaveg.tif": svf_data.svf_aveg_south,
+            "svfWaveg.tif": svf_data.svf_aveg_west,
         }
 
         svf_zip_path = os.path.join(output_dir, "svfs.zip")
@@ -280,14 +252,10 @@ Calculation algorithm loads these automatically.
         # Save shadow matrices as shadowmats.npz (for anisotropic sky)
         feedback.setProgressText("Saving shadow matrices...")
 
-        shmat = np.array(svf_result.bldg_sh_matrix)
-        vegshmat = np.array(svf_result.veg_sh_matrix)
-        vbshmat = np.array(svf_result.veg_blocks_bldg_sh_matrix)
-
-        # Convert to uint8 for compact storage (0.0-1.0 → 0-255)
-        shmat_u8 = (np.clip(shmat, 0, 1) * 255).astype(np.uint8)
-        vegshmat_u8 = (np.clip(vegshmat, 0, 1) * 255).astype(np.uint8)
-        vbshmat_u8 = (np.clip(vbshmat, 0, 1) * 255).astype(np.uint8)
+        sm = surface.shadow_matrices
+        shmat_u8 = np.array(sm._shmat_u8)
+        vegshmat_u8 = np.array(sm._vegshmat_u8)
+        vbshmat_u8 = np.array(sm._vbshmat_u8)
 
         shadow_path = os.path.join(output_dir, "shadowmats.npz")
         np.savez_compressed(
@@ -295,6 +263,7 @@ Calculation algorithm loads these automatically.
             shadowmat=shmat_u8,
             vegshadowmat=vegshmat_u8,
             vbshmat=vbshmat_u8,
+            patch_count=np.array(sm.patch_count),
         )
 
         feedback.pushInfo(f"Saved shadow matrices: {shadow_path}")

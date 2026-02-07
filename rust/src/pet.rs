@@ -374,9 +374,9 @@ pub fn pet_grid<'py>(
             let tmrt_val = tmrt_arr[[row, col]];
             let va_val = va_arr[[row, col]];
 
-            // Check for invalid pixel values
-            if va_val <= 0.0 || tmrt_val <= -999.0 {
-                *out = -9999.0;
+            // Check for invalid pixel values (NaN, nodata, non-finite)
+            if !tmrt_val.is_finite() || !va_val.is_finite() || va_val <= 0.0 || tmrt_val <= -999.0 {
+                *out = f32::NAN;
             } else {
                 *out = pet_single(ta, rh, tmrt_val, va_val, mbody, age, height, activity, clo, sex);
             }

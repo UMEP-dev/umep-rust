@@ -10,6 +10,14 @@ const PI: f32 = std::f32::consts::PI;
 const SBC: f32 = 5.67051e-8; // Stefan-Boltzmann constant
 const MIN_SUN_ELEVATION_RAD: f32 = 3.0 * PI / 180.0; // 3° threshold for low sun guard
 
+/// Extract a single shadow bit from a bitpacked shadow matrix.
+/// Shape: (rows, cols, n_pack) where n_pack = ceil(n_patches / 8).
+/// Returns true if the shadow bit is set (was 255 in the original u8 format).
+#[inline(always)]
+fn get_shadow_bit(packed: &ArrayView3<u8>, r: usize, c: usize, patch: usize) -> bool {
+    (packed[[r, c, patch >> 3]] >> (patch & 7)) & 1 == 1
+}
+
 /// Sun position parameters
 #[pyclass]
 #[derive(Clone)]
@@ -175,6 +183,29 @@ impl PixelResult {
             ldown_ref: 0.0,
         }
     }
+
+    fn nan() -> Self {
+        Self {
+            lside_sky: f32::NAN,
+            ldown_sky: f32::NAN,
+            lside_veg: f32::NAN,
+            ldown_veg: f32::NAN,
+            lside_sun: f32::NAN,
+            lside_sh: f32::NAN,
+            ldown_sun: f32::NAN,
+            ldown_sh: f32::NAN,
+            kside_d: f32::NAN,
+            kref_sun: f32::NAN,
+            kref_sh: f32::NAN,
+            kref_veg: f32::NAN,
+            least: f32::NAN,
+            lsouth: f32::NAN,
+            lwest: f32::NAN,
+            lnorth: f32::NAN,
+            lside_ref: f32::NAN,
+            ldown_ref: f32::NAN,
+        }
+    }
 }
 
 /// Pure-ndarray result from anisotropic sky calculation (no PyO3 types).
@@ -229,6 +260,7 @@ pub(crate) fn anisotropic_sky_pure(
     kup_n: ArrayView2<f32>,
     voxel_table: Option<ArrayView2<f32>>,
     voxel_maps: Option<ArrayView3<f32>>,
+    valid: Option<ArrayView2<u8>>,
 ) -> SkyResultPure {
     let rows = shmat.shape()[0];
     let cols = shmat.shape()[1];
@@ -281,6 +313,9 @@ pub(crate) fn anisotropic_sky_pure(
     let pixel_results: Vec<PixelResult> = pixel_indices
         .into_par_iter()
         .map(|(r, c)| {
+            if let Some(ref v) = valid {
+                if v[[r, c]] == 0 { return PixelResult::nan(); }
+            }
             let mut pres = PixelResult::new();
             let pixel_asvf = asvf[[r, c]];
 
@@ -289,12 +324,12 @@ pub(crate) fn anisotropic_sky_pure(
                 let p_azi = patch_azimuth[i];
                 let steradian = steradians[i];
 
-                let sh = shmat[[r, c, i]];
-                let vsh = vegshmat[[r, c, i]];
-                let vbsh = vbshvegshmat[[r, c, i]];
-                let temp_sky = sh == 255 && vsh == 255;
-                let temp_vegsh = vsh == 0 || vbsh == 0;
-                let temp_sh = (1.0 - sh as f32 / 255.0) * (vbsh as f32 / 255.0) == 1.0;
+                let sh = get_shadow_bit(&shmat, r, c, i);
+                let vsh = get_shadow_bit(&vegshmat, r, c, i);
+                let vbsh = get_shadow_bit(&vbshvegshmat, r, c, i);
+                let temp_sky = sh && vsh;
+                let temp_vegsh = !vsh || !vbsh;
+                let temp_sh = !sh && vbsh;
 
                 if cyl {
                     let angle_of_incidence = (p_alt * deg2rad).cos();
@@ -457,9 +492,9 @@ pub(crate) fn anisotropic_sky_pure(
                 let p_alt = patch_altitude[i];
                 let p_azi = patch_azimuth[i];
                 let steradian = steradians[i];
-                let temp_sh = shmat[[r, c, i]] == 0
-                    || vegshmat[[r, c, i]] == 0
-                    || vbshvegshmat[[r, c, i]] == 0;
+                let temp_sh = !get_shadow_bit(&shmat, r, c, i)
+                    || !get_shadow_bit(&vegshmat, r, c, i)
+                    || !get_shadow_bit(&vbshvegshmat, r, c, i);
 
                 if temp_sh {
                     let angle_of_incidence = (p_alt * deg2rad).cos();
@@ -639,6 +674,7 @@ pub fn anisotropic_sky(
         kup_n.as_array(),
         voxel_table_view,
         voxel_maps_view,
+        None,
     );
 
     let steradians_owned = steradians.as_array().to_owned();
@@ -706,6 +742,14 @@ pub(crate) fn cylindric_wedge_pure(
     zen: f32,
     svfalfa: ArrayView2<f32>,
 ) -> Array2<f32> {
+    cylindric_wedge_pure_masked(zen, svfalfa, None)
+}
+
+pub(crate) fn cylindric_wedge_pure_masked(
+    zen: f32,
+    svfalfa: ArrayView2<f32>,
+    valid: Option<ArrayView2<u8>>,
+) -> Array2<f32> {
     let rows = svfalfa.shape()[0];
     let cols = svfalfa.shape()[1];
 
@@ -722,6 +766,9 @@ pub(crate) fn cylindric_wedge_pure(
         .map(|idx| {
             let r = idx / cols;
             let c = idx % cols;
+            if let Some(ref v) = valid {
+                if v[[r, c]] == 0 { return f32::NAN; }
+            }
             cylindric_wedge_pixel(tan_zen, svfalfa[[r, c]])
         })
         .collect();

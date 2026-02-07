@@ -436,6 +436,13 @@ def calculate_core_fused(
     rows, cols = surface.dsm.shape
     pixel_size = surface.pixel_size
 
+    # Valid pixel mask (True where all layers have finite data)
+    # Computed once by SurfaceData.prepare(), or derived from DSM on-the-fly
+    valid_mask = surface.valid_mask
+    if valid_mask is None:
+        valid_mask = np.isfinite(surface.dsm)
+    valid_mask_u8 = np.ascontiguousarray(valid_mask, dtype=np.uint8)
+
     # Land cover properties
     alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid = surface.get_land_cover_properties(materials)
 
@@ -717,6 +724,8 @@ def calculate_core_fused(
         as_float32(state.tgmap1_w),
         as_float32(state.tgmap1_n),
         as_float32(state.tgout1),
+        # Valid pixel mask for early NaN exit
+        valid_mask_u8,
     )
 
     # === Unpack result and update thermal state ===

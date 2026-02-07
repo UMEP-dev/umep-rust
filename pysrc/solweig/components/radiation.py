@@ -174,7 +174,7 @@ def compute_radiation(
 
         # Get diffuse shadow matrix (accounts for vegetation transmissivity)
         diffsh = shadow_mats.diffsh(psi, use_vegetation=psi < 0.5)
-        shadow_mats.release_float32_cache()  # Free ~1.8 GB; uint8 still available below
+        shadow_mats.release_float32_cache()  # Free unpacked float32; bitpacked still available
 
         # Total relative luminance from sky patches into each cell
         ani_lum = _sky.weighted_patch_sum(
@@ -187,7 +187,7 @@ def compute_radiation(
         # Compute asvf (angle from SVF) for anisotropic calculations
         asvf = np.arccos(np.sqrt(np.clip(svf, 0.0, 1.0)))
 
-        # Pass uint8 shadow matrices directly to Rust (avoids 4x float32 copy)
+        # Pass bitpacked shadow matrices directly to Rust
         shmat = np.ascontiguousarray(shadow_mats._shmat_u8)
         vegshmat = np.ascontiguousarray(shadow_mats._vegshmat_u8)
         vbshmat = np.ascontiguousarray(shadow_mats._vbshmat_u8)

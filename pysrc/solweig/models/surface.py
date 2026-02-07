@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from affine import Affine as AffineClass
@@ -76,23 +77,16 @@ def _save_svfs_zip(svf_data: SvfArrays, svf_cache_dir: Path, aligned_rasters: di
     logger.info(f"  ✓ SVF saved as {svf_zip_path}")
 
 
-def _save_shadow_matrices(svf_result, svf_cache_dir: Path) -> None:
+def _save_shadow_matrices(svf_result, svf_cache_dir: Path, patch_count: int = 153) -> None:
     """Save shadow matrices as shadowmats.npz for anisotropic sky model."""
-    shmat = np.array(svf_result.bldg_sh_matrix)
-    vegshmat = np.array(svf_result.veg_sh_matrix)
-    vbshmat = np.array(svf_result.veg_blocks_bldg_sh_matrix)
-
-    # Convert to uint8 for compact storage (0.0-1.0 → 0-255)
-    shmat_u8 = (np.clip(shmat, 0, 1) * 255).astype(np.uint8)
-    vegshmat_u8 = (np.clip(vegshmat, 0, 1) * 255).astype(np.uint8)
-    vbshmat_u8 = (np.clip(vbshmat, 0, 1) * 255).astype(np.uint8)
-
+    # Shadow matrices are bitpacked uint8 from Rust: shape (rows, cols, ceil(patches/8))
     shadow_path = svf_cache_dir / "shadowmats.npz"
     np.savez_compressed(
         str(shadow_path),
-        shadowmat=shmat_u8,
-        vegshadowmat=vegshmat_u8,
-        vbshmat=vbshmat_u8,
+        shadowmat=np.array(svf_result.bldg_sh_matrix),
+        vegshadowmat=np.array(svf_result.veg_sh_matrix),
+        vbshmat=np.array(svf_result.veg_blocks_bldg_sh_matrix),
+        patch_count=np.array(patch_count),
     )
 
     logger.info(f"  ✓ Shadow matrices saved as {shadow_path}")
@@ -241,6 +235,7 @@ class SurfaceData:
         trunk_ratio: float = 0.25,
         relative_heights: bool = True,
         force_recompute: bool = False,
+        feedback: Any = None,
     ) -> SurfaceData:
         """
         Prepare surface data and optional preprocessing from GeoTIFF files.
@@ -280,6 +275,7 @@ class SurfaceData:
             relative_heights: Whether CDSM/TDSM contain relative heights. Default True.
             force_recompute: If True, skip cache and recompute walls/SVF even if they
                 exist in working_dir. Default False (use cached data when available).
+            feedback: Optional QGIS QgsProcessingFeedback for progress/cancellation.
 
         Returns:
             SurfaceData instance with loaded terrain and preprocessing data.
@@ -361,7 +357,7 @@ class SurfaceData:
 
         # Compute and cache SVF if needed
         if preprocess_data["compute_svf"]:
-            cls._compute_and_cache_svf(surface_data, aligned_rasters, working_path, trunk_ratio)
+            cls._compute_and_cache_svf(surface_data, aligned_rasters, working_path, trunk_ratio, feedback=feedback)
 
         # Preprocess CDSM/TDSM if relative heights
         if relative_heights and surface_data.cdsm is not None:
@@ -399,10 +395,23 @@ class SurfaceData:
         logger.info(f"  DSM: {dsm_arr.shape[1]}×{dsm_arr.shape[0]} pixels")
 
         # Compute pixel size from geotransform if not provided
+        native_pixel_size = abs(dsm_transform[1])  # X pixel size from DSM
         if pixel_size is None:
-            pixel_size = abs(dsm_transform[1])  # X pixel size
+            pixel_size = native_pixel_size
             logger.info(f"  Extracted pixel size from DSM: {pixel_size:.2f} m")
         else:
+            # Validate against native resolution
+            if pixel_size < native_pixel_size - 1e-6:
+                raise ValueError(
+                    f"Specified pixel_size ({pixel_size:.2f} m) is finer than the DSM native "
+                    f"resolution ({native_pixel_size:.2f} m). Upsampling creates false precision. "
+                    f"Use pixel_size >= {native_pixel_size:.2f} or omit to use native resolution."
+                )
+            if abs(pixel_size - native_pixel_size) > 1e-6:
+                logger.warning(
+                    f"  ⚠ Specified pixel_size ({pixel_size:.2f} m) differs from DSM native "
+                    f"resolution ({native_pixel_size:.2f} m) — all rasters will be resampled"
+                )
             logger.info(f"  Using specified pixel size: {pixel_size:.2f} m")
 
         # Warn if pixel size is less than 1 meter
@@ -923,6 +932,9 @@ class SurfaceData:
         aligned_rasters: dict,
         working_path: Path,
         trunk_ratio: float,
+        on_tile_complete: Callable | None = None,
+        feedback: Any = None,
+        progress_range: tuple[float, float] | None = None,
     ) -> None:
         """
         Compute SVF from DSM/CDSM/TDSM and cache to working_dir.
@@ -941,6 +953,10 @@ class SurfaceData:
             aligned_rasters: Dictionary with aligned raster data.
             working_path: Working directory for caching.
             trunk_ratio: Trunk ratio for SVF computation.
+            on_tile_complete: Optional callback(tile_idx, n_tiles) called after each tile
+                (only invoked when tiling is used for large grids).
+            feedback: Optional QGIS QgsProcessingFeedback for progress/cancellation.
+            progress_range: Optional (start_pct, end_pct) for QGIS progress sub-range.
         """
 
         dsm_arr = aligned_rasters["dsm_arr"]
@@ -994,34 +1010,96 @@ class SurfaceData:
                 use_veg,
                 max_height,
                 svf_cache_dir,
+                on_tile_complete=on_tile_complete,
+                feedback=feedback,
+                progress_range=progress_range,
             )
+            n_patches = 153  # patch_option=2
 
             # Cache SVF arrays
             memmap_dir = svf_cache_dir / "memmap"
             svf_data.to_memmap(memmap_dir, metadata=metadata)
             _save_svfs_zip(svf_data, svf_cache_dir, aligned_rasters)
 
+            # Save shadow matrices as npz for cache reload on future runs
+            shadow_path = svf_cache_dir / "shadowmats.npz"
+            np.savez_compressed(
+                str(shadow_path),
+                shadowmat=np.asarray(shmat_mm),
+                vegshadowmat=np.asarray(vegshmat_mm),
+                vbshmat=np.asarray(vbshmat_mm),
+                patch_count=np.array(n_patches),
+            )
+            logger.info(f"  ✓ Shadow matrices saved as {shadow_path}")
+
             surface_data.svf = svf_data
-            # Shadow matrices assembled from tiled memmaps (uint8, on disk)
+            # Shadow matrices assembled from tiled memmaps (bitpacked uint8, on disk)
             surface_data.shadow_matrices = ShadowArrays(
                 _shmat_u8=shmat_mm,
                 _vegshmat_u8=vegshmat_mm,
                 _vbshmat_u8=vbshmat_mm,
+                _n_patches=n_patches,
             )
             logger.info(f"  ✓ SVF computed (tiled) and cached to {svf_cache_dir}")
         else:
-            # Single-shot computation for grids that fit in GPU memory
-            svf_result = skyview.calculate_svf(
-                dsm_arr.astype(np.float32),
-                cdsm_for_svf,
-                tdsm_for_svf,
-                pixel_size,
-                use_veg,
-                max_height,
-                2,  # patch_option (153 patches)
-                3.0,  # min_sun_elev_deg
-                None,  # progress callback
+            # Single-shot computation for grids that fit in GPU memory.
+            # Use SkyviewRunner with threading + polling for progress and cancel.
+            import threading
+
+            from ..progress import ProgressReporter
+
+            n_patches = 153  # patch_option=2
+
+            runner = skyview.SkyviewRunner()
+            result_box: list = [None]
+            error_box: list = [None]
+
+            def _run_svf():
+                try:
+                    result_box[0] = runner.calculate_svf(
+                        dsm_arr.astype(np.float32),
+                        cdsm_for_svf,
+                        tdsm_for_svf,
+                        pixel_size,
+                        use_veg,
+                        max_height,
+                        2,  # patch_option
+                        3.0,  # min_sun_elev_deg
+                    )
+                except Exception as e:
+                    error_box[0] = e
+
+            thread = threading.Thread(target=_run_svf, daemon=True)
+            thread.start()
+
+            # Poll progress (153 patches)
+            pbar = ProgressReporter(
+                total=n_patches,
+                desc="Computing Sky View Factor",
+                feedback=feedback,
+                progress_range=progress_range,
             )
+            last = 0
+            while thread.is_alive():
+                thread.join(timeout=0.05)
+                done = runner.progress()
+                if done > last:
+                    pbar.update(done - last)
+                    last = done
+                # Check QGIS cancellation
+                if feedback is not None and hasattr(feedback, "isCanceled") and feedback.isCanceled():
+                    runner.cancel()
+                    thread.join(timeout=5.0)
+                    pbar.close()
+                    return
+            if last < n_patches:
+                pbar.update(n_patches - last)
+            pbar.close()
+
+            thread.join()
+            if error_box[0] is not None:
+                raise error_box[0]
+            svf_result = result_box[0]
 
             ones = np.ones_like(dsm_arr, dtype=np.float32)
 
@@ -1053,13 +1131,12 @@ class SurfaceData:
 
             surface_data.svf = svf_data
 
-            shmat = np.array(svf_result.bldg_sh_matrix)
-            vegshmat = np.array(svf_result.veg_sh_matrix)
-            vbshmat = np.array(svf_result.veg_blocks_bldg_sh_matrix)
+            # Shadow matrices are bitpacked uint8 from Rust
             surface_data.shadow_matrices = ShadowArrays(
-                _shmat_u8=(np.clip(shmat, 0, 1) * 255).astype(np.uint8),
-                _vegshmat_u8=(np.clip(vegshmat, 0, 1) * 255).astype(np.uint8),
-                _vbshmat_u8=(np.clip(vbshmat, 0, 1) * 255).astype(np.uint8),
+                _shmat_u8=np.array(svf_result.bldg_sh_matrix),
+                _vegshmat_u8=np.array(svf_result.veg_sh_matrix),
+                _vbshmat_u8=np.array(svf_result.veg_blocks_bldg_sh_matrix),
+                _n_patches=n_patches,
             )
 
             logger.info(f"  ✓ SVF computed and cached to {svf_cache_dir}")
@@ -1073,6 +1150,9 @@ class SurfaceData:
         use_veg: bool,
         max_height: float,
         working_path: Path,
+        on_tile_complete: Callable | None = None,
+        feedback: Any = None,
+        progress_range: tuple[float, float] | None = None,
     ) -> tuple[SvfArrays, tuple[np.ndarray, np.ndarray, np.ndarray]]:
         """
         Compute SVF using tiled processing for large grids.
@@ -1081,7 +1161,7 @@ class SurfaceData:
         buffer limit, divides the grid into overlapping tiles, computes
         SVF per tile, and stitches the core regions into full-size arrays.
 
-        Shadow matrices are assembled into memory-mapped uint8 files to
+        Shadow matrices are assembled into memory-mapped bitpacked uint8 files to
         avoid holding the full 3D arrays in RAM.
 
         Args:
@@ -1092,10 +1172,11 @@ class SurfaceData:
             use_veg: Whether vegetation is present.
             max_height: Maximum height in the DSM (for buffer calculation).
             working_path: Directory for memmap files.
+            on_tile_complete: Optional callback(tile_idx, n_tiles) called after each tile.
 
         Returns:
             Tuple of (SvfArrays, (shmat_mm, vegshmat_mm, vbshmat_mm))
-            where the shadow matrix memmaps are uint8 (rows, cols, n_patches).
+            where the shadow matrix memmaps are bitpacked uint8 (rows, cols, n_pack).
         """
         from ..progress import ProgressReporter
         from ..tiling import calculate_buffer_distance, generate_tiles, validate_tile_size
@@ -1153,10 +1234,11 @@ class SurfaceData:
         for name in all_fields:
             outputs[name] = np.ones((rows, cols), dtype=np.float32)
 
-        # Pre-allocate memmap files for shadow matrices (uint8, on disk)
+        # Pre-allocate memmap files for shadow matrices (bitpacked uint8, on disk)
         memmap_dir = working_path / "shadow_memmaps"
         memmap_dir.mkdir(parents=True, exist_ok=True)
-        sh_shape = (rows, cols, n_patches)
+        n_pack = (n_patches + 7) // 8  # ceil(153/8) = 20
+        sh_shape = (rows, cols, n_pack)
         shmat_mm = np.memmap(
             memmap_dir / "shmat.dat",
             dtype=np.uint8,
@@ -1176,7 +1258,12 @@ class SurfaceData:
             shape=sh_shape,
         )
 
-        pbar = ProgressReporter(total=n_tiles, desc="Computing SVF (tiled)")
+        pbar = ProgressReporter(
+            total=n_tiles,
+            desc="Computing SVF (tiled)",
+            feedback=feedback,
+            progress_range=progress_range,
+        )
 
         # Pipeline: overlap GPU computation of tile N+1 with CPU
         # result-copying of tile N.  calculate_svf releases the GIL
@@ -1224,14 +1311,14 @@ class SurfaceData:
             if use_veg:
                 for name in veg_fields:
                     outputs[name][ws] = np.array(getattr(tile_result, name))[cs]
-            # Shadow matrices: float32 binary → uint8
+            # Shadow matrices are already bitpacked uint8 from Rust
             for src_name, mm in [
                 ("bldg_sh_matrix", shmat_mm),
                 ("veg_sh_matrix", vegshmat_mm),
                 ("veg_blocks_bldg_sh_matrix", vbshmat_mm),
             ]:
                 arr = np.array(getattr(tile_result, src_name))
-                mm[ws] = (arr[cs] * 255).astype(np.uint8)
+                mm[ws] = arr[cs]
 
         # Kick off first tile
         thread, box = _submit_tile(tiles[0])
@@ -1252,6 +1339,13 @@ class SurfaceData:
             # Copy results on main thread (overlaps with next GPU computation)
             _process_result(cur_result, cur_tile)
             pbar.update(1)
+            if on_tile_complete is not None:
+                on_tile_complete(tile_idx, n_tiles)
+            # Check QGIS cancellation between tiles
+            if pbar.is_cancelled():
+                pbar.close()
+                logger.info("  SVF computation cancelled by user")
+                break
 
         pbar.close()
         # Flush memmaps to disk
@@ -1415,13 +1509,12 @@ class SurfaceData:
         )
 
         # Store shadow matrices for anisotropic sky model
-        shmat = np.array(svf_result.bldg_sh_matrix)
-        vegshmat = np.array(svf_result.veg_sh_matrix)
-        vbshmat = np.array(svf_result.veg_blocks_bldg_sh_matrix)
+        # Shadow matrices are bitpacked uint8 from Rust
         self.shadow_matrices = ShadowArrays(
-            _shmat_u8=(np.clip(shmat, 0, 1) * 255).astype(np.uint8),
-            _vegshmat_u8=(np.clip(vegshmat, 0, 1) * 255).astype(np.uint8),
-            _vbshmat_u8=(np.clip(vbshmat, 0, 1) * 255).astype(np.uint8),
+            _shmat_u8=np.array(svf_result.bldg_sh_matrix),
+            _vegshmat_u8=np.array(svf_result.veg_sh_matrix),
+            _vbshmat_u8=np.array(svf_result.veg_blocks_bldg_sh_matrix),
+            _n_patches=153,  # patch_option=2
         )
 
         logger.info("  SVF computed successfully")

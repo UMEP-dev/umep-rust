@@ -347,14 +347,16 @@ pub fn utci_grid<'py>(
             let tmrt_val = tmrt_arr[[row, col]];
             let va_val = va_arr[[row, col]];
 
-            // Check for invalid pixel values
-            if tmrt_val <= -999.0 || va_val <= -999.0 {
-                *out = -9999.0;
+            // Check for invalid pixel values (NaN, nodata, non-finite)
+            if !tmrt_val.is_finite() || !va_val.is_finite() {
+                *out = f32::NAN;
+            } else if tmrt_val <= -999.0 || va_val <= -999.0 {
+                *out = f32::NAN;
             } else if va_val > 0.0 {
                 let d_tmrt = tmrt_val - ta;
                 *out = utci_polynomial(d_tmrt, ta, va_val, pa);
             } else {
-                *out = -9999.0; // Invalid wind speed
+                *out = f32::NAN; // Invalid wind speed
             }
         });
 

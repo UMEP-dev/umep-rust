@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import threading
 import time
 import zipfile
 
@@ -104,6 +103,18 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
             )
         )
 
+        # Output pixel size (optional — coarser than native for faster processing)
+        pixel_size_param = QgsProcessingParameterNumber(
+            "PIXEL_SIZE",
+            self.tr("Output pixel size (m) — leave 0 to use native DSM resolution"),
+            type=QgsProcessingParameterNumber.Double,
+            defaultValue=0.0,
+            minValue=0.0,
+            maxValue=100.0,
+            optional=True,
+        )
+        self.addParameter(pixel_size_param)
+
         # Wall limit (advanced)
         wall_limit = QgsProcessingParameterNumber(
             "WALL_LIMIT",
@@ -166,9 +177,26 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
             raise QgsProcessingException("DSM layer is required")
 
         dsm, dsm_gt, crs_wkt = load_raster_from_layer(dsm_layer)
-        pixel_size = abs(dsm_gt[1])
+        native_pixel_size = abs(dsm_gt[1])
         feedback.pushInfo(f"DSM: {dsm.shape[1]}x{dsm.shape[0]} pixels")
-        feedback.pushInfo(f"Pixel size: {pixel_size:.2f} m")
+        feedback.pushInfo(f"Native pixel size: {native_pixel_size:.2f} m")
+
+        # Resolve output pixel size
+        requested_pixel_size = self.parameterAsDouble(parameters, "PIXEL_SIZE", context)
+        if requested_pixel_size > 0:
+            if requested_pixel_size < native_pixel_size - 1e-6:
+                raise QgsProcessingException(
+                    f"Requested pixel size ({requested_pixel_size:.2f} m) is finer than the DSM "
+                    f"native resolution ({native_pixel_size:.2f} m). Upsampling creates false "
+                    f"precision. Use a value >= {native_pixel_size:.2f} or leave at 0 for native."
+                )
+            pixel_size = requested_pixel_size
+            if abs(pixel_size - native_pixel_size) > 1e-6:
+                feedback.pushInfo(f"Resampling all rasters from {native_pixel_size:.2f} m to {pixel_size:.2f} m")
+        else:
+            pixel_size = native_pixel_size
+
+        feedback.pushInfo(f"Output pixel size: {pixel_size:.2f} m")
 
         # Load optional rasters
         cdsm, cdsm_gt = _load_optional_raster(parameters, "CDSM", context, self)
@@ -315,112 +343,14 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
         if feedback.isCanceled():
             return {}
 
-        # Step 4: Compute walls
-        feedback.setProgressText("Computing wall heights...")
-        feedback.setProgress(25)
-
-        from solweig.physics import wallalgorithms as wa
-
-        wall_limit = self.parameterAsDouble(parameters, "WALL_LIMIT", context)
-        feedback.pushInfo(f"Computing walls (min height: {wall_limit:.1f} m)...")
-
-        walls = wa.findwalls(surface.dsm, wall_limit)
-        feedback.pushInfo("Wall heights computed")
-
-        feedback.setProgressText("Computing wall aspects...")
-        feedback.setProgress(30)
-
-        dsm_scale = 1.0 / pixel_size
-        dirwalls = wa.filter1Goodwin_as_aspect_v3(walls, dsm_scale, surface.dsm, feedback=feedback)
-        feedback.pushInfo("Wall aspects computed")
-
-        surface.wall_height = walls
-        surface.wall_aspect = dirwalls
-
-        if feedback.isCanceled():
-            return {}
-
-        # Step 5: Compute Sky View Factor
-        feedback.setProgressText("Computing Sky View Factor (this may take a while)...")
-        feedback.setProgress(35)
-
-        from solweig.rustalgos import skyview
-
-        use_veg = surface.cdsm is not None
-        dsm_f32 = surface.dsm.astype(np.float32)
-        max_height = float(np.nanmax(dsm_f32))
-
-        cdsm_svf = surface.cdsm.astype(np.float32) if use_veg else np.zeros_like(dsm_f32)
-        if use_veg and max_height < float(np.nanmax(cdsm_svf)):
-            max_height = float(np.nanmax(cdsm_svf))
-
-        if surface.tdsm is not None:
-            tdsm_svf = surface.tdsm.astype(np.float32)
-        elif use_veg:
-            tdsm_svf = (surface.cdsm * 0.25).astype(np.float32)  # default trunk ratio
-        else:
-            tdsm_svf = np.zeros_like(dsm_f32)
-
-        # Use SkyviewRunner for progress polling (Rust releases GIL)
-        total_patches = 153  # patch_option=2
-        runner = skyview.SkyviewRunner()
-        svf_result = None
-        svf_error = None
-
-        def _run_svf():
-            nonlocal svf_result, svf_error
-            try:
-                svf_result = runner.calculate_svf(
-                    dsm_f32,
-                    cdsm_svf,
-                    tdsm_svf,
-                    pixel_size,
-                    use_veg,
-                    max_height,
-                    2,
-                    3.0,  # patch_option, min_sun_elev_deg
-                )
-            except Exception as e:
-                svf_error = e
-
-        svf_thread = threading.Thread(target=_run_svf, daemon=True)
-        svf_thread.start()
-
-        # Poll progress (35-75% range)
-        while svf_thread.is_alive():
-            svf_thread.join(timeout=0.5)
-            patches_done = runner.progress()
-            pct = 35 + int(40 * patches_done / total_patches)
-            feedback.setProgress(min(pct, 74))
-            if feedback.isCanceled():
-                runner.cancel()
-                svf_thread.join(timeout=5.0)
-                return {}
-
-        svf_thread.join()
-
-        if svf_error is not None:
-            raise QgsProcessingException(f"SVF computation failed: {svf_error}") from svf_error
-        if svf_result is None:
-            raise QgsProcessingException("SVF computation was cancelled")
-
-        feedback.pushInfo("Sky View Factor computed")
-        feedback.setProgress(75)
-
-        if feedback.isCanceled():
-            return {}
-
-        # Step 6: Save prepared surface
-        feedback.setProgressText("Saving prepared surface...")
-        feedback.setProgress(80)
-
+        # Create output directory early so we can write incrementally
         output_dir = self.parameterAsString(parameters, "OUTPUT_DIR", context)
         os.makedirs(output_dir, exist_ok=True)
-
-        # Save each raster
         gt = surface._geotransform or aligned_gt
         crs = surface._crs_wkt or crs_wkt
 
+        # Save aligned/cropped surface rasters immediately
+        feedback.setProgressText("Saving aligned surface rasters...")
         self.save_georeferenced_output(surface.dsm, os.path.join(output_dir, "dsm.tif"), gt, crs)
         feedback.pushInfo("Saved dsm.tif")
 
@@ -445,36 +375,108 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
             )
             feedback.pushInfo("Saved land_cover.tif")
 
-        if surface.wall_height is not None:
-            self.save_georeferenced_output(surface.wall_height, os.path.join(output_dir, "wall_height.tif"), gt, crs)
-            feedback.pushInfo("Saved wall_height.tif")
+        # Step 4: Compute walls and save immediately
+        feedback.setProgressText("Computing wall heights...")
+        feedback.setProgress(25)
 
-        if surface.wall_aspect is not None:
-            self.save_georeferenced_output(surface.wall_aspect, os.path.join(output_dir, "wall_aspect.tif"), gt, crs)
-            feedback.pushInfo("Saved wall_aspect.tif")
+        from solweig.physics import wallalgorithms as wa
 
-        # Save SVF as svfs.zip
-        svf_files = {
-            "svf.tif": np.array(svf_result.svf),
-            "svfN.tif": np.array(svf_result.svf_north),
-            "svfE.tif": np.array(svf_result.svf_east),
-            "svfS.tif": np.array(svf_result.svf_south),
-            "svfW.tif": np.array(svf_result.svf_west),
+        wall_limit = self.parameterAsDouble(parameters, "WALL_LIMIT", context)
+        feedback.pushInfo(f"Computing walls (min height: {wall_limit:.1f} m)...")
+
+        walls = wa.findwalls(surface.dsm, wall_limit)
+        feedback.pushInfo("Wall heights computed")
+
+        feedback.setProgressText("Computing wall aspects...")
+        feedback.setProgress(30)
+
+        dsm_scale = 1.0 / pixel_size
+        dirwalls = wa.filter1Goodwin_as_aspect_v3(walls, dsm_scale, surface.dsm, feedback=feedback)
+        feedback.pushInfo("Wall aspects computed")
+
+        surface.wall_height = walls
+        surface.wall_aspect = dirwalls
+
+        # Save walls immediately
+        self.save_georeferenced_output(walls, os.path.join(output_dir, "wall_height.tif"), gt, crs)
+        feedback.pushInfo("Saved wall_height.tif")
+        self.save_georeferenced_output(dirwalls, os.path.join(output_dir, "wall_aspect.tif"), gt, crs)
+        feedback.pushInfo("Saved wall_aspect.tif")
+
+        if feedback.isCanceled():
+            return {}
+
+        # Step 5: Compute Sky View Factor
+        # Uses the same Python API as SurfaceData.prepare() — automatically
+        # tiles large grids to stay within GPU buffer limits.
+        feedback.setProgressText("Computing Sky View Factor (this may take a while)...")
+        feedback.setProgress(35)
+
+        from pathlib import Path
+
+        from solweig.models.surface import SurfaceData as SD
+
+        use_veg = surface.cdsm is not None
+        dsm_f32 = surface.dsm.astype(np.float32)
+
+        aligned_rasters = {
+            "dsm_arr": dsm_f32,
+            "cdsm_arr": surface.cdsm.astype(np.float32) if use_veg else None,
+            "tdsm_arr": (
+                surface.tdsm.astype(np.float32)
+                if surface.tdsm is not None
+                else (surface.cdsm * 0.25).astype(np.float32)
+                if use_veg
+                else None
+            ),
+            "pixel_size": pixel_size,
+            "dsm_transform": gt,
+            "dsm_crs": crs,
         }
-        svf_one = np.ones_like(np.array(svf_result.svf))
-        for name_tif, attr in [
-            ("svfveg.tif", "svf_veg"),
-            ("svfNveg.tif", "svf_veg_north"),
-            ("svfEveg.tif", "svf_veg_east"),
-            ("svfSveg.tif", "svf_veg_south"),
-            ("svfWveg.tif", "svf_veg_west"),
-            ("svfaveg.tif", "svf_veg_blocks_bldg_sh"),
-            ("svfNaveg.tif", "svf_veg_blocks_bldg_sh_north"),
-            ("svfEaveg.tif", "svf_veg_blocks_bldg_sh_east"),
-            ("svfSaveg.tif", "svf_veg_blocks_bldg_sh_south"),
-            ("svfWaveg.tif", "svf_veg_blocks_bldg_sh_west"),
-        ]:
-            svf_files[name_tif] = np.array(getattr(svf_result, attr)) if use_veg else svf_one
+
+        rows, cols = dsm_f32.shape
+        if rows * cols > 6_700_000:
+            feedback.pushInfo(f"Large grid ({rows}x{cols} = {rows * cols:,} px) — using tiled GPU computation")
+
+        try:
+            SD._compute_and_cache_svf(
+                surface,
+                aligned_rasters,
+                Path(output_dir),
+                trunk_ratio=0.25,
+                feedback=feedback,
+            )
+        except Exception as e:
+            raise QgsProcessingException(f"SVF computation failed: {e}") from e
+
+        feedback.pushInfo("Sky View Factor computed")
+        feedback.setProgress(75)
+
+        if feedback.isCanceled():
+            return {}
+
+        # Save SVF outputs (extract from surface object populated by _compute_and_cache_svf)
+        feedback.setProgressText("Saving SVF and shadow matrices...")
+        feedback.setProgress(80)
+
+        svf_data = surface.svf
+        svf_files = {
+            "svf.tif": svf_data.svf,
+            "svfN.tif": svf_data.svf_north,
+            "svfE.tif": svf_data.svf_east,
+            "svfS.tif": svf_data.svf_south,
+            "svfW.tif": svf_data.svf_west,
+            "svfveg.tif": svf_data.svf_veg,
+            "svfNveg.tif": svf_data.svf_veg_north,
+            "svfEveg.tif": svf_data.svf_veg_east,
+            "svfSveg.tif": svf_data.svf_veg_south,
+            "svfWveg.tif": svf_data.svf_veg_west,
+            "svfaveg.tif": svf_data.svf_aveg,
+            "svfNaveg.tif": svf_data.svf_aveg_north,
+            "svfEaveg.tif": svf_data.svf_aveg_east,
+            "svfSaveg.tif": svf_data.svf_aveg_south,
+            "svfWaveg.tif": svf_data.svf_aveg_west,
+        }
 
         svf_zip_path = os.path.join(output_dir, "svfs.zip")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -485,18 +487,22 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
                     zf.write(os.path.join(tmpdir, filename), filename)
         feedback.pushInfo("Saved svfs.zip")
 
-        # Save shadow matrices as shadowmats.npz (for anisotropic sky)
-        shmat = np.array(svf_result.bldg_sh_matrix)
-        vegshmat = np.array(svf_result.veg_sh_matrix)
-        vbshmat = np.array(svf_result.veg_blocks_bldg_sh_matrix)
-        shmat_u8 = (np.clip(shmat, 0, 1) * 255).astype(np.uint8)
-        vegshmat_u8 = (np.clip(vegshmat, 0, 1) * 255).astype(np.uint8)
-        vbshmat_u8 = (np.clip(vbshmat, 0, 1) * 255).astype(np.uint8)
+        # Save shadow matrices
+        sm = surface.shadow_matrices
+        shmat_u8 = np.array(sm._shmat_u8)
+        vegshmat_u8 = np.array(sm._vegshmat_u8)
+        vbshmat_u8 = np.array(sm._vbshmat_u8)
         shadow_path = os.path.join(output_dir, "shadowmats.npz")
-        np.savez_compressed(shadow_path, shadowmat=shmat_u8, vegshadowmat=vegshmat_u8, vbshmat=vbshmat_u8)
+        np.savez_compressed(
+            shadow_path,
+            shadowmat=shmat_u8,
+            vegshadowmat=vegshmat_u8,
+            vbshmat=vbshmat_u8,
+            patch_count=np.array(sm.patch_count),
+        )
         feedback.pushInfo("Saved shadowmats.npz")
 
-        # Save metadata
+        # Save metadata last (acts as a completion marker)
         metadata = {
             "pixel_size": pixel_size,
             "geotransform": list(gt),

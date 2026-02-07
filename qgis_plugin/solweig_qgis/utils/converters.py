@@ -706,11 +706,15 @@ def load_weather_from_epw(
             continue
         w = solweig.Weather(
             datetime=dt,
-            ta=row["temp_air"],
-            rh=row["relative_humidity"],
-            global_rad=row["ghi"],
-            ws=row.get("wind_speed", 1.0),
-            pressure=row.get("atmospheric_pressure", 1013.25),
+            ta=float(row["temp_air"]) if not np.isnan(row["temp_air"]) else 20.0,
+            rh=float(row["relative_humidity"]) if not np.isnan(row["relative_humidity"]) else 50.0,
+            global_rad=float(row["ghi"]) if not np.isnan(row["ghi"]) else 0.0,
+            ws=float(row["wind_speed"]) if not np.isnan(row["wind_speed"]) else 1.0,
+            pressure=(float(row["atmospheric_pressure"]) / 100.0)  # Pa → hPa
+            if not np.isnan(row["atmospheric_pressure"])
+            else 1013.25,
+            measured_direct_rad=float(row["dni"]) if not np.isnan(row["dni"]) else None,
+            measured_diffuse_rad=float(row["dhi"]) if not np.isnan(row["dhi"]) else None,
         )
         weather_series.append(w)
 

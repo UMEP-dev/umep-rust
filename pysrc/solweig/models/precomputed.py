@@ -349,30 +349,71 @@ class SvfArrays:
         )
 
 
+def _unpack_bitpacked_to_float32(packed: NDArray[np.uint8], patch_count: int) -> NDArray[np.floating]:
+    """Unpack bitpacked shadow matrix to float32 (0.0 or 1.0).
+
+    Args:
+        packed: Bitpacked array, shape (rows, cols, n_pack) where n_pack = ceil(patch_count/8).
+        patch_count: Number of actual patches.
+
+    Returns:
+        Float32 array, shape (rows, cols, patch_count) with values 0.0 or 1.0.
+    """
+    rows, cols, _ = packed.shape
+    result = np.zeros((rows, cols, patch_count), dtype=np.float32)
+    for p in range(patch_count):
+        byte_idx = p >> 3
+        bit_mask = np.uint8(1 << (p & 7))
+        result[:, :, p] = ((packed[:, :, byte_idx] & bit_mask) != 0).astype(np.float32)
+    return result
+
+
+def _pack_u8_to_bitpacked(
+    u8_data: NDArray[np.uint8],
+) -> NDArray[np.uint8]:
+    """Pack u8 shadow matrix (0 or 255 per patch) to bitpacked format.
+
+    Args:
+        u8_data: Array shape (rows, cols, patch_count) with values 0 or 255.
+
+    Returns:
+        Bitpacked array, shape (rows, cols, n_pack) where n_pack = ceil(patch_count/8).
+    """
+    rows, cols, patch_count = u8_data.shape
+    n_pack = (patch_count + 7) // 8
+    packed = np.zeros((rows, cols, n_pack), dtype=np.uint8)
+    for p in range(patch_count):
+        byte_idx = p >> 3
+        bit_mask = np.uint8(1 << (p & 7))
+        packed[:, :, byte_idx] |= np.where(u8_data[:, :, p] >= 128, bit_mask, np.uint8(0))
+    return packed
+
+
 @dataclass
 class ShadowArrays:
     """
     Pre-computed anisotropic shadow matrices for sky patch calculations.
 
-    These are 3D arrays of shape (rows, cols, patches) where patches is
-    typically 145, 153, 306, or 612 depending on the resolution.
+    Internally stored as bitpacked uint8 arrays of shape (rows, cols, n_pack)
+    where n_pack = ceil(patch_count / 8). Each bit represents one sky patch
+    (1 = sky visible / shadowed value was 255, 0 = blocked / was 0).
 
     Memory optimization:
-        Internally stored as uint8 (0-255 representing 0.0-1.0) to reduce
-        memory by 75%. Converted to float32 only when accessed via properties.
-        Cached after first access to avoid repeated allocations.
-        For a 400x400 grid with 153 patches: 24.5 MB as uint8 vs 98 MB as float32.
+        Bitpacking stores 8 patches per byte instead of 1, reducing memory 7.6x.
+        For a 2500x2500 grid with 153 patches: 375 MB bitpacked vs 2.87 GB as uint8.
+        Converted to float32 only when accessed via properties (e.g. for diffsh).
 
     Attributes:
-        _shmat_u8: Building shadow matrix (uint8 storage).
-        _vegshmat_u8: Vegetation shadow matrix (uint8 storage).
-        _vbshmat_u8: Combined veg+building shadow matrix (uint8 storage).
+        _shmat_u8: Building shadow matrix (bitpacked uint8).
+        _vegshmat_u8: Vegetation shadow matrix (bitpacked uint8).
+        _vbshmat_u8: Combined veg+building shadow matrix (bitpacked uint8).
         patch_count: Number of sky patches (145, 153, 306, or 612).
     """
 
     _shmat_u8: NDArray[np.uint8]
     _vegshmat_u8: NDArray[np.uint8]
     _vbshmat_u8: NDArray[np.uint8]
+    _n_patches: int = 153
     patch_count: int = field(init=False)
     # Cache for converted float32 arrays (allocated on first access)
     _shmat_f32: NDArray[np.floating] | None = field(init=False, default=None, repr=False)
@@ -380,15 +421,15 @@ class ShadowArrays:
     _vbshmat_f32: NDArray[np.floating] | None = field(init=False, default=None, repr=False)
 
     def __post_init__(self):
-        # Ensure uint8 storage
+        # Ensure uint8 dtype
         if self._shmat_u8.dtype != np.uint8:
-            self._shmat_u8 = (np.clip(self._shmat_u8, 0, 1) * 255).astype(np.uint8)
+            self._shmat_u8 = self._shmat_u8.astype(np.uint8)
         if self._vegshmat_u8.dtype != np.uint8:
-            self._vegshmat_u8 = (np.clip(self._vegshmat_u8, 0, 1) * 255).astype(np.uint8)
+            self._vegshmat_u8 = self._vegshmat_u8.astype(np.uint8)
         if self._vbshmat_u8.dtype != np.uint8:
-            self._vbshmat_u8 = (np.clip(self._vbshmat_u8, 0, 1) * 255).astype(np.uint8)
+            self._vbshmat_u8 = self._vbshmat_u8.astype(np.uint8)
 
-        self.patch_count = self._shmat_u8.shape[2]
+        self.patch_count = self._n_patches
         # Initialize cache as None (lazy allocation)
         self._shmat_f32 = None
         self._vegshmat_f32 = None
@@ -396,35 +437,23 @@ class ShadowArrays:
 
     @property
     def shmat(self) -> NDArray[np.floating]:
-        """
-        Building shadow matrix as float32 (0.0-1.0).
-
-        Cached after first access to avoid repeated allocations (~98MB for 400x400 grid).
-        """
+        """Building shadow matrix as float32 (0.0-1.0). Unpacked from bitpacked on demand."""
         if self._shmat_f32 is None:
-            self._shmat_f32 = self._shmat_u8.astype(np.float32) / 255.0
+            self._shmat_f32 = _unpack_bitpacked_to_float32(self._shmat_u8, self.patch_count)
         return self._shmat_f32
 
     @property
     def vegshmat(self) -> NDArray[np.floating]:
-        """
-        Vegetation shadow matrix as float32 (0.0-1.0).
-
-        Cached after first access to avoid repeated allocations (~98MB for 400x400 grid).
-        """
+        """Vegetation shadow matrix as float32 (0.0-1.0). Unpacked from bitpacked on demand."""
         if self._vegshmat_f32 is None:
-            self._vegshmat_f32 = self._vegshmat_u8.astype(np.float32) / 255.0
+            self._vegshmat_f32 = _unpack_bitpacked_to_float32(self._vegshmat_u8, self.patch_count)
         return self._vegshmat_f32
 
     @property
     def vbshmat(self) -> NDArray[np.floating]:
-        """
-        Combined shadow matrix as float32 (0.0-1.0).
-
-        Cached after first access to avoid repeated allocations (~98MB for 400x400 grid).
-        """
+        """Combined shadow matrix as float32 (0.0-1.0). Unpacked from bitpacked on demand."""
         if self._vbshmat_f32 is None:
-            self._vbshmat_f32 = self._vbshmat_u8.astype(np.float32) / 255.0
+            self._vbshmat_f32 = _unpack_bitpacked_to_float32(self._vbshmat_u8, self.patch_count)
         return self._vbshmat_f32
 
     @property
@@ -453,21 +482,20 @@ class ShadowArrays:
     def release_float32_cache(self) -> None:
         """Release cached float32 shadow matrices to free memory.
 
-        The uint8 originals remain available. Future property access will
-        re-convert from uint8 as needed.
-
-        For a 1000x1000 grid with 153 patches, this frees ~1.8 GB.
+        The bitpacked originals remain available. Future property access will
+        re-unpack as needed.
         """
         self._shmat_f32 = None
         self._vegshmat_f32 = None
         self._vbshmat_f32 = None
 
     def crop(self, r0: int, r1: int, c0: int, c1: int) -> ShadowArrays:
-        """Crop all shadow matrices to [r0:r1, c0:c1] (3D: rows, cols, patches)."""
+        """Crop all shadow matrices to [r0:r1, c0:c1] (3D: rows, cols, n_pack)."""
         return ShadowArrays(
             _shmat_u8=self._shmat_u8[r0:r1, c0:c1, :].copy(),
             _vegshmat_u8=self._vegshmat_u8[r0:r1, c0:c1, :].copy(),
             _vbshmat_u8=self._vbshmat_u8[r0:r1, c0:c1, :].copy(),
+            _n_patches=self.patch_count,
         )
 
     @classmethod
@@ -475,16 +503,9 @@ class ShadowArrays:
         """
         Load shadow matrices from SOLWEIG shadowmats.npz format.
 
-        Args:
-            npz_path: Path to shadowmats.npz file.
-
-        Returns:
-            ShadowArrays instance with loaded data.
-
-        Memory note:
-            The npz file typically contains uint8 arrays (compressed).
-            Data is kept as uint8 internally; conversion to float32
-            happens only when arrays are accessed via properties.
+        Handles both legacy u8-per-patch format and new bitpacked format.
+        Legacy files have shape[2] matching patch count (145/153/306/612).
+        New files include a 'patch_count' metadata key.
         """
         npz_path = Path(npz_path)
         if not npz_path.exists():
@@ -492,12 +513,23 @@ class ShadowArrays:
 
         data = np.load(str(npz_path))
 
-        # Load arrays - they should be uint8 in the optimized format
         shmat = data["shadowmat"]
         vegshmat = data["vegshadowmat"]
         vbshmat = data["vbshmat"]
 
-        # Convert to uint8 if not already (legacy float32 format)
+        # Detect format: new bitpacked files include 'patch_count' key
+        if "patch_count" in data:
+            patch_count = int(data["patch_count"])
+            # Data is already bitpacked uint8
+            return cls(
+                _shmat_u8=shmat.astype(np.uint8),
+                _vegshmat_u8=vegshmat.astype(np.uint8),
+                _vbshmat_u8=vbshmat.astype(np.uint8),
+                _n_patches=patch_count,
+            )
+
+        # Legacy format: shape[2] == patch_count, values are 0/255 uint8 or 0.0/1.0 float32
+        # Convert float32 → uint8 first if needed
         if shmat.dtype != np.uint8:
             shmat = (np.clip(shmat, 0, 1) * 255).astype(np.uint8)
         if vegshmat.dtype != np.uint8:
@@ -505,10 +537,14 @@ class ShadowArrays:
         if vbshmat.dtype != np.uint8:
             vbshmat = (np.clip(vbshmat, 0, 1) * 255).astype(np.uint8)
 
+        patch_count = shmat.shape[2]
+
+        # Pack u8 → bitpacked
         return cls(
-            _shmat_u8=shmat,
-            _vegshmat_u8=vegshmat,
-            _vbshmat_u8=vbshmat,
+            _shmat_u8=_pack_u8_to_bitpacked(shmat),
+            _vegshmat_u8=_pack_u8_to_bitpacked(vegshmat),
+            _vbshmat_u8=_pack_u8_to_bitpacked(vbshmat),
+            _n_patches=patch_count,
         )
 
 
