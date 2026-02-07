@@ -200,6 +200,8 @@ mkdocs build
 
 ### QGIS Plugin Bundle Preparation
 
+> For uploading to the QGIS Plugin Repository: the easiest way is to let GitHub Actions build the package when pushing to GitHub. Download the zip file and upload it to the plug-in repository.
+
 To prepare the QGIS plugin for distribution:
 
 #### 1. Update Plugin Metadata
