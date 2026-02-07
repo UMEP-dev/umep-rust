@@ -21,9 +21,9 @@ from solweig.rustalgos import shadowing
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def input_data():
-    """Load input data from golden fixtures."""
+    """Load input data from golden fixtures (shared across all tests in module)."""
     return {
         "dsm": np.load(FIXTURES_DIR / "input_dsm.npy"),
         "cdsm": np.load(FIXTURES_DIR / "input_cdsm.npy"),
@@ -58,7 +58,7 @@ def compute_shadows(input_data, azimuth, altitude):
 class TestGoldenShadowsMorning:
     """Golden tests for morning sun position (azimuth=90, altitude=30)."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def morning_golden(self):
         return {
             "bldg_sh": np.load(FIXTURES_DIR / "shadow_morning_bldg_sh.npy"),
@@ -67,7 +67,7 @@ class TestGoldenShadowsMorning:
             "wall_sun": np.load(FIXTURES_DIR / "shadow_morning_wall_sun.npy"),
         }
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def morning_result(self, input_data):
         return compute_shadows(input_data, azimuth=90.0, altitude=30.0)
 
@@ -115,7 +115,7 @@ class TestGoldenShadowsMorning:
 class TestGoldenShadowsNoon:
     """Golden tests for noon sun position (azimuth=180, altitude=60)."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def noon_golden(self):
         return {
             "bldg_sh": np.load(FIXTURES_DIR / "shadow_noon_bldg_sh.npy"),
@@ -124,7 +124,7 @@ class TestGoldenShadowsNoon:
             "wall_sun": np.load(FIXTURES_DIR / "shadow_noon_wall_sun.npy"),
         }
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def noon_result(self, input_data):
         return compute_shadows(input_data, azimuth=180.0, altitude=60.0)
 
@@ -152,7 +152,7 @@ class TestGoldenShadowsNoon:
 class TestGoldenShadowsAfternoon:
     """Golden tests for afternoon sun position (azimuth=270, altitude=45)."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def afternoon_golden(self):
         return {
             "bldg_sh": np.load(FIXTURES_DIR / "shadow_afternoon_bldg_sh.npy"),
@@ -161,7 +161,7 @@ class TestGoldenShadowsAfternoon:
             "wall_sun": np.load(FIXTURES_DIR / "shadow_afternoon_wall_sun.npy"),
         }
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def afternoon_result(self, input_data):
         return compute_shadows(input_data, azimuth=270.0, altitude=45.0)
 

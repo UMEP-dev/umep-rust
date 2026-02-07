@@ -469,9 +469,9 @@ pub fn compute_timestep(
     buildings: PyReadonlyArray2<f32>,
     lc_grid: Option<PyReadonlyArray2<f32>>,
     // Anisotropic sky inputs (None for isotropic)
-    shmat: Option<PyReadonlyArray3<f32>>,
-    vegshmat: Option<PyReadonlyArray3<f32>>,
-    vbshmat: Option<PyReadonlyArray3<f32>>,
+    shmat: Option<PyReadonlyArray3<u8>>,
+    vegshmat: Option<PyReadonlyArray3<u8>>,
+    vbshmat: Option<PyReadonlyArray3<u8>>,
     l_patches: Option<PyReadonlyArray2<f32>>,
     steradians: Option<PyReadonlyArray1<f32>>,
     lv: Option<PyReadonlyArray2<f32>>,
@@ -757,14 +757,15 @@ pub fn compute_timestep(
         let esky_a = esky_aniso.unwrap_or(esky);
 
         // drad via weighted_patch_sum on diffsh
-        // diffsh = shmat - (1 - vegshmat) * (1 - psi)
+        // diffsh = shmat - (1 - vegshmat) * (1 - psi)  (u8 -> f32 inline)
         let n_patches = shmat_a.shape()[2];
         let mut diffsh = Array3::<f32>::zeros((shape.0, shape.1, n_patches));
         for r in 0..shape.0 {
             for c in 0..shape.1 {
                 for i in 0..n_patches {
-                    diffsh[[r, c, i]] = shmat_a[[r, c, i]]
-                        - (1.0 - vegshmat_a[[r, c, i]]) * (1.0 - psi);
+                    let sh = shmat_a[[r, c, i]] as f32 / 255.0;
+                    let vsh = vegshmat_a[[r, c, i]] as f32 / 255.0;
+                    diffsh[[r, c, i]] = sh - (1.0 - vsh) * (1.0 - psi);
                 }
             }
         }

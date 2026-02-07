@@ -43,7 +43,7 @@ class EpwImportAlgorithm(SolweigAlgorithmBase):
         return "epw_import"
 
     def displayName(self) -> str:
-        return self.tr("Download / Preview EPW Weather File")
+        return self.tr("1. Download / Preview Weather File")
 
     def shortHelpString(self) -> str:
         return self.tr(

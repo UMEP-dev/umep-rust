@@ -96,6 +96,7 @@ class TestWallMaterialInCalculate:
 
         dsm = np.full((3, 3), 2.0, dtype=np.float32)
         surface = SurfaceData(dsm=dsm)
+        surface.compute_svf()
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2023, 7, 15, 12, 0),

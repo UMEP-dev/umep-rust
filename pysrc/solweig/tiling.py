@@ -372,8 +372,9 @@ def calculate_tiled(
             emissivity=tile_emis,
             pixel_size=pixel_size,
         )
+        tile_surface.compute_svf()
 
-        # Calculate for tile (SVF computed per-tile, walls from precomputed if available)
+        # Calculate for tile (walls from precomputed if available)
         tile_result = calculate(
             surface=tile_surface,
             location=location,

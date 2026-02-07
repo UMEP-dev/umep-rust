@@ -35,18 +35,18 @@ DEFAULT_ESKY = 0.75  # Sky emissivity
 DEFAULT_CI = 0.85  # Clearness index
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def input_data():
-    """Load input data from golden fixtures."""
+    """Load input data from golden fixtures (shared across all tests in module)."""
     return {
         "dsm": np.load(FIXTURES_DIR / "input_dsm.npy"),
         "params": dict(np.load(FIXTURES_DIR / "input_params.npz")),
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def svf_data():
-    """Load SVF data from golden fixtures."""
+    """Load SVF data from golden fixtures (shared across all tests in module)."""
     return {
         "svf": np.load(FIXTURES_DIR / "svf_total.npy").astype(np.float32),
         "svf_north": np.load(FIXTURES_DIR / "svf_north.npy").astype(np.float32),
@@ -57,9 +57,9 @@ def svf_data():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def shadow_data():
-    """Load shadow data from golden fixtures (noon position)."""
+    """Load shadow data from golden fixtures (shared across all tests in module)."""
     return {
         "bldg_sh": np.load(FIXTURES_DIR / "shadow_noon_bldg_sh.npy").astype(np.float32),
         "veg_sh": np.load(FIXTURES_DIR / "shadow_noon_veg_sh.npy").astype(np.float32),
@@ -149,21 +149,21 @@ def create_lside_inputs(svf_data, shadow_data):
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def kside_inputs(svf_data, shadow_data):
-    """Prepare Kside inputs."""
+    """Prepare Kside inputs (shared across all tests in module)."""
     return create_kside_inputs(svf_data, shadow_data)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def lside_inputs(svf_data, shadow_data):
-    """Prepare Lside inputs."""
+    """Prepare Lside inputs (shared across all tests in module)."""
     return create_lside_inputs(svf_data, shadow_data)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def kside_result(kside_inputs):
-    """Compute Kside result using Rust implementation (isotropic mode)."""
+    """Compute Kside result using Rust implementation (computed once per module)."""
     shadowing.disable_gpu()
 
     return vegetation.kside_veg(
@@ -200,9 +200,9 @@ def kside_result(kside_inputs):
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def lside_result(lside_inputs):
-    """Compute Lside result using Rust implementation (isotropic mode)."""
+    """Compute Lside result using Rust implementation (computed once per module)."""
     shadowing.disable_gpu()
 
     return vegetation.lside_veg(

@@ -3,7 +3,7 @@ use ndarray::{Array2, Array3, ArrayView2, Zip};
 use numpy::{IntoPyArray, PyArray2, PyArray3, PyReadonlyArray2};
 use pyo3::prelude::*;
 use std::f32::consts::PI;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 // Import the correct result struct from shadowing
@@ -192,6 +192,7 @@ fn calculate_svf_inner(
     patch_option: u8,
     min_sun_elev_deg: Option<f32>,
     progress_counter: Option<Arc<AtomicUsize>>,
+    cancel_flag: Option<Arc<AtomicBool>>,
 ) -> PyResult<SvfIntermediate> {
     // Convert owned arrays to views for internal processing
     let dsm_f32 = dsm_owned.view();
@@ -348,6 +349,15 @@ fn calculate_svf_inner(
         // Update progress counter after this patch is fully processed
         if let Some(ref counter) = progress_counter {
             counter.fetch_add(1, Ordering::SeqCst);
+        }
+
+        // Check cancellation flag between patches
+        if let Some(ref flag) = cancel_flag {
+            if flag.load(Ordering::SeqCst) {
+                return Err(pyo3::exceptions::PyInterruptedError::new_err(
+                    "SVF computation cancelled",
+                ));
+            }
         }
     } // end patch loop
 
@@ -513,15 +523,17 @@ pub fn calculate_svf(
             patch_option,
             min_sun_elev_deg,
             None,
+            None,
         )
     })?;
     svf_intermediate_to_py(py, inter)
 }
 
-// New pyclass runner that exposes a progress() method and a calculate_svf that updates an internal counter
+// New pyclass runner that exposes progress() and cancel() methods
 #[pyclass]
 pub struct SkyviewRunner {
     progress: Arc<AtomicUsize>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Default for SkyviewRunner {
@@ -536,11 +548,16 @@ impl SkyviewRunner {
     pub fn new() -> Self {
         Self {
             progress: Arc::new(AtomicUsize::new(0)),
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn progress(&self) -> usize {
         self.progress.load(Ordering::SeqCst)
+    }
+
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::SeqCst);
     }
 
     pub fn calculate_svf(
@@ -556,8 +573,9 @@ impl SkyviewRunner {
         min_sun_elev_deg: Option<f32>,
     ) -> PyResult<Py<SvfResult>> {
         let patch_option = patch_option.unwrap_or(2);
-        // reset progress
+        // reset progress and cancel flag
         self.progress.store(0, Ordering::SeqCst);
+        self.cancelled.store(false, Ordering::SeqCst);
         // Copy arrays to owned buffers and run without the GIL so progress can be polled
         let dsm_owned = dsm_py.as_array().to_owned();
         let vegdem_owned = vegdem_py.as_array().to_owned();
@@ -573,6 +591,7 @@ impl SkyviewRunner {
                 patch_option,
                 min_sun_elev_deg,
                 Some(self.progress.clone()),
+                Some(self.cancelled.clone()),
             )
         })?;
         svf_intermediate_to_py(py, inter)

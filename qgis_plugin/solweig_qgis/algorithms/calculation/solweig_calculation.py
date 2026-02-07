@@ -1,8 +1,8 @@
 """
 Unified SOLWEIG Calculation Algorithm
 
-Supports single timestep or EPW timeseries, optional tiled processing,
-and optional UTCI/PET post-processing.
+Supports single timestep, EPW timeseries, or UMEP met timeseries,
+with optional tiled processing and UTCI/PET post-processing.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from qgis.core import (
     QgsProcessingParameterBoolean,
     QgsProcessingParameterDefinition,
     QgsProcessingParameterEnum,
-    QgsProcessingParameterExtent,
+    QgsProcessingParameterFile,
     QgsProcessingParameterFolderDestination,
     QgsProcessingParameterNumber,
 )
@@ -29,17 +29,19 @@ from qgis.core import (
 from ...utils.converters import (
     create_human_params_from_parameters,
     create_location_from_parameters,
-    create_surface_from_parameters,
     create_weather_from_parameters,
+    load_prepared_surface,
     load_weather_from_epw,
+    load_weather_from_umep_met,
 )
 from ...utils.parameters import (
+    add_date_filter_parameters,
     add_epw_parameters,
     add_human_body_parameters,
     add_human_parameters,
     add_location_parameters,
     add_options_parameters,
-    add_surface_parameters,
+    add_umep_met_parameters,
     add_weather_parameters,
 )
 from ..base import SolweigAlgorithmBase
@@ -56,46 +58,36 @@ class SolweigCalculationAlgorithm(SolweigAlgorithmBase):
     # Weather source enum values
     WEATHER_SINGLE = 0
     WEATHER_EPW = 1
+    WEATHER_UMEP = 2
 
     def name(self) -> str:
         return "solweig_calculation"
 
     def displayName(self) -> str:
-        return self.tr("SOLWEIG Calculation")
+        return self.tr("3. SOLWEIG Calculation")
 
     def shortHelpString(self) -> str:
         return self.tr(
             """Calculate Mean Radiant Temperature (Tmrt) with SOLWEIG.
 
+<b>Surface data:</b>
+Provide the <b>prepared surface directory</b> from "Prepare Surface Data".
+All rasters (DSM, CDSM, DEM, walls) are loaded automatically.
+
 <b>Weather modes:</b>
 <ul>
 <li><b>Single timestep:</b> Manual weather input for one date/time</li>
-<li><b>EPW weather file:</b> Load hourly data from an EnergyPlus Weather file.
-  Thermal state (ground heating/cooling) accumulates across timesteps.</li>
+<li><b>EPW weather file:</b> Load hourly data from an EnergyPlus Weather file</li>
+<li><b>UMEP met file:</b> Load from UMEP/SUEWS meteorological forcing files</li>
 </ul>
-
-<b>Required inputs:</b>
-<ul>
-<li>DSM (Digital Surface Model)</li>
-<li>Location (auto-extract from CRS or manual lat/lon)</li>
-<li>Weather data (single timestep or EPW file + date range)</li>
-</ul>
-
-<b>Optional inputs:</b>
-<ul>
-<li>CDSM, DEM, TDSM, Land cover</li>
-<li>Pre-computed SVF directory (highly recommended for timeseries)</li>
-</ul>
+For timeseries modes, thermal state (ground heating/cooling) accumulates
+across timesteps for physically accurate results.
 
 <b>Post-processing (optional):</b>
 <ul>
 <li><b>UTCI</b> - fast polynomial (~200 timesteps/sec)</li>
 <li><b>PET</b> - iterative heat balance (~4 timesteps/sec, ~50x slower than UTCI)</li>
 </ul>
-
-<b>Tiling (advanced):</b>
-Enable tiled processing for large rasters (>4000x4000 pixels) to reduce
-memory usage. Only available for single timestep mode.
 
 <b>Outputs:</b>
 GeoTIFF files organised into subfolders of the output directory:
@@ -108,11 +100,11 @@ GeoTIFF files organised into subfolders of the output directory:
     pet/         pet_...                 (if enabled)
 </pre>
 
-<b>Tips:</b>
+<b>Recommended workflow:</b>
 <ol>
-<li>Run "Compute Sky View Factor" preprocessing first for much faster timeseries</li>
-<li>Use EPW mode for multi-timestep simulations (thermal state accumulation)</li>
-<li>UTCI is fast; PET is slow - consider computing PET only for critical timesteps</li>
+<li>Run "Prepare Surface Data" to align rasters and compute walls</li>
+<li>Run "Compute Sky View Factor" on the prepared surface (optional, for anisotropic sky)</li>
+<li>Run this algorithm with the prepared surface directory</li>
 </ol>"""
         )
 
@@ -124,15 +116,12 @@ GeoTIFF files organised into subfolders of the output directory:
 
     def initAlgorithm(self, config=None):
         """Define algorithm parameters."""
-        # --- Surface inputs ---
-        add_surface_parameters(self)
-
-        # --- Processing extent (optional) ---
+        # --- Prepared surface directory (required) ---
         self.addParameter(
-            QgsProcessingParameterExtent(
-                "EXTENT",
-                self.tr("Processing extent (leave empty to use intersection of inputs)"),
-                optional=True,
+            QgsProcessingParameterFile(
+                "PREPARED_SURFACE_DIR",
+                self.tr("Prepared surface directory (from 'Prepare Surface Data')"),
+                behavior=QgsProcessingParameterFile.Folder,
             )
         )
 
@@ -144,7 +133,11 @@ GeoTIFF files organised into subfolders of the output directory:
             QgsProcessingParameterEnum(
                 "WEATHER_SOURCE",
                 self.tr("Weather data source"),
-                options=["Single timestep (manual entry)", "EPW weather file (timeseries)"],
+                options=[
+                    "Single timestep (manual entry)",
+                    "EPW weather file (timeseries)",
+                    "UMEP met file (timeseries)",
+                ],
                 defaultValue=self.WEATHER_EPW,
             )
         )
@@ -158,6 +151,12 @@ GeoTIFF files organised into subfolders of the output directory:
 
         # --- EPW weather ---
         add_epw_parameters(self)
+
+        # --- UMEP met weather ---
+        add_umep_met_parameters(self)
+
+        # --- Date/time filtering (shared by EPW and UMEP) ---
+        add_date_filter_parameters(self)
 
         # --- Human parameters ---
         add_human_parameters(self)
@@ -217,14 +216,40 @@ GeoTIFF files organised into subfolders of the output directory:
         tile_size.setFlags(tile_size.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(tile_size)
 
-        # --- Output selection ---
+        # --- Output selection (Tmrt always saved) ---
         self.addParameter(
-            QgsProcessingParameterEnum(
-                "OUTPUT_COMPONENTS",
-                self.tr("Output components to save"),
-                options=["tmrt", "shadow", "kdown", "kup", "ldown", "lup"],
-                allowMultiple=True,
-                defaultValue=[0],  # tmrt only
+            QgsProcessingParameterBoolean(
+                "OUTPUT_SHADOW",
+                self.tr("Save shadow fraction"),
+                defaultValue=False,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                "OUTPUT_KDOWN",
+                self.tr("Save Kdown (incoming shortwave)"),
+                defaultValue=False,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                "OUTPUT_KUP",
+                self.tr("Save Kup (reflected shortwave)"),
+                defaultValue=False,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                "OUTPUT_LDOWN",
+                self.tr("Save Ldown (incoming longwave)"),
+                defaultValue=False,
+            )
+        )
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                "OUTPUT_LUP",
+                self.tr("Save Lup (emitted longwave)"),
+                defaultValue=False,
             )
         )
 
@@ -232,7 +257,8 @@ GeoTIFF files organised into subfolders of the output directory:
         self.addParameter(
             QgsProcessingParameterFolderDestination(
                 "OUTPUT_DIR",
-                self.tr("Output directory"),
+                self.tr("Output directory (defaults to 'results' inside prepared surface dir)"),
+                optional=True,
             )
         )
 
@@ -284,34 +310,15 @@ GeoTIFF files organised into subfolders of the output directory:
         # Determine weather mode
         weather_mode = self.parameterAsEnum(parameters, "WEATHER_SOURCE", context)
         is_single = weather_mode == self.WEATHER_SINGLE
+        mode_names = {0: "Single timestep", 1: "EPW timeseries", 2: "UMEP met timeseries"}
+        feedback.pushInfo(f"Mode: {mode_names.get(weather_mode, 'Unknown')}")
 
-        feedback.pushInfo(f"Mode: {'Single timestep' if is_single else 'EPW timeseries'}")
-
-        # Step 1: Load surface data
+        # Step 1: Load surface data from prepared directory
         feedback.setProgressText("Loading surface data...")
         feedback.setProgress(5)
 
-        # Extract optional processing extent
-        extent_rect = self.parameterAsExtent(parameters, "EXTENT", context)
-        bbox = None
-        if not extent_rect.isNull():
-            bbox = [
-                extent_rect.xMinimum(),
-                extent_rect.yMinimum(),
-                extent_rect.xMaximum(),
-                extent_rect.yMaximum(),
-            ]
-            feedback.pushInfo(f"Using custom extent: {bbox}")
-
-        output_dir = self.parameterAsString(parameters, "OUTPUT_DIR", context)
-        surface = create_surface_from_parameters(
-            parameters,
-            context,
-            self,
-            feedback,
-            bbox=bbox,
-            output_dir=output_dir,
-        )
+        prepared_dir = self.parameterAsFile(parameters, "PREPARED_SURFACE_DIR", context)
+        surface = load_prepared_surface(prepared_dir, feedback)
 
         if feedback.isCanceled():
             return {}
@@ -329,15 +336,18 @@ GeoTIFF files organised into subfolders of the output directory:
         feedback.setProgressText("Loading weather data...")
         feedback.setProgress(15)
 
+        # Parse shared date/hour filters (used by both EPW and UMEP)
+        start_qdt = self.parameterAsDateTime(parameters, "START_DATE", context)
+        end_qdt = self.parameterAsDateTime(parameters, "END_DATE", context)
+        start_dt = start_qdt if start_qdt.isValid() else None
+        end_dt = end_qdt if end_qdt.isValid() else None
+        hours_filter = self.parameterAsString(parameters, "HOURS_FILTER", context)
+
         if is_single:
             weather = create_weather_from_parameters(parameters, feedback)
             weather_series = [weather]
-        else:
+        elif weather_mode == self.WEATHER_EPW:
             epw_path = self.parameterAsFile(parameters, "EPW_FILE", context)
-            start_dt = self.parameterAsDateTime(parameters, "START_DATE", context)
-            end_dt = self.parameterAsDateTime(parameters, "END_DATE", context)
-            hours_filter = self.parameterAsString(parameters, "HOURS_FILTER", context)
-
             weather_series = load_weather_from_epw(
                 epw_path=epw_path,
                 start_dt=start_dt,
@@ -345,9 +355,19 @@ GeoTIFF files organised into subfolders of the output directory:
                 hours_filter=hours_filter,
                 feedback=feedback,
             )
-
             if not weather_series:
                 raise QgsProcessingException("No timesteps found in specified date range")
+        elif weather_mode == self.WEATHER_UMEP:
+            umep_path = self.parameterAsFile(parameters, "UMEP_MET_FILE", context)
+            weather_series = load_weather_from_umep_met(
+                met_path=umep_path,
+                start_dt=start_dt,
+                end_dt=end_dt,
+                hours_filter=hours_filter,
+                feedback=feedback,
+            )
+            if not weather_series:
+                raise QgsProcessingException("No timesteps found in UMEP met file")
 
         if feedback.isCanceled():
             return {}
@@ -358,15 +378,28 @@ GeoTIFF files organised into subfolders of the output directory:
         conifer = self.parameterAsBool(parameters, "CONIFER", context)
         output_dir = self.parameterAsString(parameters, "OUTPUT_DIR", context)
 
-        # Parse output components
-        output_indices = self.parameterAsEnums(parameters, "OUTPUT_COMPONENTS", context)
-        output_names = ["tmrt", "shadow", "kdown", "kup", "ldown", "lup"]
-        selected_outputs = [output_names[i] for i in output_indices]
+        # Default output to 'results/' inside prepared surface directory
+        if not output_dir or output_dir.rstrip("/").endswith("OUTPUT_DIR"):
+            output_dir = os.path.join(prepared_dir, "results")
+            feedback.pushInfo(f"Output directory: {output_dir} (inside prepared surface dir)")
+
+        # Parse output components (tmrt always saved)
+        selected_outputs = ["tmrt"]
+        for comp in ["shadow", "kdown", "kup", "ldown", "lup"]:
+            if self.parameterAsBool(parameters, f"OUTPUT_{comp.upper()}", context):
+                selected_outputs.append(comp)
         feedback.pushInfo(f"Outputs: {', '.join(selected_outputs)}")
 
-        # Load precomputed SVF if provided
+        # Load precomputed SVF — check explicit SVF_DIR, then prepared surface dir
         precomputed = None
-        svf_dir = parameters.get("SVF_DIR")
+        svf_dir = parameters.get("SVF_DIR") or None
+        if not svf_dir:
+            # Auto-detect SVF in prepared surface directory
+            svfs_path = os.path.join(prepared_dir, "svfs.zip")
+            if os.path.exists(svfs_path):
+                svf_dir = prepared_dir
+                feedback.pushInfo("Auto-detected SVF in prepared surface directory")
+
         if svf_dir:
             feedback.pushInfo(f"Loading pre-computed SVF from {svf_dir}")
             try:
@@ -427,6 +460,11 @@ GeoTIFF files organised into subfolders of the output directory:
         # Step 6: Run calculation
         os.makedirs(output_dir, exist_ok=True)
 
+        # results is used for single/tiled paths; timeseries uses n_results + tmrt_stats
+        results = None
+        n_results = 0
+        tmrt_stats = {}
+
         if is_single and enable_tiling:
             results = self._run_tiled(
                 solweig,
@@ -456,7 +494,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 feedback,
             )
         else:
-            results = self._run_timeseries(
+            n_results, tmrt_stats = self._run_timeseries(
                 solweig,
                 surface,
                 location,
@@ -473,8 +511,9 @@ GeoTIFF files organised into subfolders of the output directory:
         if feedback.isCanceled():
             return {}
 
+        n_timesteps = n_results if results is None else len(results)
         calc_elapsed = time.time() - start_time
-        feedback.pushInfo(f"Calculation complete: {len(results)} timestep(s) in {calc_elapsed:.1f}s")
+        feedback.pushInfo(f"Calculation complete: {n_timesteps} timestep(s) in {calc_elapsed:.1f}s")
 
         # Step 7: Post-processing
         utci_count = 0
@@ -503,11 +542,24 @@ GeoTIFF files organised into subfolders of the output directory:
 
         # Report summary
         total_elapsed = time.time() - start_time
-        self._report_summary(results, total_elapsed, utci_count, pet_count, output_dir, feedback)
+        if results is None:
+            # Timeseries path: use incremental stats
+            self._report_summary(n_results, total_elapsed, utci_count, pet_count, output_dir, feedback, tmrt_stats)
+        else:
+            # Single/tiled path: compute stats from results list
+            stats = {}
+            all_valid = [r.tmrt[~np.isnan(r.tmrt)] for r in results if r.tmrt is not None]
+            if all_valid:
+                stats = {
+                    "mean": np.mean([arr.mean() for arr in all_valid]),
+                    "min": float(min(arr.min() for arr in all_valid)),
+                    "max": float(max(arr.max() for arr in all_valid)),
+                }
+            self._report_summary(len(results), total_elapsed, utci_count, pet_count, output_dir, feedback, stats)
 
         return {
             "OUTPUT_FOLDER": output_dir,
-            "TIMESTEP_COUNT": len(results),
+            "TIMESTEP_COUNT": n_timesteps,
             "UTCI_COUNT": utci_count,
             "PET_COUNT": pet_count,
         }
@@ -657,25 +709,36 @@ GeoTIFF files organised into subfolders of the output directory:
         output_dir,
         selected_outputs,
         feedback,
-    ) -> list:
+    ) -> tuple[int, dict]:
         """Run multi-timestep timeseries with per-timestep progress.
 
         Loops over timesteps using solweig.calculate() directly instead of
         delegating to calculate_timeseries(), so we have full control over
         the QGIS progress bar and cancellation between timesteps.
+
+        Returns (n_results, tmrt_stats) instead of a results list to avoid
+        accumulating all result arrays in memory (~46 MB per timestep).
         """
         n_steps = len(weather_series)
         feedback.setProgressText(f"Running timeseries ({n_steps} timesteps)...")
         feedback.setProgress(25)
 
         # Initialize thermal state for accurate ground temperature modelling
-        state = solweig.ThermalState.initial(surface.dsm.shape)
+        from solweig.models.state import ThermalState
+
+        state = ThermalState.initial(surface.dsm.shape)
         if n_steps >= 2:
             dt0 = weather_series[0].datetime
             dt1 = weather_series[1].datetime
             state.timestep_dec = (dt1 - dt0).total_seconds() / 86400.0
 
-        results = []
+        # Incremental stats (avoid accumulating all results in memory)
+        n_results = 0
+        tmrt_sum = 0.0
+        tmrt_max = -np.inf
+        tmrt_min = np.inf
+        tmrt_count = 0
+
         for i, weather in enumerate(weather_series):
             if feedback.isCanceled():
                 break
@@ -696,11 +759,12 @@ GeoTIFF files organised into subfolders of the output directory:
                     f"Calculation failed at timestep {i + 1}/{n_steps} ({weather.datetime}): {e}"
                 ) from e
 
-            # Carry forward thermal state
+            # Carry forward thermal state; free state arrays from result
             if result.state is not None:
                 state = result.state
+                result.state = None
 
-            # Save outputs incrementally
+            # Save outputs incrementally (no per-file logging)
             timestamp = weather.datetime.strftime("%Y%m%d_%H%M")
             for component in selected_outputs:
                 array = getattr(result, component, None)
@@ -713,18 +777,33 @@ GeoTIFF files organised into subfolders of the output directory:
                         output_path=filepath,
                         geotransform=surface._geotransform,
                         crs_wkt=surface._crs_wkt,
-                        feedback=feedback,
                     )
 
-            results.append(result)
+            # Update incremental stats
+            valid = result.tmrt[np.isfinite(result.tmrt)]
+            if valid.size > 0:
+                tmrt_sum += valid.sum()
+                tmrt_count += valid.size
+                tmrt_max = max(tmrt_max, float(valid.max()))
+                tmrt_min = min(tmrt_min, float(valid.min()))
 
-            # Update progress (25-80% range)
+            n_results += 1
+
+            # Update progress bar (25-80% range)
             pct = 25 + int(55 * (i + 1) / n_steps)
             feedback.setProgress(pct)
-            feedback.setProgressText(f"Timestep {i + 1}/{n_steps}...")
 
         feedback.setProgress(80)
-        return results
+
+        tmrt_stats = {}
+        if tmrt_count > 0:
+            tmrt_stats = {
+                "mean": tmrt_sum / tmrt_count,
+                "min": tmrt_min,
+                "max": tmrt_max,
+            }
+
+        return n_results, tmrt_stats
 
     # -------------------------------------------------------------------------
     # Post-processing helpers
@@ -767,13 +846,12 @@ GeoTIFF files organised into subfolders of the output directory:
 
             # Save
             utci_path = os.path.join(utci_dir, f"utci_{timestamp}.tif")
-            self.save_georeferenced_output(utci, utci_path, geotransform, crs_wkt, feedback)
+            self.save_georeferenced_output(utci, utci_path, geotransform, crs_wkt)
             processed += 1
 
             # Progress (80-90% range)
             pct = 80 + int(10 * (i + 1) / n_steps)
             feedback.setProgress(pct)
-            feedback.setProgressText(f"UTCI {i + 1}/{n_steps}...")
 
         feedback.pushInfo(f"UTCI: {processed} files created in {utci_dir}")
         return processed
@@ -818,13 +896,12 @@ GeoTIFF files organised into subfolders of the output directory:
 
             # Save
             pet_path = os.path.join(pet_dir, f"pet_{timestamp}.tif")
-            self.save_georeferenced_output(pet, pet_path, geotransform, crs_wkt, feedback)
+            self.save_georeferenced_output(pet, pet_path, geotransform, crs_wkt)
             processed += 1
 
             # Progress (90-98% range)
             pct = 90 + int(8 * (i + 1) / n_steps)
             feedback.setProgress(pct)
-            feedback.setProgressText(f"PET {i + 1}/{n_steps}...")
 
         feedback.pushInfo(f"PET: {processed} files created in {pet_dir}")
         return processed
@@ -845,32 +922,37 @@ GeoTIFF files organised into subfolders of the output directory:
 
     @staticmethod
     def _report_summary(
-        results,
+        n_timesteps,
         elapsed,
         utci_count,
         pet_count,
         output_dir,
         feedback,
+        tmrt_stats=None,
     ) -> None:
-        """Report calculation summary statistics."""
+        """Report calculation summary statistics.
+
+        Args:
+            n_timesteps: Number of timesteps processed.
+            elapsed: Total elapsed time in seconds.
+            utci_count: Number of UTCI files created.
+            pet_count: Number of PET files created.
+            output_dir: Output directory path.
+            feedback: QGIS feedback object.
+            tmrt_stats: Dict with 'mean', 'min', 'max' Tmrt values (optional).
+        """
         feedback.pushInfo("")
         feedback.pushInfo("=" * 60)
         feedback.pushInfo("Calculation complete!")
-        feedback.pushInfo(f"  Timesteps: {len(results)}")
+        feedback.pushInfo(f"  Timesteps: {n_timesteps}")
         feedback.pushInfo(f"  Total time: {elapsed:.1f} seconds")
 
-        if len(results) > 1:
-            feedback.pushInfo(f"  Per timestep: {elapsed / len(results):.2f} seconds")
+        if n_timesteps > 1:
+            feedback.pushInfo(f"  Per timestep: {elapsed / n_timesteps:.2f} seconds")
 
-        # Tmrt statistics
-        if results:
-            all_valid = [r.tmrt[~np.isnan(r.tmrt)] for r in results if r.tmrt is not None]
-            if all_valid:
-                mean_tmrt = np.mean([arr.mean() for arr in all_valid])
-                max_tmrt = max(arr.max() for arr in all_valid)
-                min_tmrt = min(arr.min() for arr in all_valid)
-                feedback.pushInfo(f"  Tmrt range: {min_tmrt:.1f}C - {max_tmrt:.1f}C")
-                feedback.pushInfo(f"  Mean Tmrt: {mean_tmrt:.1f}C")
+        if tmrt_stats:
+            feedback.pushInfo(f"  Tmrt range: {tmrt_stats['min']:.1f}C - {tmrt_stats['max']:.1f}C")
+            feedback.pushInfo(f"  Mean Tmrt: {tmrt_stats['mean']:.1f}C")
 
         if utci_count > 0:
             feedback.pushInfo(f"  UTCI files: {utci_count}")

@@ -1,12 +1,13 @@
 """
 SVF (Sky View Factor) resolution component.
 
-Handles three sources of SVF data:
+Resolves SVF data from two sources:
 1. Cached SVF from surface preparation (surface.svf)
 2. Pre-computed SVF (precomputed.svf)
-3. On-the-fly computation using Rust skyview module
 
-Returns a complete SvfBundle with all directional components.
+Raises MissingPrecomputedData if no SVF is available.
+SVF must be computed explicitly via surface.compute_svf() or
+SurfaceData.prepare() before calling calculate().
 """
 
 from __future__ import annotations
@@ -65,7 +66,6 @@ def resolve_svf(
         When computing fresh, svfbuveg is preliminary and needs_psi_adjustment=True.
     """
     # Import here to avoid circular dependency
-    from ..rustalgos import skyview
 
     needs_psi_adjustment = False
 
@@ -125,54 +125,15 @@ def resolve_svf(
         # Precomputed svfbuveg already includes transmissivity adjustment
         needs_psi_adjustment = False
 
-    # Priority 3: Compute fresh
+    # No SVF available — require explicit computation
     else:
-        # Compute SVF with directional components
-        svf_result = skyview.calculate_svf(
-            dsm,
-            cdsm if use_veg else np.zeros_like(dsm),
-            tdsm if use_veg else np.zeros_like(dsm),
-            pixel_size,
-            use_veg,
-            max_height,
-            2,  # patch_option (153 patches)
-            3.0,  # min_sun_elev_deg
-            None,
-        )
+        from ..errors import MissingPrecomputedData
 
-        svf = np.array(svf_result.svf)
-        svf_directional = DirectionalArrays(
-            north=np.array(svf_result.svf_north),
-            east=np.array(svf_result.svf_east),
-            south=np.array(svf_result.svf_south),
-            west=np.array(svf_result.svf_west),
+        raise MissingPrecomputedData(
+            "Sky View Factor (SVF) data is required but not available.",
+            "Call surface.compute_svf() before calculate(), or use SurfaceData.prepare() "
+            "which computes SVF automatically.",
         )
-        svf_veg = np.array(svf_result.svf_veg) if use_veg else np.zeros_like(svf)
-        svf_veg_directional = DirectionalArrays(
-            north=np.array(svf_result.svf_veg_north) if use_veg else np.zeros_like(svf),
-            east=np.array(svf_result.svf_veg_east) if use_veg else np.zeros_like(svf),
-            south=np.array(svf_result.svf_veg_south) if use_veg else np.zeros_like(svf),
-            west=np.array(svf_result.svf_veg_west) if use_veg else np.zeros_like(svf),
-        )
-        svf_aveg = np.array(svf_result.svf_veg_blocks_bldg_sh) if use_veg else np.zeros_like(svf)
-        svf_aveg_directional = DirectionalArrays(
-            north=np.array(svf_result.svf_veg_blocks_bldg_sh_north) if use_veg else np.zeros_like(svf),
-            east=np.array(svf_result.svf_veg_blocks_bldg_sh_east) if use_veg else np.zeros_like(svf),
-            south=np.array(svf_result.svf_veg_blocks_bldg_sh_south) if use_veg else np.zeros_like(svf),
-            west=np.array(svf_result.svf_veg_blocks_bldg_sh_west) if use_veg else np.zeros_like(svf),
-        )
-
-        # Combined SVF - use psi if provided, otherwise preliminary calculation
-        if psi is not None and use_veg:
-            # Formula: svfbuveg = svf - (1 - svf_veg) * (1 - psi)
-            svfbuveg = svf - (1.0 - svf_veg) * (1.0 - psi)
-            svfbuveg = np.clip(svfbuveg, 0.0, 1.0)
-            needs_psi_adjustment = False
-        else:
-            # Preliminary calculation (will need adjustment with psi later)
-            svfbuveg = svf + svf_veg - 1.0
-            svfbuveg = np.clip(svfbuveg, 0.0, 1.0)
-            needs_psi_adjustment = True
 
     # Compute svfalfa (SVF angle) from SVF values
     # Formula: svfalfa = arcsin(exp(log(1 - (svf + svf_veg - 1)) / 2))

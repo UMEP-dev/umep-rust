@@ -14,10 +14,10 @@ class SolweigProvider(QgsProcessingProvider):
     """
     QGIS Processing provider for SOLWEIG algorithms.
 
-    Algorithms:
-    - Preprocessing: SVF computation
-    - Calculation: Unified SOLWEIG calculation (single/timeseries/tiled + UTCI/PET)
-    - Utilities: EPW import
+    Algorithms (in workflow order):
+    1. Download EPW weather file
+    2. Prepare Surface Data (align, walls, SVF)
+    3. SOLWEIG Calculation
     """
 
     def id(self):
@@ -45,17 +45,17 @@ class SolweigProvider(QgsProcessingProvider):
 
         Called by QGIS when the provider is initialized.
         """
-        # Preprocessing
-        from .algorithms.preprocess.svf_preprocessing import SvfPreprocessingAlgorithm
-
-        self.addAlgorithm(SvfPreprocessingAlgorithm())
-
-        # Main calculation (unified: single/timeseries/tiled + UTCI/PET)
-        from .algorithms.calculation.solweig_calculation import SolweigCalculationAlgorithm
-
-        self.addAlgorithm(SolweigCalculationAlgorithm())
-
-        # Utilities
+        # 1. Download EPW weather file
         from .algorithms.utilities.epw_import import EpwImportAlgorithm
 
         self.addAlgorithm(EpwImportAlgorithm())
+
+        # 2. Prepare Surface Data (align, walls, SVF)
+        from .algorithms.preprocess.surface_preprocessing import SurfacePreprocessingAlgorithm
+
+        self.addAlgorithm(SurfacePreprocessingAlgorithm())
+
+        # 3. SOLWEIG Calculation
+        from .algorithms.calculation.solweig_calculation import SolweigCalculationAlgorithm
+
+        self.addAlgorithm(SolweigCalculationAlgorithm())

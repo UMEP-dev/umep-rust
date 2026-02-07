@@ -27,25 +27,25 @@ WALL_HT_ATOL = 0.5  # 0.5m absolute tolerance
 WALL_ASP_ATOL = 10.0  # 10 degrees for aspect (rotation quantization)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def dsm():
     """Load DSM input fixture."""
     return np.load(FIXTURES_DIR / "input_dsm.npy").astype(np.float32)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def expected_wall_ht():
     """Load expected wall height from UMEP Python."""
     return np.load(FIXTURES_DIR / "input_wall_ht.npy").astype(np.float32)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def expected_wall_asp():
     """Load expected wall aspect from UMEP Python."""
     return np.load(FIXTURES_DIR / "input_wall_asp.npy").astype(np.float32)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def params():
     """Load input parameters."""
     return dict(np.load(FIXTURES_DIR / "input_params.npz"))

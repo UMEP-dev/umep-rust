@@ -44,10 +44,13 @@ class TestMemoryBenchmark:
         land_cover = np.ones((size, size), dtype=np.int32) * 5
         land_cover[dsm > 12] = 2
 
+        from conftest import make_mock_svf
+
         return SurfaceData(
             dsm=dsm,
             land_cover=land_cover,
             pixel_size=1.0,
+            svf=make_mock_svf((size, size)),
         )
 
     @pytest.fixture

@@ -8,6 +8,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from .metadata import create_run_metadata, save_run_metadata
 from .models import HumanParams, Location, ThermalState
 from .progress import ProgressReporter
@@ -283,6 +285,12 @@ def calculate_timeseries(
     results = []
     state = ThermalState.initial(surface.shape)
 
+    # Incremental stats accumulators (avoids iterating all results for summary)
+    _tmrt_sum = 0.0
+    _tmrt_max = -np.inf
+    _tmrt_min = np.inf
+    _tmrt_count = 0
+
     # Pre-calculate timestep size from first two entries (matching runner behavior)
     # The runner uses a fixed timestep_dec for all iterations, calculated upfront
     if len(weather_series) >= 2:
@@ -319,6 +327,7 @@ def calculate_timeseries(
         # Carry forward state to next timestep
         if result.state is not None:
             state = result.state
+            result.state = None  # Free state arrays (~23 MB); state managed externally
 
         # Save incrementally if output_dir provided
         if output_dir is not None:
@@ -330,6 +339,14 @@ def calculate_timeseries(
             )
 
         results.append(result)
+
+        # Update incremental stats
+        _valid = result.tmrt[np.isfinite(result.tmrt)]
+        if _valid.size > 0:
+            _tmrt_sum += _valid.sum()
+            _tmrt_count += _valid.size
+            _tmrt_max = max(_tmrt_max, float(_valid.max()))
+            _tmrt_min = min(_tmrt_min, float(_valid.min()))
 
         # Report progress
         if progress_callback is not None:
@@ -349,12 +366,9 @@ def calculate_timeseries(
     logger.info("=" * 60)
     logger.info(f"✓ Calculation complete: {len(results)} timesteps processed")
     logger.info(f"  Total time: {total_time:.1f}s ({overall_rate:.2f} steps/s)")
-    if results:
-        # Compute summary statistics
-        mean_tmrt = sum(r.tmrt.mean() for r in results) / len(results)
-        max_tmrt = max(r.tmrt.max() for r in results)
-        min_tmrt = min(r.tmrt.min() for r in results)
-        logger.info(f"  Tmrt range: {min_tmrt:.1f}°C - {max_tmrt:.1f}°C (mean: {mean_tmrt:.1f}°C)")
+    if _tmrt_count > 0:
+        mean_tmrt = _tmrt_sum / _tmrt_count
+        logger.info(f"  Tmrt range: {_tmrt_min:.1f}°C - {_tmrt_max:.1f}°C (mean: {mean_tmrt:.1f}°C)")
 
     if output_dir is not None and outputs is not None:
         file_count = len(results) * len(outputs)

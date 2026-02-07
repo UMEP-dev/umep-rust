@@ -181,6 +181,11 @@ impl PixelResult {
 pub(crate) struct SkyResultPure {
     pub ldown: Array2<f32>,
     pub lside: Array2<f32>,
+    pub lside_sky: Array2<f32>,
+    pub lside_veg: Array2<f32>,
+    pub lside_sh: Array2<f32>,
+    pub lside_sun: Array2<f32>,
+    pub lside_ref: Array2<f32>,
     pub least: Array2<f32>,
     pub lsouth: Array2<f32>,
     pub lwest: Array2<f32>,
@@ -198,9 +203,9 @@ pub(crate) struct SkyResultPure {
 #[allow(clippy::too_many_arguments)]
 #[allow(non_snake_case)]
 pub(crate) fn anisotropic_sky_pure(
-    shmat: ArrayView3<f32>,
-    vegshmat: ArrayView3<f32>,
-    vbshvegshmat: ArrayView3<f32>,
+    shmat: ArrayView3<u8>,
+    vegshmat: ArrayView3<u8>,
+    vbshvegshmat: ArrayView3<u8>,
     solar_altitude: f32,
     solar_azimuth: f32,
     esky: f32,
@@ -284,9 +289,12 @@ pub(crate) fn anisotropic_sky_pure(
                 let p_azi = patch_azimuth[i];
                 let steradian = steradians[i];
 
-                let temp_sky = shmat[[r, c, i]] == 1.0 && vegshmat[[r, c, i]] == 1.0;
-                let temp_vegsh = vegshmat[[r, c, i]] == 0.0 || vbshvegshmat[[r, c, i]] == 0.0;
-                let temp_sh = (1.0 - shmat[[r, c, i]]) * vbshvegshmat[[r, c, i]] == 1.0;
+                let sh = shmat[[r, c, i]];
+                let vsh = vegshmat[[r, c, i]];
+                let vbsh = vbshvegshmat[[r, c, i]];
+                let temp_sky = sh == 255 && vsh == 255;
+                let temp_vegsh = vsh == 0 || vbsh == 0;
+                let temp_sh = (1.0 - sh as f32 / 255.0) * (vbsh as f32 / 255.0) == 1.0;
 
                 if cyl {
                     let angle_of_incidence = (p_alt * deg2rad).cos();
@@ -449,9 +457,9 @@ pub(crate) fn anisotropic_sky_pure(
                 let p_alt = patch_altitude[i];
                 let p_azi = patch_azimuth[i];
                 let steradian = steradians[i];
-                let temp_sh = shmat[[r, c, i]] == 0.0
-                    || vegshmat[[r, c, i]] == 0.0
-                    || vbshvegshmat[[r, c, i]] == 0.0;
+                let temp_sh = shmat[[r, c, i]] == 0
+                    || vegshmat[[r, c, i]] == 0
+                    || vbshvegshmat[[r, c, i]] == 0;
 
                 if temp_sh {
                     let angle_of_incidence = (p_alt * deg2rad).cos();
@@ -525,6 +533,11 @@ pub(crate) fn anisotropic_sky_pure(
     SkyResultPure {
         ldown,
         lside,
+        lside_sky,
+        lside_veg,
+        lside_sh,
+        lside_sun,
+        lside_ref,
         least,
         lsouth,
         lwest,
@@ -569,9 +582,9 @@ pub(crate) fn weighted_patch_sum_pure(
 #[allow(non_snake_case)]
 pub fn anisotropic_sky(
     py: Python,
-    shmat: PyReadonlyArray3<f32>,
-    vegshmat: PyReadonlyArray3<f32>,
-    vbshvegshmat: PyReadonlyArray3<f32>,
+    shmat: PyReadonlyArray3<u8>,
+    vegshmat: PyReadonlyArray3<u8>,
+    vbshvegshmat: PyReadonlyArray3<u8>,
     sun: &SunParams,
     asvf: PyReadonlyArray2<f32>,
     sky: &SkyParams,
@@ -633,11 +646,11 @@ pub fn anisotropic_sky(
     let result = SkyResult {
         ldown: pure_result.ldown.into_pyarray(py).unbind(),
         lside: pure_result.lside.into_pyarray(py).unbind(),
-        lside_sky: Array2::<f32>::zeros((0, 0)).into_pyarray(py).unbind(), // not needed by callers
-        lside_veg: Array2::<f32>::zeros((0, 0)).into_pyarray(py).unbind(),
-        lside_sh: Array2::<f32>::zeros((0, 0)).into_pyarray(py).unbind(),
-        lside_sun: Array2::<f32>::zeros((0, 0)).into_pyarray(py).unbind(),
-        lside_ref: Array2::<f32>::zeros((0, 0)).into_pyarray(py).unbind(),
+        lside_sky: pure_result.lside_sky.into_pyarray(py).unbind(),
+        lside_veg: pure_result.lside_veg.into_pyarray(py).unbind(),
+        lside_sh: pure_result.lside_sh.into_pyarray(py).unbind(),
+        lside_sun: pure_result.lside_sun.into_pyarray(py).unbind(),
+        lside_ref: pure_result.lside_ref.into_pyarray(py).unbind(),
         least: pure_result.least.into_pyarray(py).unbind(),
         lwest: pure_result.lwest.into_pyarray(py).unbind(),
         lnorth: pure_result.lnorth.into_pyarray(py).unbind(),

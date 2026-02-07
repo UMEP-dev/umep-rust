@@ -323,12 +323,12 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     Parameters added:
         USE_ANISOTROPIC_SKY: Enable anisotropic sky model
         CONIFER: Treat vegetation as evergreen
-        SVF_DIR: Pre-computed SVF directory
+        SVF_DIR: Override SVF directory (optional)
     """
     algorithm.addParameter(
         QgsProcessingParameterBoolean(
             "USE_ANISOTROPIC_SKY",
-            algorithm.tr("Use anisotropic sky model (requires pre-computed SVF)"),
+            algorithm.tr("Use anisotropic sky model"),
             defaultValue=False,
         )
     )
@@ -344,7 +344,7 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     algorithm.addParameter(
         QgsProcessingParameterFile(
             "SVF_DIR",
-            algorithm.tr("Pre-computed SVF directory (required for anisotropic sky)"),
+            algorithm.tr("Override SVF directory (SVF is included in prepared surface by default)"),
             behavior=QgsProcessingParameterFile.Folder,
             optional=True,
         )
@@ -373,35 +373,62 @@ def add_output_dir_parameter(algorithm: QgsProcessingAlgorithm) -> None:
 
 def add_epw_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     """
-    Add EPW weather file parameters.
+    Add EPW weather file parameter.
 
     Parameters added:
         EPW_FILE: Path to EPW file
-        START_DATE: Start date for filtering
-        END_DATE: End date for filtering
-        HOURS_FILTER: Comma-separated hours to include
     """
     algorithm.addParameter(
         QgsProcessingParameterFile(
             "EPW_FILE",
             algorithm.tr("EPW weather file"),
             extension="epw",
+            optional=True,
         )
     )
 
+
+def add_umep_met_parameters(algorithm: QgsProcessingAlgorithm) -> None:
+    """
+    Add UMEP/SUEWS meteorological file parameter.
+
+    Parameters added:
+        UMEP_MET_FILE: Path to UMEP/SUEWS met file
+    """
+    algorithm.addParameter(
+        QgsProcessingParameterFile(
+            "UMEP_MET_FILE",
+            algorithm.tr("UMEP/SUEWS meteorological forcing file"),
+            extension="txt",
+            optional=True,
+        )
+    )
+
+
+def add_date_filter_parameters(algorithm: QgsProcessingAlgorithm) -> None:
+    """
+    Add shared date/time filter parameters (used by EPW and UMEP modes).
+
+    Parameters added:
+        START_DATE: Start date for filtering
+        END_DATE: End date for filtering
+        HOURS_FILTER: Comma-separated hours to include
+    """
     algorithm.addParameter(
         QgsProcessingParameterDateTime(
             "START_DATE",
-            algorithm.tr("Start date"),
+            algorithm.tr("Start date (leave empty for full range)"),
             type=QgsProcessingParameterDateTime.DateTime,
+            optional=True,
         )
     )
 
     algorithm.addParameter(
         QgsProcessingParameterDateTime(
             "END_DATE",
-            algorithm.tr("End date"),
+            algorithm.tr("End date (leave empty for full range)"),
             type=QgsProcessingParameterDateTime.DateTime,
+            optional=True,
         )
     )
 

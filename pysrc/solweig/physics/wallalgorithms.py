@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 
-from ..progress import progress
+from ..progress import get_progress_iterator
 from .morphology import rotate_array
 
 
@@ -15,30 +15,36 @@ def findwalls(a, walllimit):
     # Fredrik Lindberg, Goteborg Urban Climate Group
     # fredrikl@gvc.gu.se
     # 20150625
+    #
+    # For each pixel, find the max of its 4 cardinal neighbors (cross kernel).
+    # Wall height = max_neighbor - self, clipped to walllimit.
 
-    col = a.shape[0]
-    row = a.shape[1]
-    walls = np.zeros((col, row), dtype=np.float32)
-    domain = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]])
-    index = 0
-    for i in progress(np.arange(1, row - 1), desc="Finding walls"):
-        for j in np.arange(1, col - 1):
-            dom = a[j - 1 : j + 2, i - 1 : i + 2]
-            walls[j, i] = np.max(dom[np.where(domain == 1)])  # new 20171006
-            index = index + 1
+    walls = np.zeros_like(a, dtype=np.float32)
 
-    walls = np.copy(walls - a)  # new 20171006
-    walls[(walls < walllimit)] = 0
+    # Max of 4 cardinal neighbors for all interior pixels
+    max_neighbors = np.maximum.reduce(
+        [
+            a[:-2, 1:-1],  # north
+            a[2:, 1:-1],  # south
+            a[1:-1, :-2],  # west
+            a[1:-1, 2:],  # east
+        ]
+    )
+    walls[1:-1, 1:-1] = max_neighbors
 
-    walls[0 : walls.shape[0], 0] = 0
-    walls[0 : walls.shape[0], walls.shape[1] - 1] = 0
-    walls[0, 0 : walls.shape[0]] = 0
-    walls[walls.shape[0] - 1, 0 : walls.shape[1]] = 0
+    walls = walls - a
+    walls[walls < walllimit] = 0
+
+    # Zero borders
+    walls[0, :] = 0
+    walls[-1, :] = 0
+    walls[:, 0] = 0
+    walls[:, -1] = 0
 
     return walls
 
 
-def filter1Goodwin_as_aspect_v3(walls, scale, a):
+def filter1Goodwin_as_aspect_v3(walls, scale, a, feedback=None):
     """
     tThis function applies the filter processing presented in Goodwin et al (2010) but instead for removing
     linear fetures it calculates wall aspect based on a wall pixels grid, a dsm (a) and a scale factor
@@ -53,7 +59,51 @@ def filter1Goodwin_as_aspect_v3(walls, scale, a):
     :param a:
     :return: dirwalls
     """
+    # Try Rust implementation first (much faster)
+    try:
+        import threading
 
+        from ..progress import ProgressReporter
+        from ..rustalgos import wall_aspect as _wa_rust
+
+        walls_f32 = np.asarray(walls, dtype=np.float32)
+        dsm_f32 = np.asarray(a, dtype=np.float32)
+
+        runner = _wa_rust.WallAspectRunner()
+        result = [None]
+        error = [None]
+
+        def _run():
+            try:
+                result[0] = runner.compute(walls_f32, float(scale), dsm_f32)
+            except Exception as e:
+                error[0] = e
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+
+        # Poll progress (180 angle iterations)
+        total = 180
+        pbar = ProgressReporter(total=total, desc="Computing wall aspects", feedback=feedback)
+        last = 0
+        while thread.is_alive():
+            thread.join(timeout=0.05)
+            done = runner.progress()
+            if done > last:
+                pbar.update(done - last)
+                last = done
+        if last < total:
+            pbar.update(total - last)
+        pbar.close()
+
+        thread.join()
+        if error[0] is not None:
+            raise error[0]
+        return np.asarray(result[0])
+    except ImportError:
+        pass
+
+    # Python fallback
     row = a.shape[0]
     col = a.shape[1]
 
@@ -79,8 +129,8 @@ def filter1Goodwin_as_aspect_v3(walls, scale, a):
     x = np.zeros((row, col), dtype=np.float32)  # building side
     walls[walls > 0.5] = 1
 
-    for h in progress(
-        range(0, 180), desc="Computing wall aspects"
+    for h in get_progress_iterator(
+        range(0, 180), desc="Computing wall aspects", feedback=feedback
     ):  # =0:1:180 #%increased resolution to 1 deg 20140911
         filtmatrix1temp = rotate_array(filtmatrix, h, order=1, reshape=False, mode="nearest")  # bilinear
         filtmatrix1 = np.round(filtmatrix1temp)

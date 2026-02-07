@@ -22,7 +22,7 @@ RTOL = 0.01  # 1% relative tolerance
 ATOL = 0.1  # 0.1°C absolute tolerance
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def single_point_data():
     """Load single-point PET test cases."""
     data = dict(np.load(FIXTURES_DIR / "pet_single_point.npz", allow_pickle=True))
@@ -39,7 +39,7 @@ def single_point_data():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def grid_data():
     """Load grid PET test data."""
     params = dict(np.load(FIXTURES_DIR / "pet_grid_params.npz"))

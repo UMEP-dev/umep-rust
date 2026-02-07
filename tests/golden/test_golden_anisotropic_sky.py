@@ -80,9 +80,9 @@ def compute_steradians(l_patches):
     return steradians
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def input_data():
-    """Load base input data from golden fixtures."""
+    """Load base input data from golden fixtures (shared across all tests in module)."""
     params = dict(np.load(FIXTURES_DIR / "input_params.npz"))
     return {
         "dsm": np.load(FIXTURES_DIR / "input_dsm.npy").astype(np.float32),
@@ -90,24 +90,24 @@ def input_data():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def svf_data():
-    """Load SVF data from golden fixtures."""
+    """Load SVF data from golden fixtures (shared across all tests in module)."""
     return {
         "svf": np.load(FIXTURES_DIR / "svf_total.npy").astype(np.float32),
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def shadow_data():
-    """Load shadow data from golden fixtures (noon position)."""
+    """Load shadow data from golden fixtures (shared across all tests in module)."""
     return {
         "bldg_sh": np.load(FIXTURES_DIR / "shadow_noon_bldg_sh.npy").astype(np.float32),
         "veg_sh": np.load(FIXTURES_DIR / "shadow_noon_veg_sh.npy").astype(np.float32),
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def aniso_sky_inputs(input_data, svf_data, shadow_data):
     """Create inputs for anisotropic_sky calculation."""
     rows, cols = input_data["dsm"].shape
@@ -127,17 +127,16 @@ def aniso_sky_inputs(input_data, svf_data, shadow_data):
     bldg_factor = shadow_data["bldg_sh"][:, :, np.newaxis]
     veg_factor = shadow_data["veg_sh"][:, :, np.newaxis]
 
-    # shmat: building shadow mask (1 = sky visible)
-    shmat = (base_visibility * np.broadcast_to(bldg_factor, (rows, cols, n_patches))).astype(np.float32)
-    # Threshold to binary
-    shmat = (shmat > 0.5).astype(np.float32)
+    # shmat: building shadow mask (uint8: 255 = sky visible, 0 = blocked)
+    shmat_f = base_visibility * np.broadcast_to(bldg_factor, (rows, cols, n_patches))
+    shmat = np.where(shmat_f > 0.5, np.uint8(255), np.uint8(0)).astype(np.uint8)
 
-    # vegshmat: vegetation shadow mask (1 = sky visible, 0 = blocked by vegetation)
-    vegshmat = (base_visibility * np.broadcast_to(veg_factor, (rows, cols, n_patches))).astype(np.float32)
-    vegshmat = (vegshmat > 0.3).astype(np.float32)  # Vegetation is more transparent
+    # vegshmat: vegetation shadow mask (uint8: 255 = sky visible, 0 = blocked)
+    vegshmat_f = base_visibility * np.broadcast_to(veg_factor, (rows, cols, n_patches))
+    vegshmat = np.where(vegshmat_f > 0.3, np.uint8(255), np.uint8(0)).astype(np.uint8)
 
-    # vbshvegshmat: combined building+vegetation shadow
-    vbshvegshmat = (shmat * vegshmat).astype(np.float32)
+    # vbshvegshmat: combined building+vegetation shadow (uint8)
+    vbshvegshmat = np.where((shmat == 255) & (vegshmat == 255), np.uint8(255), np.uint8(0)).astype(np.uint8)
 
     # asvf: angular sky view factor (use base SVF as approximation)
     asvf = svf_data["svf"].astype(np.float32)
@@ -176,9 +175,9 @@ def aniso_sky_inputs(input_data, svf_data, shadow_data):
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def aniso_sky_result(aniso_sky_inputs):
-    """Compute anisotropic sky result using Rust implementation."""
+    """Compute anisotropic sky result (computed once per module)."""
     inputs = aniso_sky_inputs
 
     # Create parameter objects

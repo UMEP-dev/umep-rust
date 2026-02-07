@@ -927,10 +927,14 @@ class SurfaceData:
         """
         Compute SVF from DSM/CDSM/TDSM and cache to working_dir.
 
+        Automatically tiles the computation for large grids to avoid GPU
+        buffer size limits. Tiled mode skips shadow matrix assembly (too
+        large for anisotropic sky — consistent with calculate_tiled()).
+
         Saves three cache formats:
         - memmap/ for fast reload in Python API
         - svfs.zip for PrecomputedData.prepare() compatibility
-        - shadowmats.npz for anisotropic sky model
+        - shadowmats.npz for anisotropic sky model (non-tiled only)
 
         Args:
             surface_data: SurfaceData instance to update with computed SVF.
@@ -944,6 +948,7 @@ class SurfaceData:
         tdsm_arr = aligned_rasters["tdsm_arr"]
         pixel_size = aligned_rasters.get("pixel_size", 1.0)
 
+        rows, cols = dsm_arr.shape
         use_veg = cdsm_arr is not None
         if use_veg:
             logger.info("Computing SVF from DSM/CDSM/TDSM...")
@@ -968,71 +973,313 @@ class SurfaceData:
             veg_max = float(np.nanmax(cdsm_arr))
             max_height = max(max_height, veg_max)
 
-        # Compute SVF using Rust module
-        svf_result = skyview.calculate_svf(
-            dsm_arr.astype(np.float32),
-            cdsm_for_svf,
-            tdsm_for_svf,
-            pixel_size,
-            use_veg,
-            max_height,
-            2,  # patch_option (153 patches)
-            3.0,  # min_sun_elev_deg
-            None,  # progress callback
-        )
+        # Auto-detect whether tiling is needed based on GPU buffer limits.
+        # wgpu max buffer = 256 MiB. SVF staging uses ~32 bytes/pixel.
+        # Use 80% headroom to trigger tiling before hitting the limit.
+        _GPU_MAX_BUFFER = 268_435_456  # 256 MiB
+        _BYTES_PER_PIXEL = 32  # empirical: staging buffers for SVF
+        _max_pixels = int(_GPU_MAX_BUFFER * 0.8) // _BYTES_PER_PIXEL  # ~6.7M pixels
+        needs_tiling = rows * cols > _max_pixels
 
-        ones = np.ones_like(dsm_arr, dtype=np.float32)
-
-        # Create SvfArrays from result
-        svf_data = SvfArrays(
-            svf=np.array(svf_result.svf),
-            svf_north=np.array(svf_result.svf_north),
-            svf_east=np.array(svf_result.svf_east),
-            svf_south=np.array(svf_result.svf_south),
-            svf_west=np.array(svf_result.svf_west),
-            svf_veg=np.array(svf_result.svf_veg) if use_veg else ones.copy(),
-            svf_veg_north=np.array(svf_result.svf_veg_north) if use_veg else ones.copy(),
-            svf_veg_east=np.array(svf_result.svf_veg_east) if use_veg else ones.copy(),
-            svf_veg_south=np.array(svf_result.svf_veg_south) if use_veg else ones.copy(),
-            svf_veg_west=np.array(svf_result.svf_veg_west) if use_veg else ones.copy(),
-            svf_aveg=np.array(svf_result.svf_veg_blocks_bldg_sh) if use_veg else ones.copy(),
-            svf_aveg_north=np.array(svf_result.svf_veg_blocks_bldg_sh_north) if use_veg else ones.copy(),
-            svf_aveg_east=np.array(svf_result.svf_veg_blocks_bldg_sh_east) if use_veg else ones.copy(),
-            svf_aveg_south=np.array(svf_result.svf_veg_blocks_bldg_sh_south) if use_veg else ones.copy(),
-            svf_aveg_west=np.array(svf_result.svf_veg_blocks_bldg_sh_west) if use_veg else ones.copy(),
-        )
-
-        # Cache to working_dir for future reuse
         svf_cache_dir = working_path / "svf"
         svf_cache_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create cache metadata for validation on reload
         metadata = CacheMetadata.from_arrays(dsm_arr, pixel_size, cdsm_arr)
 
-        # Save as memmap for efficient large-raster access
-        memmap_dir = svf_cache_dir / "memmap"
-        svf_data.to_memmap(memmap_dir, metadata=metadata)
+        if needs_tiling:
+            svf_data, (shmat_mm, vegshmat_mm, vbshmat_mm) = SurfaceData._compute_svf_tiled(
+                dsm_arr.astype(np.float32),
+                cdsm_for_svf,
+                tdsm_for_svf,
+                pixel_size,
+                use_veg,
+                max_height,
+                svf_cache_dir,
+            )
 
-        # Save svfs.zip (for PrecomputedData.prepare() / QGIS plugin compatibility)
-        _save_svfs_zip(svf_data, svf_cache_dir, aligned_rasters)
+            # Cache SVF arrays
+            memmap_dir = svf_cache_dir / "memmap"
+            svf_data.to_memmap(memmap_dir, metadata=metadata)
+            _save_svfs_zip(svf_data, svf_cache_dir, aligned_rasters)
 
-        # Save shadow matrices as shadowmats.npz (for anisotropic sky model)
-        _save_shadow_matrices(svf_result, svf_cache_dir)
+            surface_data.svf = svf_data
+            # Shadow matrices assembled from tiled memmaps (uint8, on disk)
+            surface_data.shadow_matrices = ShadowArrays(
+                _shmat_u8=shmat_mm,
+                _vegshmat_u8=vegshmat_mm,
+                _vbshmat_u8=vbshmat_mm,
+            )
+            logger.info(f"  ✓ SVF computed (tiled) and cached to {svf_cache_dir}")
+        else:
+            # Single-shot computation for grids that fit in GPU memory
+            svf_result = skyview.calculate_svf(
+                dsm_arr.astype(np.float32),
+                cdsm_for_svf,
+                tdsm_for_svf,
+                pixel_size,
+                use_veg,
+                max_height,
+                2,  # patch_option (153 patches)
+                3.0,  # min_sun_elev_deg
+                None,  # progress callback
+            )
 
-        # Store on surface_data for immediate use
-        surface_data.svf = svf_data
+            ones = np.ones_like(dsm_arr, dtype=np.float32)
 
-        # Also store shadow matrices for anisotropic sky
-        shmat = np.array(svf_result.bldg_sh_matrix)
-        vegshmat = np.array(svf_result.veg_sh_matrix)
-        vbshmat = np.array(svf_result.veg_blocks_bldg_sh_matrix)
-        surface_data.shadow_matrices = ShadowArrays(
-            _shmat_u8=(np.clip(shmat, 0, 1) * 255).astype(np.uint8),
-            _vegshmat_u8=(np.clip(vegshmat, 0, 1) * 255).astype(np.uint8),
-            _vbshmat_u8=(np.clip(vbshmat, 0, 1) * 255).astype(np.uint8),
+            svf_data = SvfArrays(
+                svf=np.array(svf_result.svf),
+                svf_north=np.array(svf_result.svf_north),
+                svf_east=np.array(svf_result.svf_east),
+                svf_south=np.array(svf_result.svf_south),
+                svf_west=np.array(svf_result.svf_west),
+                svf_veg=np.array(svf_result.svf_veg) if use_veg else ones.copy(),
+                svf_veg_north=np.array(svf_result.svf_veg_north) if use_veg else ones.copy(),
+                svf_veg_east=np.array(svf_result.svf_veg_east) if use_veg else ones.copy(),
+                svf_veg_south=np.array(svf_result.svf_veg_south) if use_veg else ones.copy(),
+                svf_veg_west=np.array(svf_result.svf_veg_west) if use_veg else ones.copy(),
+                svf_aveg=np.array(svf_result.svf_veg_blocks_bldg_sh) if use_veg else ones.copy(),
+                svf_aveg_north=np.array(svf_result.svf_veg_blocks_bldg_sh_north) if use_veg else ones.copy(),
+                svf_aveg_east=np.array(svf_result.svf_veg_blocks_bldg_sh_east) if use_veg else ones.copy(),
+                svf_aveg_south=np.array(svf_result.svf_veg_blocks_bldg_sh_south) if use_veg else ones.copy(),
+                svf_aveg_west=np.array(svf_result.svf_veg_blocks_bldg_sh_west) if use_veg else ones.copy(),
+            )
+
+            # Cache SVF arrays
+            memmap_dir = svf_cache_dir / "memmap"
+            svf_data.to_memmap(memmap_dir, metadata=metadata)
+            _save_svfs_zip(svf_data, svf_cache_dir, aligned_rasters)
+
+            # Save shadow matrices (only available in non-tiled mode)
+            _save_shadow_matrices(svf_result, svf_cache_dir)
+
+            surface_data.svf = svf_data
+
+            shmat = np.array(svf_result.bldg_sh_matrix)
+            vegshmat = np.array(svf_result.veg_sh_matrix)
+            vbshmat = np.array(svf_result.veg_blocks_bldg_sh_matrix)
+            surface_data.shadow_matrices = ShadowArrays(
+                _shmat_u8=(np.clip(shmat, 0, 1) * 255).astype(np.uint8),
+                _vegshmat_u8=(np.clip(vegshmat, 0, 1) * 255).astype(np.uint8),
+                _vbshmat_u8=(np.clip(vbshmat, 0, 1) * 255).astype(np.uint8),
+            )
+
+            logger.info(f"  ✓ SVF computed and cached to {svf_cache_dir}")
+
+    @staticmethod
+    def _compute_svf_tiled(
+        dsm_f32: np.ndarray,
+        cdsm_f32: np.ndarray,
+        tdsm_f32: np.ndarray,
+        pixel_size: float,
+        use_veg: bool,
+        max_height: float,
+        working_path: Path,
+    ) -> tuple[SvfArrays, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        """
+        Compute SVF using tiled processing for large grids.
+
+        Automatically determines the largest safe tile size from the GPU
+        buffer limit, divides the grid into overlapping tiles, computes
+        SVF per tile, and stitches the core regions into full-size arrays.
+
+        Shadow matrices are assembled into memory-mapped uint8 files to
+        avoid holding the full 3D arrays in RAM.
+
+        Args:
+            dsm_f32: DSM array (float32).
+            cdsm_f32: Canopy DSM array (float32, zeros if no veg).
+            tdsm_f32: Trunk DSM array (float32, zeros if no veg).
+            pixel_size: Pixel size in meters.
+            use_veg: Whether vegetation is present.
+            max_height: Maximum height in the DSM (for buffer calculation).
+            working_path: Directory for memmap files.
+
+        Returns:
+            Tuple of (SvfArrays, (shmat_mm, vegshmat_mm, vbshmat_mm))
+            where the shadow matrix memmaps are uint8 (rows, cols, n_patches).
+        """
+        from ..progress import ProgressReporter
+        from ..tiling import calculate_buffer_distance, generate_tiles, validate_tile_size
+
+        rows, cols = dsm_f32.shape
+
+        buffer_m = calculate_buffer_distance(max_height)
+        buffer_pixels = int(np.ceil(buffer_m / pixel_size))
+
+        # Compute the largest safe tile size from GPU buffer limit.
+        # The tile includes overlap buffers on each side, so the full tile
+        # (core + 2*buffer) must fit in GPU memory.
+        # wgpu max buffer = 256MB. SVF uses ~32 bytes/pixel for staging
+        # buffers (shadow matrices, intermediate arrays). Use 80% headroom.
+        _GPU_MAX_BUFFER = 268_435_456  # 256 MiB
+        _BYTES_PER_PIXEL = 32  # empirical: staging buffers for SVF
+        max_tile_pixels = int(_GPU_MAX_BUFFER * 0.8) // _BYTES_PER_PIXEL
+        # Full tile side = core + 2*buffer, so core = sqrt(max_pixels) - 2*buffer
+        max_full_side = int(max_tile_pixels**0.5)
+        tile_size = max(256, max_full_side - 2 * buffer_pixels)
+
+        adjusted_tile_size, warning = validate_tile_size(tile_size, buffer_pixels, pixel_size)
+        if warning:
+            logger.warning(warning)
+
+        tiles = generate_tiles(rows, cols, adjusted_tile_size, buffer_pixels)
+        n_tiles = len(tiles)
+
+        # Determine patch count from a small probe (patch_option=2 → 153 patches)
+        n_patches = 153
+
+        logger.info(
+            f"  Tiled SVF: {rows}x{cols} raster, {n_tiles} tiles, "
+            f"tile_size={adjusted_tile_size}, buffer={buffer_m:.0f}m ({buffer_pixels}px)"
         )
 
-        logger.info(f"  ✓ SVF computed and cached to {svf_cache_dir}")
+        # SVF field names on the Rust result object
+        svf_fields = ["svf", "svf_north", "svf_east", "svf_south", "svf_west"]
+        veg_fields = [
+            "svf_veg",
+            "svf_veg_north",
+            "svf_veg_east",
+            "svf_veg_south",
+            "svf_veg_west",
+            "svf_veg_blocks_bldg_sh",
+            "svf_veg_blocks_bldg_sh_north",
+            "svf_veg_blocks_bldg_sh_east",
+            "svf_veg_blocks_bldg_sh_south",
+            "svf_veg_blocks_bldg_sh_west",
+        ]
+        all_fields = svf_fields + veg_fields
+
+        # Pre-allocate output arrays (ones = default SVF for unprocessed edges)
+        outputs: dict[str, np.ndarray] = {}
+        for name in all_fields:
+            outputs[name] = np.ones((rows, cols), dtype=np.float32)
+
+        # Pre-allocate memmap files for shadow matrices (uint8, on disk)
+        memmap_dir = working_path / "shadow_memmaps"
+        memmap_dir.mkdir(parents=True, exist_ok=True)
+        sh_shape = (rows, cols, n_patches)
+        shmat_mm = np.memmap(
+            memmap_dir / "shmat.dat",
+            dtype=np.uint8,
+            mode="w+",
+            shape=sh_shape,
+        )
+        vegshmat_mm = np.memmap(
+            memmap_dir / "vegshmat.dat",
+            dtype=np.uint8,
+            mode="w+",
+            shape=sh_shape,
+        )
+        vbshmat_mm = np.memmap(
+            memmap_dir / "vbshmat.dat",
+            dtype=np.uint8,
+            mode="w+",
+            shape=sh_shape,
+        )
+
+        pbar = ProgressReporter(total=n_tiles, desc="Computing SVF (tiled)")
+
+        # Pipeline: overlap GPU computation of tile N+1 with CPU
+        # result-copying of tile N.  calculate_svf releases the GIL
+        # inside py.allow_threads(), so a background thread can drive
+        # the GPU while the main thread does numpy bookkeeping.
+        import threading
+
+        def _submit_tile(tile):
+            """Prepare inputs and run SVF on background thread."""
+            rs = tile.read_slice
+            td = dsm_f32[rs].copy()
+            tc = cdsm_f32[rs].copy()
+            tt = tdsm_f32[rs].copy()
+            mh = float(np.nanmax(td))
+            if use_veg:
+                mh = max(mh, float(np.nanmax(tc)))
+            box = [None, None]  # [result, error]
+
+            def _run():
+                try:
+                    box[0] = skyview.calculate_svf(
+                        td,
+                        tc,
+                        tt,
+                        pixel_size,
+                        use_veg,
+                        mh,
+                        2,
+                        3.0,
+                        None,
+                    )
+                except Exception as e:
+                    box[1] = e
+
+            t = threading.Thread(target=_run, daemon=True)
+            t.start()
+            return t, box
+
+        def _process_result(tile_result, tile):
+            """Copy SVF + shadow matrices from a completed tile."""
+            cs = tile.core_slice
+            ws = tile.write_slice
+            for name in svf_fields:
+                outputs[name][ws] = np.array(getattr(tile_result, name))[cs]
+            if use_veg:
+                for name in veg_fields:
+                    outputs[name][ws] = np.array(getattr(tile_result, name))[cs]
+            # Shadow matrices: float32 binary → uint8
+            for src_name, mm in [
+                ("bldg_sh_matrix", shmat_mm),
+                ("veg_sh_matrix", vegshmat_mm),
+                ("veg_blocks_bldg_sh_matrix", vbshmat_mm),
+            ]:
+                arr = np.array(getattr(tile_result, src_name))
+                mm[ws] = (arr[cs] * 255).astype(np.uint8)
+
+        # Kick off first tile
+        thread, box = _submit_tile(tiles[0])
+
+        for tile_idx in range(n_tiles):
+            pbar.set_description(f"SVF tile {tile_idx + 1}/{n_tiles}")
+            # Wait for current tile to finish
+            thread.join()
+            if box[1] is not None:
+                raise box[1]
+            cur_result = box[0]
+            cur_tile = tiles[tile_idx]
+
+            # Submit next tile (GPU starts while we copy results below)
+            if tile_idx + 1 < n_tiles:
+                thread, box = _submit_tile(tiles[tile_idx + 1])
+
+            # Copy results on main thread (overlaps with next GPU computation)
+            _process_result(cur_result, cur_tile)
+            pbar.update(1)
+
+        pbar.close()
+        # Flush memmaps to disk
+        shmat_mm.flush()
+        vegshmat_mm.flush()
+        vbshmat_mm.flush()
+
+        ones = np.ones((rows, cols), dtype=np.float32)
+
+        svf_data = SvfArrays(
+            svf=outputs["svf"],
+            svf_north=outputs["svf_north"],
+            svf_east=outputs["svf_east"],
+            svf_south=outputs["svf_south"],
+            svf_west=outputs["svf_west"],
+            svf_veg=outputs["svf_veg"] if use_veg else ones.copy(),
+            svf_veg_north=outputs["svf_veg_north"] if use_veg else ones.copy(),
+            svf_veg_east=outputs["svf_veg_east"] if use_veg else ones.copy(),
+            svf_veg_south=outputs["svf_veg_south"] if use_veg else ones.copy(),
+            svf_veg_west=outputs["svf_veg_west"] if use_veg else ones.copy(),
+            svf_aveg=outputs["svf_veg_blocks_bldg_sh"] if use_veg else ones.copy(),
+            svf_aveg_north=outputs["svf_veg_blocks_bldg_sh_north"] if use_veg else ones.copy(),
+            svf_aveg_east=outputs["svf_veg_blocks_bldg_sh_east"] if use_veg else ones.copy(),
+            svf_aveg_south=outputs["svf_veg_blocks_bldg_sh_south"] if use_veg else ones.copy(),
+            svf_aveg_west=outputs["svf_veg_blocks_bldg_sh_west"] if use_veg else ones.copy(),
+        )
+
+        return svf_data, (shmat_mm, vegshmat_mm, vbshmat_mm)
 
     def preprocess(self) -> None:
         """
@@ -1091,6 +1338,93 @@ class SurfaceData:
             )
 
         self._preprocessed = True
+
+    def compute_svf(self) -> None:
+        """
+        Compute Sky View Factor (SVF) and store in self.svf.
+
+        This must be called before calculate() or calculate_timeseries()
+        when constructing SurfaceData manually (not via prepare()).
+
+        SVF is stored without psi (vegetation transmissivity) adjustment,
+        since psi depends on day-of-year and conifer flag which are not
+        known at SVF computation time. The adjustment is applied automatically
+        during calculation.
+
+        Also computes and stores shadow matrices in self.shadow_matrices
+        (required for anisotropic sky model).
+
+        Example:
+            surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True)
+            surface.preprocess()
+            surface.compute_svf()
+            result = calculate(surface, location, weather)
+        """
+        if self.svf is not None:
+            return  # Already computed
+
+        use_veg = self.cdsm is not None
+        dsm_f32 = self.dsm.astype(np.float32)
+
+        if use_veg:
+            assert self.cdsm is not None  # Type narrowing for type checker
+            cdsm_f32 = self.cdsm.astype(np.float32)
+            if self.tdsm is not None:
+                tdsm_f32 = self.tdsm.astype(np.float32)
+            else:
+                tdsm_f32 = (self.cdsm * self.trunk_ratio).astype(np.float32)
+        else:
+            cdsm_f32 = np.zeros_like(dsm_f32)
+            tdsm_f32 = np.zeros_like(dsm_f32)
+
+        max_height = float(np.nanmax(dsm_f32))
+        if use_veg:
+            veg_max = float(np.nanmax(cdsm_f32))
+            max_height = max(max_height, veg_max)
+
+        logger.info("Computing Sky View Factor...")
+        svf_result = skyview.calculate_svf(
+            dsm_f32,
+            cdsm_f32,
+            tdsm_f32,
+            self.pixel_size,
+            use_veg,
+            max_height,
+            2,  # patch_option (153 patches)
+            3.0,  # min_sun_elev_deg
+            None,  # progress callback
+        )
+
+        ones = np.ones_like(dsm_f32)
+        self.svf = SvfArrays(
+            svf=np.array(svf_result.svf),
+            svf_north=np.array(svf_result.svf_north),
+            svf_east=np.array(svf_result.svf_east),
+            svf_south=np.array(svf_result.svf_south),
+            svf_west=np.array(svf_result.svf_west),
+            svf_veg=np.array(svf_result.svf_veg) if use_veg else ones.copy(),
+            svf_veg_north=np.array(svf_result.svf_veg_north) if use_veg else ones.copy(),
+            svf_veg_east=np.array(svf_result.svf_veg_east) if use_veg else ones.copy(),
+            svf_veg_south=np.array(svf_result.svf_veg_south) if use_veg else ones.copy(),
+            svf_veg_west=np.array(svf_result.svf_veg_west) if use_veg else ones.copy(),
+            svf_aveg=np.array(svf_result.svf_veg_blocks_bldg_sh) if use_veg else ones.copy(),
+            svf_aveg_north=np.array(svf_result.svf_veg_blocks_bldg_sh_north) if use_veg else ones.copy(),
+            svf_aveg_east=np.array(svf_result.svf_veg_blocks_bldg_sh_east) if use_veg else ones.copy(),
+            svf_aveg_south=np.array(svf_result.svf_veg_blocks_bldg_sh_south) if use_veg else ones.copy(),
+            svf_aveg_west=np.array(svf_result.svf_veg_blocks_bldg_sh_west) if use_veg else ones.copy(),
+        )
+
+        # Store shadow matrices for anisotropic sky model
+        shmat = np.array(svf_result.bldg_sh_matrix)
+        vegshmat = np.array(svf_result.veg_sh_matrix)
+        vbshmat = np.array(svf_result.veg_blocks_bldg_sh_matrix)
+        self.shadow_matrices = ShadowArrays(
+            _shmat_u8=(np.clip(shmat, 0, 1) * 255).astype(np.uint8),
+            _vegshmat_u8=(np.clip(vegshmat, 0, 1) * 255).astype(np.uint8),
+            _vbshmat_u8=(np.clip(vbshmat, 0, 1) * 255).astype(np.uint8),
+        )
+
+        logger.info("  SVF computed successfully")
 
     @property
     def max_height(self) -> float:

@@ -146,6 +146,14 @@ def validate_inputs(
             if grid is not None and grid.shape != dsm_shape:
                 raise GridShapeMismatch(name, dsm_shape, grid.shape)
 
+    # Check SVF is available (required for all calculations)
+    if surface.svf is None and (precomputed is None or precomputed.svf is None):
+        raise MissingPrecomputedData(
+            "Sky View Factor (SVF) data is required but not available.",
+            "Call surface.compute_svf() before calculate(), or use SurfaceData.prepare() "
+            "which computes SVF automatically.",
+        )
+
     # Check anisotropic sky requirements
     if use_anisotropic_sky:
         has_shadow_matrices = (precomputed is not None and precomputed.shadow_matrices is not None) or (

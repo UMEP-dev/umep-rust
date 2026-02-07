@@ -23,7 +23,7 @@ RTOL = 1e-4
 ATOL = 0.01  # 0.01°C
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def tmrt_inputs():
     """Load Tmrt radiation input fixtures."""
     return {
@@ -44,7 +44,7 @@ def tmrt_inputs():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def tmrt_expected():
     """Load expected Tmrt outputs."""
     return {
@@ -53,7 +53,7 @@ def tmrt_expected():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def tmrt_params():
     """Load Tmrt parameters."""
     data = dict(np.load(FIXTURES_DIR / "tmrt_params.npz"))

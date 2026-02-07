@@ -25,7 +25,7 @@ RTOL = 1e-3
 ATOL = 0.05  # 0.05°C
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def wall_temp_inputs():
     """Load wall temperature input fixtures."""
     return {
@@ -37,7 +37,7 @@ def wall_temp_inputs():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def wall_temp_expected():
     """Load expected wall temperature outputs."""
     data = dict(np.load(FIXTURES_DIR / "wall_temp_output.npz"))

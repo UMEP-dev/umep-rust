@@ -33,9 +33,9 @@ DEFAULT_TA = 25.0  # Air temperature (°C)
 DEFAULT_TGWALL = 2.0  # Wall temperature deviation (K)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def input_data():
-    """Load input data from golden fixtures."""
+    """Load input data from golden fixtures (shared across all tests in module)."""
     return {
         "dsm": np.load(FIXTURES_DIR / "input_dsm.npy"),
         "cdsm": np.load(FIXTURES_DIR / "input_cdsm.npy"),
@@ -47,9 +47,9 @@ def input_data():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def shadow_data():
-    """Load shadow data from golden fixtures (noon position)."""
+    """Load shadow data from golden fixtures (shared across all tests in module)."""
     return {
         "bldg_sh": np.load(FIXTURES_DIR / "shadow_noon_bldg_sh.npy"),
         "veg_sh": np.load(FIXTURES_DIR / "shadow_noon_veg_sh.npy"),
@@ -102,15 +102,15 @@ def create_gvf_inputs(input_data, shadow_data):
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gvf_inputs(input_data, shadow_data):
-    """Prepare all GVF inputs."""
+    """Prepare all GVF inputs (shared across all tests in module)."""
     return create_gvf_inputs(input_data, shadow_data)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def gvf_result(gvf_inputs):
-    """Compute GVF result using Rust implementation."""
+    """Compute GVF result using Rust implementation (computed once per module)."""
     shadowing.disable_gpu()
 
     params = gvf_module.GvfScalarParams(

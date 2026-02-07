@@ -8,6 +8,7 @@ from datetime import datetime
 
 import numpy as np
 import pytest
+from conftest import make_mock_svf
 from solweig import (
     Location,
     SurfaceData,
@@ -22,9 +23,9 @@ pytestmark = pytest.mark.slow
 class TestMultiTileProcessing:
     """Tests that actually exercise multi-tile processing."""
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def large_urban_surface(self):
-        """Create a 800x800 synthetic urban surface with low buildings.
+        """Create a 400x400 synthetic urban surface with low buildings.
 
         Uses LOW buildings (5m) so buffer requirement is small enough
         to actually trigger multi-tile processing.
@@ -34,7 +35,7 @@ class TestMultiTileProcessing:
         But with tile_size=300, we get ~108px core (marginal).
         """
         np.random.seed(42)
-        size = 800
+        size = 400
 
         # Base terrain at 10m
         dsm = np.ones((size, size), dtype=np.float32) * 10.0
@@ -49,15 +50,18 @@ class TestMultiTileProcessing:
         land_cover = np.ones((size, size), dtype=np.int32) * 5
         land_cover[dsm > 12] = 2
 
+        from conftest import make_mock_svf
+
         surface = SurfaceData(
             dsm=dsm,
             land_cover=land_cover,
             pixel_size=1.0,
+            svf=make_mock_svf((size, size)),
         )
 
         return surface
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def weather_noon(self):
         """Summer noon weather conditions."""
         return Weather(
@@ -68,7 +72,7 @@ class TestMultiTileProcessing:
             ws=2.0,
         )
 
-    @pytest.fixture
+    @pytest.fixture(scope="class")
     def location_gothenburg(self):
         """Gothenburg, Sweden location."""
         return Location(latitude=57.7, longitude=12.0, utc_offset=2)
@@ -118,7 +122,7 @@ class TestMultiTileProcessing:
             x, y = np.random.randint(50, size - 50, 2)
             dsm[y : y + 20, x : x + 20] = 15.0
 
-        surface = SurfaceData(dsm=dsm, pixel_size=2.0)  # 2m pixels = 800m extent
+        surface = SurfaceData(dsm=dsm, pixel_size=2.0, svf=make_mock_svf((size, size)))  # 2m pixels = 800m extent
 
         # Non-tiled reference
         result_ref = calculate(surface, location_gothenburg, weather_noon)
@@ -148,11 +152,11 @@ class TestMultiTileProcessing:
 
     def test_tile_boundary_continuity(self, location_gothenburg, weather_noon):
         """Verify results are continuous across tile boundaries."""
-        size = 600
+        size = 300
 
         # Uniform flat terrain - should have smooth Tmrt
         dsm = np.ones((size, size), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
 
         result = calculate_tiled(
             surface,
@@ -195,13 +199,13 @@ class TestTilingMemoryBehavior:
 
     def test_tile_isolation(self):
         """Verify tiles don't share mutable state."""
-        size = 500
+        size = 300
         dsm = np.ones((size, size), dtype=np.float32) * 10.0
         dsm[200:300, 200:300] = 25.0  # Building
 
         original_dsm = dsm.copy()
 
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),

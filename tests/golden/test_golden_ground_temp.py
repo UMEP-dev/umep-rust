@@ -23,7 +23,7 @@ RTOL = 1e-4
 ATOL = 0.1  # 0.1 units (W/m² for Lup)
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def ground_temp_inputs():
     """Load ground temperature input fixtures."""
     return {
@@ -32,19 +32,19 @@ def ground_temp_inputs():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def case1_data():
     """Load case 1: first timestep of the day."""
     return dict(np.load(FIXTURES_DIR / "ground_temp_case1.npz"))
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def case2_data():
     """Load case 2: short timestep accumulation."""
     return dict(np.load(FIXTURES_DIR / "ground_temp_case2.npz"))
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def case3_data():
     """Load case 3: long timestep."""
     return dict(np.load(FIXTURES_DIR / "ground_temp_case3.npz"))

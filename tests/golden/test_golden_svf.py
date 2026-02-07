@@ -33,9 +33,9 @@ RELAXED_RTOL = 0.02
 RELAXED_ATOL = 0.02
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def input_data():
-    """Load input data from golden fixtures."""
+    """Load input data from golden fixtures (shared across all tests in module)."""
     return {
         "dsm": np.load(FIXTURES_DIR / "input_dsm.npy"),
         "cdsm": np.load(FIXTURES_DIR / "input_cdsm.npy"),
@@ -44,9 +44,9 @@ def input_data():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def svf_golden():
-    """Load golden SVF fixtures."""
+    """Load golden SVF fixtures (shared across all tests in module)."""
     return {
         "svf": np.load(FIXTURES_DIR / "svf_total.npy"),
         "svf_north": np.load(FIXTURES_DIR / "svf_north.npy"),
@@ -57,9 +57,9 @@ def svf_golden():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def svf_result(input_data):
-    """Compute current SVF result."""
+    """Compute current SVF result (computed once per module)."""
     shadowing.disable_gpu()
     return skyview.calculate_svf(
         input_data["dsm"],

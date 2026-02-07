@@ -271,8 +271,8 @@ def calculate_core(
     # Maximum building height for shadow/SVF computation
     max_height = float(np.nanmax(surface.dsm)) if surface.dsm.size > 0 else 50.0
 
-    # Step 1: SVF Resolution (sky view factors from all sources)
-    svf_bundle, needs_psi_adjustment = resolve_svf(
+    # Step 1: SVF Resolution (sky view factors from cached/precomputed sources)
+    svf_bundle, _needs_psi_adjustment = resolve_svf(
         surface=surface,
         precomputed=precomputed,
         dsm=surface.dsm,
@@ -281,7 +281,6 @@ def calculate_core(
         pixel_size=pixel_size,
         use_veg=use_veg,
         max_height=max_height,
-        psi=None,  # Will be computed in shadows step
     )
 
     # Step 2: Shadow Computation (with vegetation transmissivity)
@@ -299,24 +298,6 @@ def calculate_core(
         wall_ht=wall_ht,
         wall_asp_rad=wall_asp * (np.pi / 180.0) if wall_asp is not None else None,
     )
-
-    # Adjust svfbuveg with psi if needed (when SVF was computed fresh without psi)
-    if needs_psi_adjustment and use_veg:
-        from .components.svf_resolution import adjust_svfbuveg_with_psi
-
-        svf_bundle.svfbuveg = adjust_svfbuveg_with_psi(
-            svf=svf_bundle.svf,
-            svf_veg=svf_bundle.svf_veg,
-            psi=shadow_bundle.psi,
-            use_veg=use_veg,
-        )
-
-    # Cache fresh-computed SVF back to surface for subsequent calculate() calls
-    # This avoids re-computing SVF on every timestep
-    if needs_psi_adjustment and surface.svf is None:
-        from .models.precomputed import SvfArrays
-
-        surface.svf = SvfArrays.from_bundle(svf_bundle)
 
     # Step 3: Ground Temperature Model (TgMaps with land cover parameterization)
     # Resolve wall params: explicit wall_material wins, then materials JSON, then Rust defaults
@@ -435,7 +416,7 @@ def calculate_core_fused(
     from .buffers import as_float32
     from .components.gvf import detect_building_mask
     from .components.shadows import compute_transmissivity
-    from .components.svf_resolution import adjust_svfbuveg_with_psi, resolve_svf
+    from .components.svf_resolution import resolve_svf
     from .models.state import ThermalState
     from .physics.clearnessindex_2013b import clearnessindex_2013b
     from .physics.daylen import daylen
@@ -476,7 +457,7 @@ def calculate_core_fused(
     max_height = float(np.nanmax(surface.dsm)) if surface.dsm.size > 0 else 50.0
 
     # SVF resolution (cached between timesteps)
-    svf_bundle, needs_psi_adjustment = resolve_svf(
+    svf_bundle, _needs_psi_adjustment = resolve_svf(
         surface=surface,
         precomputed=precomputed,
         dsm=surface.dsm,
@@ -485,27 +466,11 @@ def calculate_core_fused(
         pixel_size=pixel_size,
         use_veg=use_veg,
         max_height=max_height,
-        psi=None,
     )
 
     # Vegetation transmissivity
     doy = weather.datetime.timetuple().tm_yday
     psi = compute_transmissivity(doy, physics, conifer)
-
-    # Adjust svfbuveg with psi if needed
-    if needs_psi_adjustment and use_veg:
-        svf_bundle.svfbuveg = adjust_svfbuveg_with_psi(
-            svf=svf_bundle.svf,
-            svf_veg=svf_bundle.svf_veg,
-            psi=psi,
-            use_veg=use_veg,
-        )
-
-    # Cache SVF back to surface
-    if needs_psi_adjustment and surface.svf is None:
-        from .models.precomputed import SvfArrays
-
-        surface.svf = SvfArrays.from_bundle(svf_bundle)
 
     # Wall material resolution
     tgk_wall = 0.37
@@ -675,9 +640,9 @@ def calculate_core_fused(
             if ci < 0.95:
                 esky_val = ci * esky_val + (1 - ci) * 1.0
 
-            aniso_shmat = as_float32(shadow_mats.shmat)
-            aniso_vegshmat = as_float32(shadow_mats.vegshmat)
-            aniso_vbshmat = as_float32(shadow_mats.vbshmat)
+            aniso_shmat = np.ascontiguousarray(shadow_mats._shmat_u8)
+            aniso_vegshmat = np.ascontiguousarray(shadow_mats._vegshmat_u8)
+            aniso_vbshmat = np.ascontiguousarray(shadow_mats._vbshmat_u8)
             aniso_l_patches = as_float32(lv_arr)
             aniso_steradians = as_float32(ster)
             aniso_lv = as_float32(lv_arr)

@@ -9,6 +9,7 @@ from datetime import datetime
 
 import numpy as np
 import pytest
+from conftest import make_mock_svf
 from solweig.api import (
     HumanParams,
     Location,
@@ -21,8 +22,6 @@ from solweig.api import (
     calculate_tiled,
     generate_tiles,
 )
-
-pytestmark = pytest.mark.slow
 
 
 class TestSurfaceData:
@@ -408,6 +407,7 @@ class TestSolweigResultMethods:
             result.compute_pet(25.0)
 
 
+@pytest.mark.slow
 class TestConfigPrecedence:
     """Tests for config precedence - explicit parameters override config values."""
 
@@ -415,7 +415,7 @@ class TestConfigPrecedence:
         """Explicit use_anisotropic_sky=False overrides config.use_anisotropic_sky=True."""
 
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
@@ -441,7 +441,7 @@ class TestConfigPrecedence:
         """Explicit human params override config.human."""
 
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
@@ -469,7 +469,7 @@ class TestConfigPrecedence:
         """When explicit param is None, config value is used."""
 
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
@@ -495,7 +495,7 @@ class TestConfigPrecedence:
     def test_no_config_uses_defaults(self):
         """When no config provided, defaults are used."""
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
@@ -510,6 +510,7 @@ class TestConfigPrecedence:
         assert result.tmrt is not None
 
 
+@pytest.mark.slow
 class TestCalculateIntegration:
     """Integration tests for the calculate() function."""
 
@@ -520,7 +521,7 @@ class TestCalculateIntegration:
         dsm = np.zeros((30, 30), dtype=np.float32)
         dsm[10:20, 10:20] = 10.0  # 10m building
 
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
@@ -547,7 +548,7 @@ class TestCalculateIntegration:
     def test_nighttime_calculation(self):
         """calculate() handles nighttime (sun below horizon)."""
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
 
         # Midnight - sun below horizon
@@ -571,7 +572,7 @@ class TestCalculateIntegration:
         dsm = np.zeros((40, 40), dtype=np.float32)
         dsm[15:25, 15:25] = 20.0  # 20m building
 
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 10, 0),  # Morning - shadows to west
@@ -590,7 +591,7 @@ class TestCalculateIntegration:
     def test_utci_postprocessing(self):
         """UTCI is computed via post-processing, not by default."""
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
@@ -608,7 +609,7 @@ class TestCalculateIntegration:
     def test_with_custom_human_params(self):
         """Custom human parameters affect calculation."""
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
@@ -626,6 +627,7 @@ class TestCalculateIntegration:
         assert result_sitting.tmrt is not None
 
 
+@pytest.mark.slow
 class TestTiledProcessing:
     """Tests for tiled processing functions."""
 
@@ -698,7 +700,7 @@ class TestTiledProcessing:
         dsm = np.zeros((60, 60), dtype=np.float32)
         dsm[20:40, 20:40] = 15.0  # 15m building
 
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
@@ -734,7 +736,7 @@ class TestTiledProcessing:
         dsm = np.zeros((80, 80), dtype=np.float32)
         dsm[30:50, 30:50] = 20.0  # 20m building
 
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 10, 0),  # Morning
@@ -761,7 +763,7 @@ class TestTiledProcessing:
         """Small rasters fall back to non-tiled calculation."""
         # Small DSM that fits in a single tile
         dsm = np.ones((40, 40), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
         location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),

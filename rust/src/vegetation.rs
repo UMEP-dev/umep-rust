@@ -481,9 +481,9 @@ pub fn kside_veg(
     anisotropic_diffuse: bool,         // 1 -> anisotropic
     diffsh: Option<numpy::PyReadonlyArray3<f32>>, // (rows, cols, patches)
     asvf: Option<PyReadonlyArray2<f32>>, // sky view factor angle per pixel
-    shmat: Option<numpy::PyReadonlyArray3<f32>>, // building shading matrix (1 sky visible)
-    vegshmat: Option<numpy::PyReadonlyArray3<f32>>, // vegetation shading matrix
-    vbshvegshmat: Option<numpy::PyReadonlyArray3<f32>>, // veg+building shading matrix
+    shmat: Option<numpy::PyReadonlyArray3<u8>>, // building shading matrix (uint8: 0=shadow, 255=sky)
+    vegshmat: Option<numpy::PyReadonlyArray3<u8>>, // vegetation shading matrix
+    vbshvegshmat: Option<numpy::PyReadonlyArray3<u8>>, // veg+building shading matrix
 ) -> PyResult<Py<KsideVegResult>> {
     // Borrow base 2D arrays
     let shadow = shadow.as_array();
@@ -726,12 +726,12 @@ pub fn kside_veg(
                         let angle_inc = pc.cos_alt;
                         let lum = lum_chi[i];
                         kside_d_loc += diffsh[(r, c, i)] * lum * angle_inc * pc.ster;
-                        let veg_flag = vegshmat[(r, c, i)] == 0.0 || vbshvegshmat[(r, c, i)] == 0.0;
+                        let veg_flag = vegshmat[(r, c, i)] == 0 || vbshvegshmat[(r, c, i)] == 0;
                         if veg_flag {
                             ref_veg += shaded_surface * pc.ster * angle_inc;
                         }
-                        let temp_vbsh = (1.0 - shmat[(r, c, i)]) * vbshvegshmat[(r, c, i)];
-                        if temp_vbsh == 1.0 {
+                        let temp_vbsh = shmat[(r, c, i)] == 0 && vbshvegshmat[(r, c, i)] == 255;
+                        if temp_vbsh {
                             let (sunlit_patch, shaded_patch) =
                                 crate::sunlit_shaded_patches::shaded_or_sunlit_pixel(
                                     altitude,
@@ -822,7 +822,7 @@ pub fn kside_veg(
                         if pc.is_n {
                             diff_n += diff_val * pc.w_n;
                         }
-                        let veg_flag = vegshmat[(r, c, i)] == 0.0 || vbshvegshmat[(r, c, i)] == 0.0;
+                        let veg_flag = vegshmat[(r, c, i)] == 0 || vbshvegshmat[(r, c, i)] == 0;
                         if veg_flag {
                             if pc.is_e {
                                 ref_veg_e += shaded_surface * pc.ster * cos_alt * pc.w_e;
@@ -837,8 +837,8 @@ pub fn kside_veg(
                                 ref_veg_n += shaded_surface * pc.ster * cos_alt * pc.w_n;
                             }
                         }
-                        let temp_vbsh = (1.0 - shmat[(r, c, i)]) * vbshvegshmat[(r, c, i)];
-                        if temp_vbsh == 1.0 {
+                        let temp_vbsh = shmat[(r, c, i)] == 0 && vbshvegshmat[(r, c, i)] == 255;
+                        if temp_vbsh {
                             let az_diff = (azimuth - patch_azi[i]).abs();
                             if az_diff > 90.0 && az_diff < 270.0 {
                                 let (sunlit_patch, shaded_patch) =

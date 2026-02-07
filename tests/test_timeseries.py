@@ -29,15 +29,17 @@ pytestmark = pytest.mark.slow
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def flat_surface():
     """Simple flat DSM with one 10m building."""
+    from conftest import make_mock_svf
+
     dsm = np.zeros((30, 30), dtype=np.float32)
     dsm[10:20, 10:20] = 10.0
-    return SurfaceData(dsm=dsm, pixel_size=1.0)
+    return SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((30, 30)))
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def location():
     return Location(latitude=57.7, longitude=12.0, utc_offset=1)
 
@@ -294,9 +296,11 @@ class TestValidateInputs:
 
     def test_unpreprocessed_cdsm_warning(self):
         """Warning when CDSM is relative but preprocess() not called."""
+        from conftest import make_mock_svf
+
         dsm = np.zeros((20, 20), dtype=np.float32)
         cdsm = np.ones((20, 20), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True)
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True, svf=make_mock_svf((20, 20)))
 
         warnings = validate_inputs(surface)
 
@@ -304,9 +308,45 @@ class TestValidateInputs:
 
     def test_surface_only_validation(self):
         """Can validate with just a surface (no location/weather)."""
+        from conftest import make_mock_svf
+
         dsm = np.zeros((20, 20), dtype=np.float32)
-        surface = SurfaceData(dsm=dsm)
+        surface = SurfaceData(dsm=dsm, svf=make_mock_svf((20, 20)))
 
         warnings = validate_inputs(surface)
 
         assert isinstance(warnings, list)
+
+
+# ===========================================================================
+# Memory optimization tests
+# ===========================================================================
+
+
+class TestTimeseriesMemory:
+    """Tests for memory optimizations in calculate_timeseries()."""
+
+    def test_state_cleared_from_results(self, flat_surface, location):
+        """Returned results should have state=None to avoid ~23 MB waste per timestep."""
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
+
+        results = calculate_timeseries(flat_surface, weather_series, location)
+
+        assert len(results) == 3
+        for r in results:
+            assert r.state is None, "State should be cleared from results to save memory"
+
+    def test_state_still_propagates_correctly(self, flat_surface, location):
+        """Despite clearing state from results, thermal state should still propagate."""
+        # Night → day transition relies on state propagation for ground temperature
+        weather_series = [
+            Weather(datetime=datetime(2024, 7, 15, h, 0), ta=15.0 + h, rh=70.0, global_rad=max(0.0, (h - 5) * 200.0))
+            for h in range(4, 10)
+        ]
+
+        results = calculate_timeseries(flat_surface, weather_series, location)
+
+        # Later timesteps should have higher Tmrt (thermal state propagated correctly)
+        early_tmrt = np.nanmean(results[0].tmrt)
+        late_tmrt = np.nanmean(results[-1].tmrt)
+        assert late_tmrt > early_tmrt, "Thermal state should propagate despite being cleared from results"

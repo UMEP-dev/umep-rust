@@ -40,7 +40,9 @@ def small_shape():
 @pytest.fixture()
 def surface_10x10():
     """Minimal SurfaceData for nighttime tests."""
-    return solweig.SurfaceData(dsm=np.ones((10, 10), dtype=np.float32) * 5.0)
+    from conftest import make_mock_svf
+
+    return solweig.SurfaceData(dsm=np.ones((10, 10), dtype=np.float32) * 5.0, svf=make_mock_svf((10, 10)))
 
 
 @pytest.fixture()

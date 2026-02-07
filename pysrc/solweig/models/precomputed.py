@@ -450,6 +450,18 @@ class ShadowArrays:
             return (shmat - (1 - vegshmat) * (1 - transmissivity)).astype(np.float32)
         return shmat
 
+    def release_float32_cache(self) -> None:
+        """Release cached float32 shadow matrices to free memory.
+
+        The uint8 originals remain available. Future property access will
+        re-convert from uint8 as needed.
+
+        For a 1000x1000 grid with 153 patches, this frees ~1.8 GB.
+        """
+        self._shmat_f32 = None
+        self._vegshmat_f32 = None
+        self._vbshmat_f32 = None
+
     def crop(self, r0: int, r1: int, c0: int, c1: int) -> ShadowArrays:
         """Crop all shadow matrices to [r0:r1, c0:c1] (3D: rows, cols, patches)."""
         return ShadowArrays(

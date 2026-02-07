@@ -22,7 +22,7 @@ RTOL = 1e-4
 ATOL = 1e-4
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def single_point_data():
     """Load single-point UTCI test cases."""
     data = dict(np.load(FIXTURES_DIR / "utci_single_point.npz", allow_pickle=True))
@@ -33,7 +33,7 @@ def single_point_data():
     }
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def grid_data():
     """Load grid UTCI test data."""
     params = dict(np.load(FIXTURES_DIR / "utci_grid_params.npz"))

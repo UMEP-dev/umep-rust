@@ -18,6 +18,7 @@ mod pipeline;
 mod tmrt;
 mod utci;
 mod vegetation;
+mod wall_aspect;
 
 #[pymodule]
 fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -37,6 +38,7 @@ fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_tmrt_module(py_module)?;
     register_pipeline_module(py_module)?;
     register_morphology_module(py_module)?;
+    register_wall_aspect_module(py_module)?;
 
     // Add GPU feature flag
     #[cfg(feature = "gpu")]
@@ -172,6 +174,15 @@ fn register_morphology_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     let submodule = PyModule::new(py_module.py(), "morphology")?;
     submodule.add("__doc__", "Morphological operations (binary dilation).")?;
     submodule.add_function(wrap_pyfunction!(morphology::binary_dilation, &submodule)?)?;
+    py_module.add_submodule(&submodule)?;
+    Ok(())
+}
+
+fn register_wall_aspect_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
+    let submodule = PyModule::new(py_module.py(), "wall_aspect")?;
+    submodule.add("__doc__", "Wall aspect (orientation) detection using the Goodwin filter algorithm.")?;
+    submodule.add_function(wrap_pyfunction!(wall_aspect::compute_wall_aspect, &submodule)?)?;
+    submodule.add_class::<wall_aspect::WallAspectRunner>()?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }

@@ -9,6 +9,7 @@ from datetime import datetime
 
 import numpy as np
 import pytest
+from conftest import make_mock_svf
 from solweig.api import (
     GridShapeMismatch,
     InvalidSurfaceData,
@@ -73,11 +74,22 @@ class TestValidateInputs:
     def test_valid_surface_returns_empty_warnings(self):
         """Valid surface data returns no warnings."""
         dsm = np.ones((100, 100), dtype=np.float32)
-        surface = SurfaceData(dsm=dsm)
+        surface = SurfaceData(dsm=dsm, svf=make_mock_svf((100, 100)))
 
         warnings = validate_inputs(surface)
 
         assert warnings == []
+
+    def test_missing_svf_raises_error(self):
+        """Surface without SVF raises MissingPrecomputedData."""
+        dsm = np.ones((50, 50), dtype=np.float32)
+        surface = SurfaceData(dsm=dsm)
+
+        with pytest.raises(MissingPrecomputedData) as excinfo:
+            validate_inputs(surface)
+
+        assert "SVF" in str(excinfo.value)
+        assert "compute_svf()" in str(excinfo.value)
 
     def test_mismatched_cdsm_raises_grid_shape_mismatch(self):
         """CDSM with wrong shape raises GridShapeMismatch."""
@@ -108,7 +120,7 @@ class TestValidateInputs:
     def test_anisotropic_without_shadow_matrices_raises_error(self):
         """Anisotropic sky without shadow matrices raises MissingPrecomputedData."""
         dsm = np.ones((50, 50), dtype=np.float32)
-        surface = SurfaceData(dsm=dsm)
+        surface = SurfaceData(dsm=dsm, svf=make_mock_svf((50, 50)))
 
         with pytest.raises(MissingPrecomputedData) as excinfo:
             validate_inputs(surface, use_anisotropic_sky=True)
@@ -120,7 +132,7 @@ class TestValidateInputs:
         dsm = np.ones((50, 50), dtype=np.float32) * 100.0
         cdsm = np.ones((50, 50), dtype=np.float32) * 5.0  # Relative heights
 
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True)
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True, svf=make_mock_svf((50, 50)))
 
         warnings = validate_inputs(surface)
 
@@ -132,7 +144,7 @@ class TestValidateInputs:
         dsm = np.ones((50, 50), dtype=np.float32) * 100.0
         cdsm = np.ones((50, 50), dtype=np.float32) * 5.0
 
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True)
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True, svf=make_mock_svf((50, 50)))
         surface.preprocess()
 
         warnings = validate_inputs(surface)
@@ -143,7 +155,7 @@ class TestValidateInputs:
     def test_extreme_temperature_warning(self):
         """Warning issued for extreme temperature values."""
         dsm = np.ones((20, 20), dtype=np.float32)
-        surface = SurfaceData(dsm=dsm)
+        surface = SurfaceData(dsm=dsm, svf=make_mock_svf((20, 20)))
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
             ta=65.0,  # Extreme temperature
@@ -158,7 +170,7 @@ class TestValidateInputs:
     def test_excessive_radiation_warning(self):
         """Warning issued for radiation exceeding solar constant."""
         dsm = np.ones((20, 20), dtype=np.float32)
-        surface = SurfaceData(dsm=dsm)
+        surface = SurfaceData(dsm=dsm, svf=make_mock_svf((20, 20)))
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
             ta=25.0,
@@ -173,7 +185,7 @@ class TestValidateInputs:
     def test_validates_weather_list(self):
         """validate_inputs() accepts a list of Weather objects."""
         dsm = np.ones((20, 20), dtype=np.float32)
-        surface = SurfaceData(dsm=dsm)
+        surface = SurfaceData(dsm=dsm, svf=make_mock_svf((20, 20)))
         weather_list = [
             Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=25.0, rh=50.0, global_rad=800.0),
             Weather(datetime=datetime(2024, 7, 15, 13, 0), ta=70.0, rh=50.0, global_rad=750.0),  # Extreme
@@ -187,7 +199,7 @@ class TestValidateInputs:
     def test_no_warnings_for_normal_weather(self):
         """No warnings for normal weather values."""
         dsm = np.ones((20, 20), dtype=np.float32)
-        surface = SurfaceData(dsm=dsm)
+        surface = SurfaceData(dsm=dsm, svf=make_mock_svf((20, 20)))
         weather = Weather(
             datetime=datetime(2024, 7, 15, 12, 0),
             ta=25.0,

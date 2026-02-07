@@ -7,6 +7,7 @@ expected by the solweig library API.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -226,17 +227,192 @@ def create_surface_from_parameters(
         feedback.pushInfo("Converting relative vegetation heights to absolute...")
         surface.preprocess()
 
-    # Compute unified valid mask, apply across layers, crop to valid bbox
-    surface.compute_valid_mask()
-    surface.apply_valid_mask()
-    surface.crop_to_valid_bbox()
+    # Compute valid mask, apply, and crop (inline to avoid bundled version dependency)
+    valid = np.isfinite(surface.dsm)
+    for arr in [surface.cdsm, surface.dem, surface.tdsm]:
+        if arr is not None:
+            valid &= np.isfinite(arr)
+    if surface.land_cover is not None:
+        valid &= surface.land_cover != 255  # 255 = nodata in UMEP land cover
+
+    # Apply mask: set NaN wherever any layer is invalid
+    surface.dsm = np.where(valid, surface.dsm, np.nan)
+    if surface.cdsm is not None:
+        surface.cdsm = np.where(valid, surface.cdsm, np.nan)
+    if surface.dem is not None:
+        surface.dem = np.where(valid, surface.dem, np.nan)
+    if surface.tdsm is not None:
+        surface.tdsm = np.where(valid, surface.tdsm, np.nan)
+
+    # Crop to valid bounding box
+    rows_any = np.any(valid, axis=1)
+    cols_any = np.any(valid, axis=0)
+    if np.any(rows_any) and np.any(cols_any):
+        r0 = int(np.argmax(rows_any))
+        r1 = int(valid.shape[0] - np.argmax(rows_any[::-1]))
+        c0 = int(np.argmax(cols_any))
+        c1 = int(valid.shape[1] - np.argmax(cols_any[::-1]))
+
+        if r0 > 0 or r1 < valid.shape[0] or c0 > 0 or c1 < valid.shape[1]:
+            surface.dsm = surface.dsm[r0:r1, c0:c1].copy()
+            if surface.cdsm is not None:
+                surface.cdsm = surface.cdsm[r0:r1, c0:c1].copy()
+            if surface.dem is not None:
+                surface.dem = surface.dem[r0:r1, c0:c1].copy()
+            if surface.tdsm is not None:
+                surface.tdsm = surface.tdsm[r0:r1, c0:c1].copy()
+            if surface.land_cover is not None:
+                surface.land_cover = surface.land_cover[r0:r1, c0:c1].copy()
+
+            # Update geotransform for the crop offset
+            gt = surface._geotransform
+            surface._geotransform = [
+                gt[0] + c0 * gt[1],
+                gt[1],
+                gt[2],
+                gt[3] + r0 * gt[5],
+                gt[4],
+                gt[5],
+            ]
+
     feedback.pushInfo(f"After NaN masking + crop: {surface.dsm.shape[1]}x{surface.dsm.shape[0]} pixels")
+
+    # Compute wall heights and aspects from DSM
+    feedback.setProgressText("Computing wall heights...")
+    feedback.pushInfo("Computing walls from DSM...")
+    from solweig.physics import wallalgorithms as wa
+
+    walls = wa.findwalls(surface.dsm, 1.0)
+    feedback.pushInfo("Computing wall aspects...")
+    feedback.setProgressText("Computing wall aspects...")
+    dsm_scale = 1.0 / pixel_size
+    dirwalls = wa.filter1Goodwin_as_aspect_v3(walls, dsm_scale, surface.dsm, feedback=feedback)
+    surface.wall_height = walls
+    surface.wall_aspect = dirwalls
+    feedback.pushInfo("Wall computation complete")
 
     # Save cleaned rasters
     if output_dir:
         surface.save_cleaned(output_dir)
 
     return surface
+
+
+def load_prepared_surface(
+    surface_dir: str,
+    feedback: QgsProcessingFeedback,
+) -> Any:  # Returns solweig.SurfaceData
+    """
+    Load a prepared surface directory into SurfaceData.
+
+    Reads GeoTIFFs and metadata saved by the Surface Preprocessing algorithm.
+
+    Args:
+        surface_dir: Path to prepared surface directory.
+        feedback: Processing feedback.
+
+    Returns:
+        solweig.SurfaceData instance with all arrays loaded.
+
+    Raises:
+        QgsProcessingException: If required files are missing.
+    """
+    import json
+    import os
+
+    try:
+        import solweig
+    except ImportError as e:
+        raise QgsProcessingException("SOLWEIG library not found.") from e
+
+    # Load metadata
+    metadata_path = os.path.join(surface_dir, "metadata.json")
+    if not os.path.exists(metadata_path):
+        raise QgsProcessingException(
+            f"Not a valid prepared surface directory: {surface_dir}\n"
+            "Missing metadata.json. Run 'Prepare Surface Data' first."
+        )
+
+    with open(metadata_path) as f:
+        metadata = json.load(f)
+
+    feedback.pushInfo(f"Loading prepared surface from {surface_dir}")
+
+    # Load DSM (required)
+    dsm_path = os.path.join(surface_dir, "dsm.tif")
+    if not os.path.exists(dsm_path):
+        raise QgsProcessingException(f"Missing required file: {dsm_path}")
+
+    dsm, gt, crs_wkt = _load_geotiff(dsm_path)
+    feedback.pushInfo(f"DSM: {dsm.shape[1]}x{dsm.shape[0]} pixels")
+
+    # Load optional rasters
+    cdsm = _load_geotiff_if_exists(os.path.join(surface_dir, "cdsm.tif"))
+    dem = _load_geotiff_if_exists(os.path.join(surface_dir, "dem.tif"))
+    tdsm = _load_geotiff_if_exists(os.path.join(surface_dir, "tdsm.tif"))
+    lc = _load_geotiff_if_exists(os.path.join(surface_dir, "land_cover.tif"))
+    land_cover = lc.astype(np.uint8) if lc is not None else None
+    wall_height = _load_geotiff_if_exists(os.path.join(surface_dir, "wall_height.tif"))
+    wall_aspect = _load_geotiff_if_exists(os.path.join(surface_dir, "wall_aspect.tif"))
+
+    pixel_size = metadata.get("pixel_size", abs(gt[1]))
+
+    surface = solweig.SurfaceData(
+        dsm=dsm,
+        cdsm=cdsm,
+        dem=dem,
+        tdsm=tdsm,
+        land_cover=land_cover,
+        pixel_size=pixel_size,
+        relative_heights=False,  # Always absolute after preprocessing
+    )
+    surface._geotransform = gt
+    surface._crs_wkt = crs_wkt
+    surface.wall_height = wall_height
+    surface.wall_aspect = wall_aspect
+
+    layers = ["dsm"]
+    if cdsm is not None:
+        layers.append("cdsm")
+    if dem is not None:
+        layers.append("dem")
+    if tdsm is not None:
+        layers.append("tdsm")
+    if land_cover is not None:
+        layers.append("land_cover")
+    if wall_height is not None:
+        layers.append("walls")
+    feedback.pushInfo(f"Loaded layers: {', '.join(layers)}")
+
+    return surface
+
+
+def _load_geotiff(path: str) -> tuple[NDArray[np.floating], list[float], str]:
+    """Load a GeoTIFF file, returning (array, geotransform, crs_wkt)."""
+    ds = gdal.Open(path, gdal.GA_ReadOnly)
+    if ds is None:
+        raise QgsProcessingException(f"Cannot open raster: {path}")
+    try:
+        band = ds.GetRasterBand(1)
+        array = band.ReadAsArray().astype(np.float32)
+        nodata = band.GetNoDataValue()
+        if nodata is not None:
+            array = np.where(array == nodata, np.nan, array)
+        geotransform = list(ds.GetGeoTransform())
+        crs_wkt = ds.GetProjection()
+        return array, geotransform, crs_wkt
+    finally:
+        ds = None
+
+
+def _load_geotiff_if_exists(path: str) -> NDArray[np.floating] | None:
+    """Load a GeoTIFF if it exists, return None otherwise."""
+    import os
+
+    if not os.path.exists(path):
+        return None
+    arr, _, _ = _load_geotiff(path)
+    return arr
 
 
 def create_location_from_parameters(
@@ -403,8 +579,8 @@ def create_human_params_from_parameters(
 
 def load_weather_from_epw(
     epw_path: str,
-    start_dt: Any,  # QDateTime or datetime
-    end_dt: Any,  # QDateTime or datetime
+    start_dt: Any | None,  # QDateTime, datetime, or None
+    end_dt: Any | None,  # QDateTime, datetime, or None
     hours_filter: str | None,
     feedback: QgsProcessingFeedback,
 ) -> list:  # Returns list[solweig.Weather]
@@ -413,8 +589,8 @@ def load_weather_from_epw(
 
     Args:
         epw_path: Path to EPW file.
-        start_dt: Start datetime (inclusive).
-        end_dt: End datetime (inclusive).
+        start_dt: Start datetime (inclusive), or None for EPW start.
+        end_dt: End datetime (inclusive), or None for EPW end.
         hours_filter: Comma-separated hours to include (e.g., "9,10,11,12").
         feedback: Processing feedback.
 
@@ -422,7 +598,7 @@ def load_weather_from_epw(
         List of solweig.Weather objects.
 
     Raises:
-        QgsProcessingException: If EPW file cannot be read.
+        QgsProcessingException: If EPW file cannot be read or dates don't overlap.
     """
     try:
         import solweig
@@ -430,11 +606,16 @@ def load_weather_from_epw(
     except ImportError as e:
         raise QgsProcessingException("SOLWEIG library not found. Please install solweig package.") from e
 
-    # Convert QDateTime to Python datetime if needed
-    if hasattr(start_dt, "toPyDateTime"):
+    # Convert QDateTime to Python naive datetime
+    if start_dt is not None and hasattr(start_dt, "toPyDateTime"):
         start_dt = start_dt.toPyDateTime()
-    if hasattr(end_dt, "toPyDateTime"):
+    if end_dt is not None and hasattr(end_dt, "toPyDateTime"):
         end_dt = end_dt.toPyDateTime()
+    # Strip timezone info to avoid aware/naive comparison errors
+    if start_dt is not None and start_dt.tzinfo is not None:
+        start_dt = start_dt.replace(tzinfo=None)
+    if end_dt is not None and end_dt.tzinfo is not None:
+        end_dt = end_dt.replace(tzinfo=None)
 
     # Parse hours filter
     hours_list = None
@@ -462,22 +643,69 @@ def load_weather_from_epw(
         f"lat={metadata.get('latitude', 'N/A')}, lon={metadata.get('longitude', 'N/A')}"
     )
 
+    # Report EPW date range
+    epw_start = df.index.min()
+    epw_end = df.index.max()
+    feedback.pushInfo(f"EPW date range: {epw_start} to {epw_end}")
+
+    # Default to full EPW range when dates not provided
+    if start_dt is None:
+        start_dt = epw_start if isinstance(epw_start, datetime) else epw_start.to_pydatetime()
+        feedback.pushInfo("No start date specified — using EPW start")
+    if end_dt is None:
+        end_dt = epw_end if isinstance(epw_end, datetime) else epw_end.to_pydatetime()
+        feedback.pushInfo("No end date specified — using EPW end")
+
     # Filter by date range
     mask = (df.index >= start_dt) & (df.index <= end_dt)
     df_filtered = df[mask]
+
+    # TMY EPW files mix years (e.g., Jan from 2015, Feb from 2009).
+    # If exact date filtering yields nothing, match by month-day-hour instead.
+    if len(df_filtered) == 0:
+        feedback.pushInfo(
+            "No exact date matches — trying month/day filter "
+            "(EPW may be a Typical Meteorological Year with mixed years)"
+        )
+        start_md = (start_dt.month, start_dt.day, start_dt.hour)
+        end_md = (end_dt.month, end_dt.day, end_dt.hour)
+
+        def _md_tuple(ts):
+            return (ts.month, ts.day, ts.hour)
+
+        if start_md <= end_md:
+            # Same-year range (e.g., Feb 1 – Feb 7)
+            mask = [start_md <= _md_tuple(t) <= end_md for t in df.index]
+        else:
+            # Cross-year range (e.g., Dec 15 – Jan 15)
+            mask = [_md_tuple(t) >= start_md or _md_tuple(t) <= end_md for t in df.index]
+
+        df_filtered = df[mask]
 
     # Filter by hours if specified
     if hours_list:
         df_filtered = df_filtered[df_filtered.index.hour.isin(hours_list)]
 
     if len(df_filtered) == 0:
-        raise QgsProcessingException(f"No timesteps found between {start_dt} and {end_dt}")
+        raise QgsProcessingException(
+            f"No timesteps found between {start_dt} and {end_dt}.\n"
+            f"The EPW file contains data from {epw_start} to {epw_end}.\n"
+            f"Please adjust the date range to overlap with the EPW data."
+        )
 
-    # Convert to Weather objects
+    # Convert to Weather objects — normalize timestamps to requested year
+    target_year = start_dt.year
     weather_series = []
     for timestamp, row in df_filtered.iterrows():
+        dt = timestamp.to_pydatetime() if hasattr(timestamp, "to_pydatetime") else timestamp
+        # Remap to target year so timestamps are contiguous
+        try:
+            dt = dt.replace(year=target_year)
+        except ValueError:
+            # Feb 29 in a non-leap target year → skip
+            continue
         w = solweig.Weather(
-            datetime=timestamp.to_pydatetime(),
+            datetime=dt,
             ta=row["temp_air"],
             rh=row["relative_humidity"],
             global_rad=row["ghi"],
@@ -486,7 +714,106 @@ def load_weather_from_epw(
         )
         weather_series.append(w)
 
+    if not weather_series:
+        raise QgsProcessingException(
+            f"No timesteps found between {start_dt} and {end_dt}.\n"
+            f"The EPW file contains data from {epw_start} to {epw_end}.\n"
+            f"Please adjust the date range to overlap with the EPW data."
+        )
+
     feedback.pushInfo(f"Loaded {len(weather_series)} timesteps from EPW")
+    feedback.pushInfo(f"Period: {weather_series[0].datetime} to {weather_series[-1].datetime}")
+
+    return weather_series
+
+
+def load_weather_from_umep_met(
+    met_path: str,
+    start_dt: Any | None,
+    end_dt: Any | None,
+    hours_filter: str | None,
+    feedback: QgsProcessingFeedback,
+) -> list:  # Returns list[solweig.Weather]
+    """
+    Load weather data from a UMEP/SUEWS meteorological forcing file.
+
+    Args:
+        met_path: Path to UMEP met file.
+        start_dt: Start datetime (inclusive), or None for full range.
+        end_dt: End datetime (inclusive), or None for full range.
+        hours_filter: Comma-separated hours to include (e.g., "9,10,11,12").
+        feedback: Processing feedback.
+
+    Returns:
+        List of solweig.Weather objects.
+
+    Raises:
+        QgsProcessingException: If file cannot be read or no data found.
+    """
+    try:
+        from solweig.models.weather import Weather
+    except ImportError as e:
+        raise QgsProcessingException("SOLWEIG library not found. Please install solweig package.") from e
+
+    if not met_path:
+        raise QgsProcessingException("No UMEP met file specified.")
+
+    feedback.pushInfo(f"Loading UMEP met file: {met_path}")
+
+    # Convert QDateTime to Python naive datetime
+    if start_dt is not None and hasattr(start_dt, "toPyDateTime"):
+        start_dt = start_dt.toPyDateTime()
+    if end_dt is not None and hasattr(end_dt, "toPyDateTime"):
+        end_dt = end_dt.toPyDateTime()
+    if start_dt is not None and start_dt.tzinfo is not None:
+        start_dt = start_dt.replace(tzinfo=None)
+    if end_dt is not None and end_dt.tzinfo is not None:
+        end_dt = end_dt.replace(tzinfo=None)
+
+    # Parse hours filter
+    hours_list = None
+    if hours_filter:
+        try:
+            hours_str = hours_filter.replace(" ", "")
+            hours_list = [int(h) for h in hours_str.split(",")]
+            feedback.pushInfo(f"Hour filter: {hours_list}")
+        except ValueError:
+            feedback.reportError(
+                f"Invalid hours filter: {hours_filter}. Using all hours.",
+                fatalError=False,
+            )
+
+    # Load via Weather.from_umep_met()
+    try:
+        weather_series = Weather.from_umep_met(
+            paths=[met_path],
+            resample_hourly=True,
+            start=start_dt,
+            end=end_dt,
+        )
+    except FileNotFoundError as e:
+        raise QgsProcessingException(f"UMEP met file not found: {e}") from e
+    except ValueError as e:
+        raise QgsProcessingException(f"Error reading UMEP met file: {e}") from e
+
+    if not weather_series:
+        raise QgsProcessingException("No valid timesteps found in UMEP met file.")
+
+    # Report date range
+    met_start = weather_series[0].datetime
+    met_end = weather_series[-1].datetime
+    feedback.pushInfo(f"UMEP met date range: {met_start} to {met_end}")
+
+    # Apply hours filter if specified
+    if hours_list:
+        weather_series = [w for w in weather_series if w.datetime.hour in hours_list]
+        if not weather_series:
+            raise QgsProcessingException(
+                f"No timesteps remaining after hour filter {hours_list}.\n"
+                f"The data contains hours from {met_start} to {met_end}."
+            )
+
+    feedback.pushInfo(f"Loaded {len(weather_series)} timesteps from UMEP met")
     feedback.pushInfo(f"Period: {weather_series[0].datetime} to {weather_series[-1].datetime}")
 
     return weather_series

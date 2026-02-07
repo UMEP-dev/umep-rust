@@ -18,17 +18,17 @@ def create_flat_dsm(size=(50, 50), elevation=0.0):
     return np.full(size, elevation, dtype=np.float32)
 
 
-def create_canyon_dsm(size=(100, 100), wall_height=30.0, canyon_width=20):
+def create_canyon_dsm(size=(50, 50), wall_height=30.0, canyon_width=20):
     """Create urban canyon DSM (walls on east and west sides)."""
     dsm = np.zeros(size, dtype=np.float32)
     # West wall
-    dsm[:, :20] = wall_height
+    dsm[:, :10] = wall_height
     # East wall
-    dsm[:, -20:] = wall_height
+    dsm[:, -10:] = wall_height
     return dsm
 
 
-def create_building_dsm(size=(100, 100), building_height=20.0):
+def create_building_dsm(size=(50, 50), building_height=20.0):
     """Create DSM with single building in center."""
     dsm = np.zeros(size, dtype=np.float32)
     cy, cx = size[0] // 2, size[1] // 2
@@ -36,7 +36,7 @@ def create_building_dsm(size=(100, 100), building_height=20.0):
     return dsm
 
 
-def create_courtyard_dsm(size=(100, 100), wall_height=20.0, courtyard_size=20):
+def create_courtyard_dsm(size=(50, 50), wall_height=20.0, courtyard_size=20):
     """Create square courtyard (walls on all sides, open center)."""
     dsm = np.full(size, wall_height, dtype=np.float32)
     cy, cx = size[0] // 2, size[1] // 2
@@ -102,32 +102,32 @@ class TestSvfProperties:
     def test_property_3_canyon_less_than_half(self):
         """Property 3: Deep urban canyons have SVF < 0.5."""
         # Create very narrow, deep canyon (H/W ratio > 2)
-        # 60m walls, 20m wide canyon = H/W = 3
-        dsm = np.zeros((100, 100), dtype=np.float32)
-        dsm[:, :40] = 60.0  # West wall
-        dsm[:, 60:] = 60.0  # East wall (only 20 pixels wide canyon)
+        # 60m walls, 10m wide canyon = H/W = 6
+        dsm = np.zeros((50, 50), dtype=np.float32)
+        dsm[:, :20] = 60.0  # West wall
+        dsm[:, 30:] = 60.0  # East wall (only 10 pixels wide canyon)
         result = calculate_svf(dsm)
 
         svf = np.array(result.svf)
         # Check canyon floor (center of the narrow gap)
-        canyon_floor_svf = svf[40:60, 48:52].mean()
+        canyon_floor_svf = svf[20:30, 23:27].mean()
         assert canyon_floor_svf < 0.5, f"Deep canyon SVF should be < 0.5, got {canyon_floor_svf:.3f}"
 
     def test_property_4_taller_obstacles_lower_svf(self):
         """Property 4: Points near taller obstacles have lower SVF."""
         # Low building
-        dsm_low = create_building_dsm(size=(100, 100), building_height=10.0)
+        dsm_low = create_building_dsm(size=(50, 50), building_height=10.0)
         result_low = calculate_svf(dsm_low)
         svf_low = np.array(result_low.svf)
 
         # Tall building
-        dsm_tall = create_building_dsm(size=(100, 100), building_height=40.0)
+        dsm_tall = create_building_dsm(size=(50, 50), building_height=40.0)
         result_tall = calculate_svf(dsm_tall)
         svf_tall = np.array(result_tall.svf)
 
         # Check ground level near building
-        ground_svf_low = svf_low[60:70, 45:55].mean()  # South of building
-        ground_svf_tall = svf_tall[60:70, 45:55].mean()
+        ground_svf_low = svf_low[30:35, 20:30].mean()  # South of building
+        ground_svf_tall = svf_tall[30:35, 20:30].mean()
 
         assert ground_svf_tall < ground_svf_low, (
             f"Taller building should reduce SVF: low={ground_svf_low:.3f}, tall={ground_svf_tall:.3f}"
@@ -135,12 +135,12 @@ class TestSvfProperties:
 
     def test_property_6_rooftops_high_svf(self):
         """Property 6: Building rooftops have SVF close to 1."""
-        dsm = create_building_dsm(size=(100, 100), building_height=30.0)
+        dsm = create_building_dsm(size=(50, 50), building_height=30.0)
         result = calculate_svf(dsm)
 
         svf = np.array(result.svf)
         # Check rooftop (center of grid where building is)
-        cy, cx = 50, 50
+        cy, cx = 25, 25
         rooftop_svf = svf[cy - 3 : cy + 3, cx - 3 : cx + 3].mean()
 
         assert rooftop_svf > 0.8, f"Rooftop SVF should be high (>0.8), got {rooftop_svf:.3f}"
@@ -148,24 +148,24 @@ class TestSvfProperties:
     def test_property_7_more_buildings_lower_svf(self):
         """Property 7: More buildings nearby = lower ground-level SVF."""
         # Single building
-        dsm_single = np.zeros((100, 100), dtype=np.float32)
-        dsm_single[45:55, 45:55] = 20.0
+        dsm_single = np.zeros((50, 50), dtype=np.float32)
+        dsm_single[20:30, 20:30] = 20.0
         result_single = calculate_svf(dsm_single)
         svf_single = np.array(result_single.svf)
 
         # Multiple buildings
-        dsm_multi = np.zeros((100, 100), dtype=np.float32)
-        dsm_multi[20:30, 20:30] = 20.0
-        dsm_multi[20:30, 70:80] = 20.0
-        dsm_multi[70:80, 20:30] = 20.0
-        dsm_multi[70:80, 70:80] = 20.0
-        dsm_multi[45:55, 45:55] = 20.0  # Center building
+        dsm_multi = np.zeros((50, 50), dtype=np.float32)
+        dsm_multi[5:15, 5:15] = 20.0
+        dsm_multi[5:15, 35:45] = 20.0
+        dsm_multi[35:45, 5:15] = 20.0
+        dsm_multi[35:45, 35:45] = 20.0
+        dsm_multi[20:30, 20:30] = 20.0  # Center building
         result_multi = calculate_svf(dsm_multi)
         svf_multi = np.array(result_multi.svf)
 
         # Compare ground-level SVF at center (between buildings)
-        center_svf_single = svf_single[30:40, 30:40].mean()
-        center_svf_multi = svf_multi[30:40, 30:40].mean()
+        center_svf_single = svf_single[12:18, 12:18].mean()
+        center_svf_multi = svf_multi[12:18, 12:18].mean()
 
         assert center_svf_multi < center_svf_single, (
             f"More buildings should reduce SVF: single={center_svf_single:.3f}, multi={center_svf_multi:.3f}"

@@ -93,8 +93,6 @@ class ProgressReporter:
         # If explicit QGIS feedback provided, use it
         if feedback is not None:
             self._qgis_feedback = feedback
-            if self.desc:
-                self._qgis_feedback.pushInfo(f"Starting: {self.desc}")
             return
 
         # Auto-detect: prefer QGIS if available in environment
@@ -129,11 +127,9 @@ class ProgressReporter:
             self._tqdm_bar.update(n)
 
     def set_description(self, desc: str) -> None:
-        """Update the progress description."""
+        """Update the progress bar description (tqdm only, no QGIS log output)."""
         self.desc = desc
-        if self._qgis_feedback is not None:
-            self._qgis_feedback.pushInfo(desc)
-        elif self._tqdm_bar is not None:
+        if self._tqdm_bar is not None:
             self._tqdm_bar.set_description(desc)
 
     def is_cancelled(self) -> bool:
