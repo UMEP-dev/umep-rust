@@ -7,6 +7,7 @@ QGIS Processing plugin for SOLWEIG (Solar and Longwave Environmental Irradiance 
 This plugin wraps SOLWEIG's Python API to provide native QGIS Processing framework integration. It enables calculation of Mean Radiant Temperature (Tmrt), UTCI, and PET thermal comfort indices directly within QGIS.
 
 **Key Features:**
+
 - Native QGIS Processing Toolbox integration
 - Model Builder and batch mode support
 - Auto-detects GDAL backend (no rasterio required in QGIS/OSGeo4W)
@@ -28,29 +29,29 @@ This plugin wraps SOLWEIG's Python API to provide native QGIS Processing framewo
 
 ### Preprocessing
 
-| Algorithm | Description |
-|-----------|-------------|
+| Algorithm                   | Description                                       |
+| --------------------------- | ------------------------------------------------- |
 | **Compute Sky View Factor** | Pre-compute SVF arrays for reuse across timesteps |
 
 ### Calculation
 
-| Algorithm | Description |
-|-----------|-------------|
-| **Calculate Tmrt (Single Timestep)** | Calculate Mean Radiant Temperature for one datetime |
-| **Calculate Tmrt (Timeseries)** | Multi-timestep calculation with thermal state accumulation |
-| **Calculate Tmrt (Large Rasters)** | Memory-efficient tiled processing for large areas |
+| Algorithm                            | Description                                                |
+| ------------------------------------ | ---------------------------------------------------------- |
+| **Calculate Tmrt (Single Timestep)** | Calculate Mean Radiant Temperature for one datetime        |
+| **Calculate Tmrt (Timeseries)**      | Multi-timestep calculation with thermal state accumulation |
+| **Calculate Tmrt (Large Rasters)**   | Memory-efficient tiled processing for large areas          |
 
 ### Post-Processing
 
-| Algorithm | Description |
-|-----------|-------------|
-| **Compute UTCI** | Universal Thermal Climate Index (fast polynomial) |
-| **Compute PET** | Physiological Equivalent Temperature (detailed model) |
+| Algorithm        | Description                                           |
+| ---------------- | ----------------------------------------------------- |
+| **Compute UTCI** | Universal Thermal Climate Index (fast polynomial)     |
+| **Compute PET**  | Physiological Equivalent Temperature (detailed model) |
 
 ### Utilities
 
-| Algorithm | Description |
-|-----------|-------------|
+| Algorithm                   | Description                                   |
+| --------------------------- | --------------------------------------------- |
 | **Import EPW Weather File** | Preview and validate EnergyPlus weather files |
 
 ## Directory Structure
@@ -288,13 +289,25 @@ The plugin auto-detects SOLWEIG in this order:
 2. System-installed (via pip)
 3. Development path (`../pysrc/solweig`)
 
-### CI/CD Automated Builds
+### CI/CD Automated Builds (Universal Plugin)
 
-The GitHub Actions workflow (`.github/workflows/build-qgis-plugin.yml`) automatically builds platform-specific ZIPs:
+The GitHub Actions workflow (`.github/workflows/build-qgis-plugin.yml`) automatically builds a **universal multi-platform plugin**:
 
-- Triggered on push to `main` or `dev` branches
-- Builds wheels for all 4 platforms using maturin
-- Creates GitHub releases on tag push (e.g., `v0.1.0`)
+**Triggers:**
+
+- Version tags (e.g., `v0.1.0`)
+- Manual workflow dispatch
+
+**Build process:**
+
+1. Builds Rust wheels for all 4 platforms (Linux, Windows, macOS Intel, macOS ARM)
+2. Extracts Python modules from one wheel (identical across platforms)
+3. Extracts platform-specific `rustalgos` binaries to `_native/<platform>/`
+4. Creates single ZIP: `solweig-qgis-{version}-universal.zip`
+
+**At runtime**, the plugin auto-detects the platform and loads the correct binary from `_native/`
+
+**Result:** One ZIP works on all platforms - no need for separate downloads per OS
 
 ## Dependencies
 
@@ -315,13 +328,13 @@ sys.path.insert(0, '/path/to/solweig/pysrc')
 
 ## Core Library Files Referenced
 
-| File | Purpose |
-|------|---------|
-| `pysrc/solweig/api.py` | Entry points: `calculate()`, `calculate_timeseries()` |
-| `pysrc/solweig/progress.py` | QgsProcessingFeedback integration |
-| `pysrc/solweig/io.py` | GDAL backend, EPW parser |
-| `pysrc/solweig/models/surface.py` | SurfaceData with height conversion |
-| `pysrc/solweig/models/weather.py` | Weather.from_epw() |
+| File                              | Purpose                                               |
+| --------------------------------- | ----------------------------------------------------- |
+| `pysrc/solweig/api.py`            | Entry points: `calculate()`, `calculate_timeseries()` |
+| `pysrc/solweig/progress.py`       | QgsProcessingFeedback integration                     |
+| `pysrc/solweig/io.py`             | GDAL backend, EPW parser                              |
+| `pysrc/solweig/models/surface.py` | SurfaceData with height conversion                    |
+| `pysrc/solweig/models/weather.py` | Weather.from_epw()                                    |
 
 ## Citation
 
