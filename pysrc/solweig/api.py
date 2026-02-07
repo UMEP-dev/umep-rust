@@ -27,6 +27,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 from .computation import calculate_core, calculate_core_fused  # noqa: F401 (calculate_core kept for direct use)
 from .errors import (
     ConfigurationError,
@@ -171,6 +173,47 @@ def validate_inputs(
         warnings.append(
             "CDSM provided with relative_heights=True but preprocess() not called. "
             "Vegetation heights may be incorrect. Call surface.preprocess() first."
+        )
+
+    # DSM height sanity checks
+    dsm_max = float(np.nanmax(surface.dsm))
+    dsm_min = float(np.nanmin(surface.dsm))
+    height_range = dsm_max - dsm_min
+
+    if height_range > 500:
+        warnings.append(
+            f"DSM height range is {height_range:.0f}m (max={dsm_max:.0f}m, min={dsm_min:.0f}m). "
+            "This exceeds typical urban areas. If your DSM contains terrain elevation, "
+            "provide a DEM to separate ground from building heights."
+        )
+
+    if surface.dem is None and dsm_min > 100:
+        warnings.append(
+            f"DSM minimum value is {dsm_min:.0f}m with no DEM provided. "
+            "If this is above-sea-level elevation, provide a DEM so SOLWEIG can "
+            "compute building heights correctly."
+        )
+
+    # CDSM/TDSM relative_heights mismatch detection
+    for grid_name, grid in [("CDSM", surface.cdsm), ("TDSM", surface.tdsm)]:
+        if grid is not None and surface.relative_heights:
+            nonzero = grid[grid > 0]
+            if nonzero.size > 0:
+                grid_min_nz = float(np.nanmin(nonzero))
+                if grid_min_nz > 50:
+                    warnings.append(
+                        f"{grid_name} minimum non-zero value is {grid_min_nz:.0f}m with "
+                        "relative_heights=True. Relative vegetation heights are typically "
+                        "0-50m. If it contains absolute elevations, set relative_heights=False."
+                    )
+
+    if surface.cdsm is not None and not surface.relative_heights and surface._looks_like_relative_heights():
+        cdsm_max = float(np.nanmax(surface.cdsm))
+        warnings.append(
+            f"CDSM values (max={cdsm_max:.1f}m) are much smaller than DSM "
+            f"(min={dsm_min:.1f}m) with relative_heights=False. "
+            "If CDSM contains height-above-ground, set relative_heights=True "
+            "and call surface.preprocess()."
         )
 
     # Validate weather if provided

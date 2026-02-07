@@ -92,6 +92,12 @@ def filter1Goodwin_as_aspect_v3(walls, scale, a, feedback=None):
             if done > last:
                 pbar.update(done - last)
                 last = done
+            # Check QGIS cancellation
+            if feedback is not None and hasattr(feedback, "isCanceled") and feedback.isCanceled():
+                runner.cancel()
+                thread.join(timeout=5.0)
+                pbar.close()
+                return np.zeros_like(walls_f32)
         if last < total:
             pbar.update(total - last)
         pbar.close()

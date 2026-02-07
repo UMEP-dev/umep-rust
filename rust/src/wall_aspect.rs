@@ -7,7 +7,7 @@
 //! - Goodwin NR, Coops NC, Tooke TR, Christen A, Voogt JA (2009)
 //! - Lindberg F., Jonsson, P. & Honjo, T. and Wästberg, D. (2015b)
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use ndarray::{Array2, ArrayView2, Zip};
@@ -135,7 +135,8 @@ pub(crate) fn compute_wall_aspect_pure(
     scale: f32,
     dsm: ArrayView2<f32>,
     progress_counter: Option<Arc<AtomicUsize>>,
-) -> Array2<f32> {
+    cancel_flag: Option<Arc<AtomicBool>>,
+) -> Result<Array2<f32>, &'static str> {
     let (rows, cols) = walls_in.dim();
 
     // Binarize walls
@@ -190,10 +191,18 @@ pub(crate) fn compute_wall_aspect_pure(
     let dsm_ref = &dsm;
     let filters_ref = &filters;
     let progress_ref = &progress_counter;
+    let cancel_ref = &cancel_flag;
 
     let results: Vec<(usize, usize, f32, f32)> = wall_pixels
         .par_iter()
         .map(|&(i, j)| {
+            // Check cancellation early (skip remaining work)
+            if let Some(ref flag) = cancel_ref {
+                if flag.load(Ordering::Relaxed) {
+                    return (i, j, 0.0, 0.0);
+                }
+            }
+
             let mut best_sum = 0.0f32;
             let mut best_side = 0.0f32;
             let mut best_dir = 0.0f32;
@@ -247,6 +256,13 @@ pub(crate) fn compute_wall_aspect_pure(
         })
         .collect();
 
+    // Check cancellation after parallel work completes
+    if let Some(ref flag) = cancel_flag {
+        if flag.load(Ordering::Relaxed) {
+            return Err("Wall aspect computation cancelled");
+        }
+    }
+
     // Scatter results into output arrays
     let mut y = Array2::<f32>::zeros((rows, cols));
     let mut x = Array2::<f32>::zeros((rows, cols));
@@ -282,7 +298,7 @@ pub(crate) fn compute_wall_aspect_pure(
         counter.store(180, Ordering::Relaxed);
     }
 
-    y
+    Ok(y)
 }
 
 /// Compute DSM aspect (orientation of slope) using numpy.gradient equivalent.
@@ -345,19 +361,22 @@ pub fn compute_wall_aspect(
     let walls_view = walls.as_array();
     let dsm_view = dsm.as_array();
 
-    let result = compute_wall_aspect_pure(walls_view, scale, dsm_view, None);
+    let result = compute_wall_aspect_pure(walls_view, scale, dsm_view, None, None)
+        .map_err(|e| pyo3::exceptions::PyInterruptedError::new_err(e))?;
     Ok(result.into_pyarray(py).unbind())
 }
 
-/// Runner that exposes a pollable progress() method for wall aspect computation.
+/// Runner that exposes pollable progress() and cancel() methods for wall aspect computation.
 ///
 /// Usage from Python:
 ///   runner = WallAspectRunner()
 ///   # launch runner.compute(...) in a thread
 ///   # poll runner.progress() from main thread (returns 0..180)
+///   # call runner.cancel() to request early termination
 #[pyclass]
 pub struct WallAspectRunner {
     progress: Arc<AtomicUsize>,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Default for WallAspectRunner {
@@ -372,6 +391,7 @@ impl WallAspectRunner {
     pub fn new() -> Self {
         Self {
             progress: Arc::new(AtomicUsize::new(0)),
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -380,7 +400,12 @@ impl WallAspectRunner {
         self.progress.load(Ordering::Relaxed)
     }
 
-    /// Compute wall aspect, releasing the GIL so progress() can be polled.
+    /// Request cancellation of the running computation.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    /// Compute wall aspect, releasing the GIL so progress()/cancel() can be called.
     pub fn compute(
         &self,
         py: Python<'_>,
@@ -388,17 +413,23 @@ impl WallAspectRunner {
         scale: f32,
         dsm: PyReadonlyArray2<f32>,
     ) -> PyResult<Py<PyArray2<f32>>> {
+        // Reset progress and cancel flag
         self.progress.store(0, Ordering::Relaxed);
+        self.cancelled.store(false, Ordering::Relaxed);
 
         // Copy to owned arrays so we can release the GIL
         let walls_owned = walls.as_array().to_owned();
         let dsm_owned = dsm.as_array().to_owned();
         let counter = Some(self.progress.clone());
+        let cancel = Some(self.cancelled.clone());
 
         let result = py.allow_threads(|| {
-            compute_wall_aspect_pure(walls_owned.view(), scale, dsm_owned.view(), counter)
+            compute_wall_aspect_pure(walls_owned.view(), scale, dsm_owned.view(), counter, cancel)
         });
 
-        Ok(result.into_pyarray(py).unbind())
+        match result {
+            Ok(arr) => Ok(arr.into_pyarray(py).unbind()),
+            Err(msg) => Err(pyo3::exceptions::PyInterruptedError::new_err(msg)),
+        }
     }
 }
