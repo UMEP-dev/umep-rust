@@ -26,9 +26,84 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 _PLUGIN_DIR = Path(__file__).parent
+
+
+def _read_required_version() -> str:
+    """
+    Read the required solweig version from metadata.txt.
+
+    The plugin version in metadata.txt is kept in sync with the solweig library
+    version by build_plugin.py, which reads pyproject.toml as the single source
+    of truth. The QGIS metadata format uses hyphens (0.1.0-beta5) while PEP 440
+    uses letters (0.1.0b5), so we normalize here.
+    """
+    import configparser
+
+    metadata_path = _PLUGIN_DIR / "metadata.txt"
+    config = configparser.ConfigParser()
+    config.read(metadata_path)
+    qgis_version = config.get("general", "version", fallback="0.0.0")
+
+    # Normalize QGIS format (0.1.0-beta5) to PEP 440 (0.1.0b5)
+    import re
+
+    normalized = re.sub(r"-?alpha", "a", qgis_version)
+    normalized = re.sub(r"-?beta", "b", normalized)
+    normalized = re.sub(r"-?rc", "rc", normalized)
+    return normalized
+
+
+_REQUIRED_SOLWEIG_VERSION = _read_required_version()
 _SOLWEIG_AVAILABLE = False
+_SOLWEIG_OUTDATED = False  # True when installed but too old
 _SOLWEIG_SOURCE = None  # "system", "development", or None
 _SOLWEIG_IMPORT_ERROR = None
+_SOLWEIG_INSTALLED_VERSION = None
+
+
+def _parse_version(version_str: str) -> tuple:
+    """
+    Parse a PEP 440 version string into a comparable tuple.
+
+    Handles release versions (0.1.0) and pre-release versions (0.1.0b5, 0.1.0a1, 0.1.0rc1).
+    Pre-release versions sort before their release (0.1.0b5 < 0.1.0).
+    """
+    import re
+
+    match = re.match(r"^(\d+(?:\.\d+)*)(?:(a|b|rc)(\d+))?", version_str)
+    if not match:
+        return (0, 0, 0, "z", 0)  # unparseable sorts high to avoid false outdated
+
+    release = tuple(int(x) for x in match.group(1).split("."))
+    pre_type = match.group(2)  # "a", "b", "rc", or None
+    pre_num = int(match.group(3)) if match.group(3) else 0
+
+    # "z" sorts after "a", "b", "rc" — so final releases are higher than pre-releases
+    pre_key = pre_type if pre_type else "z"
+    return release + (pre_key, pre_num)
+
+
+def _check_version(solweig_module) -> bool:
+    """
+    Check if the imported solweig module meets the minimum version requirement.
+
+    Sets _SOLWEIG_OUTDATED and _SOLWEIG_IMPORT_ERROR if the version is too old.
+
+    Returns:
+        True if version is acceptable, False if outdated.
+    """
+    global _SOLWEIG_OUTDATED, _SOLWEIG_IMPORT_ERROR, _SOLWEIG_INSTALLED_VERSION
+
+    installed = getattr(solweig_module, "__version__", "0.0.0")
+    _SOLWEIG_INSTALLED_VERSION = installed
+
+    if _parse_version(installed) < _parse_version(_REQUIRED_SOLWEIG_VERSION):
+        _SOLWEIG_OUTDATED = True
+        _SOLWEIG_IMPORT_ERROR = (
+            f"solweig {installed} is installed but this plugin requires >= {_REQUIRED_SOLWEIG_VERSION}"
+        )
+        return False
+    return True
 
 
 def _setup_solweig_path():
@@ -39,7 +114,7 @@ def _setup_solweig_path():
     1. System-installed solweig (via pip)
     2. Development path (for local development)
     """
-    global _SOLWEIG_AVAILABLE, _SOLWEIG_SOURCE, _SOLWEIG_IMPORT_ERROR
+    global _SOLWEIG_AVAILABLE, _SOLWEIG_OUTDATED, _SOLWEIG_SOURCE, _SOLWEIG_IMPORT_ERROR, _SOLWEIG_INSTALLED_VERSION
 
     # Already found in a previous call
     if _SOLWEIG_AVAILABLE:
@@ -49,6 +124,8 @@ def _setup_solweig_path():
     try:
         import solweig  # noqa: F401
 
+        if not _check_version(solweig):
+            return
         _SOLWEIG_AVAILABLE = True
         _SOLWEIG_SOURCE = "system"
         _SOLWEIG_IMPORT_ERROR = None
@@ -68,6 +145,8 @@ def _setup_solweig_path():
             try:
                 import solweig  # noqa: F401
 
+                if not _check_version(solweig):
+                    return
                 _SOLWEIG_AVAILABLE = True
                 _SOLWEIG_SOURCE = "development"
                 _SOLWEIG_IMPORT_ERROR = None
@@ -86,7 +165,7 @@ def _setup_solweig_path():
 
 def _install_solweig() -> tuple[bool, str]:
     """
-    Install solweig via pip in-process.
+    Install or upgrade solweig via pip in-process.
 
     Uses pip's internal API rather than subprocess because QGIS embeds Python
     and sys.executable points to the QGIS binary, not a usable Python interpreter.
@@ -106,7 +185,7 @@ def _install_solweig() -> tuple[bool, str]:
     try:
         output = io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-            exit_code = pip_main(["install", "solweig"])
+            exit_code = pip_main(["install", "--upgrade", "solweig"])
         if exit_code == 0:
             return True, "SOLWEIG installed successfully."
         return False, f"pip install failed (exit code {exit_code}):\n{output.getvalue()}"
@@ -128,6 +207,17 @@ def check_dependencies() -> tuple[bool, str]:
     if _SOLWEIG_AVAILABLE:
         return True, f"SOLWEIG library loaded ({_SOLWEIG_SOURCE})"
 
+    if _SOLWEIG_OUTDATED:
+        msg = (
+            f"SOLWEIG {_SOLWEIG_INSTALLED_VERSION} is installed but this plugin "
+            f"requires >= {_REQUIRED_SOLWEIG_VERSION}.\n\n"
+            "To upgrade manually:\n\n"
+            "  In OSGeo4W Shell (Windows) or Terminal (macOS/Linux):\n"
+            "  pip install --upgrade solweig\n\n"
+            "After upgrading, restart QGIS."
+        )
+        return False, msg
+
     error_hint = f"\nLast import error: {_SOLWEIG_IMPORT_ERROR}\n" if _SOLWEIG_IMPORT_ERROR else ""
 
     msg = f"""SOLWEIG library not found.{error_hint}
@@ -143,8 +233,8 @@ After installation, restart QGIS and re-enable the plugin.
 
 
 def _prompt_install():
-    """Offer to auto-install solweig if it's missing."""
-    global _SOLWEIG_AVAILABLE, _SOLWEIG_SOURCE, _SOLWEIG_IMPORT_ERROR
+    """Offer to auto-install or upgrade solweig if it's missing or outdated."""
+    global _SOLWEIG_AVAILABLE, _SOLWEIG_OUTDATED, _SOLWEIG_SOURCE, _SOLWEIG_IMPORT_ERROR, _SOLWEIG_INSTALLED_VERSION
 
     success, message = check_dependencies()
     if success:
@@ -153,24 +243,40 @@ def _prompt_install():
     try:
         from qgis.PyQt.QtWidgets import QMessageBox
 
+        if _SOLWEIG_OUTDATED:
+            title = "SOLWEIG Plugin - Update Required"
+            prompt = (
+                f"SOLWEIG {_SOLWEIG_INSTALLED_VERSION} is installed but this plugin "
+                f"requires >= {_REQUIRED_SOLWEIG_VERSION}.\n\n"
+                "Would you like to upgrade now?\n\n"
+                "This will run:  pip install --upgrade solweig"
+            )
+            decline_msg = (
+                "SOLWEIG was not upgraded. You can upgrade manually:\n\n"
+                "  pip install --upgrade solweig\n\n"
+                "Then restart QGIS."
+            )
+        else:
+            title = "SOLWEIG Plugin - Install Dependencies"
+            prompt = (
+                "The SOLWEIG library is required but not installed.\n\n"
+                "Would you like to install it now?\n\n"
+                "This will run:  pip install solweig"
+            )
+            decline_msg = (
+                "SOLWEIG was not installed. You can install it manually:\n\n  pip install solweig\n\nThen restart QGIS."
+            )
+
         reply = QMessageBox.question(
             None,
-            "SOLWEIG Plugin - Install Dependencies",
-            "The SOLWEIG library is required but not installed.\n\n"
-            "Would you like to install it now?\n\n"
-            "This will run:  pip install solweig",
+            title,
+            prompt,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes,
         )
 
         if reply != QMessageBox.Yes:
-            QMessageBox.information(
-                None,
-                "SOLWEIG Plugin",
-                "SOLWEIG was not installed. You can install it manually:\n\n"
-                "  pip install solweig\n\n"
-                "Then restart QGIS.",
-            )
+            QMessageBox.information(None, "SOLWEIG Plugin", decline_msg)
             return
 
         # Show a wait cursor while installing
@@ -184,7 +290,18 @@ def _prompt_install():
             QApplication.restoreOverrideCursor()
 
         if ok:
-            # Try importing now that it's installed
+            # Reset state so _setup_solweig_path() can re-check
+            _SOLWEIG_AVAILABLE = False
+            _SOLWEIG_OUTDATED = False
+            _SOLWEIG_IMPORT_ERROR = None
+            _SOLWEIG_INSTALLED_VERSION = None
+
+            # Reload the module if it was already imported (upgrade case)
+            if "solweig" in sys.modules:
+                import importlib
+
+                importlib.reload(sys.modules["solweig"])
+
             _setup_solweig_path()
             if _SOLWEIG_AVAILABLE:
                 QMessageBox.information(
@@ -254,7 +371,7 @@ class SolweigPlugin:
 
     def initGui(self):
         """Initialize the plugin GUI (called when plugin is activated)."""
-        if not _SOLWEIG_AVAILABLE:
+        if not _SOLWEIG_AVAILABLE or _SOLWEIG_OUTDATED:
             _prompt_install()
 
         self.initProcessing()
