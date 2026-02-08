@@ -57,6 +57,10 @@ def stamp_metadata_version(version: str):
     METADATA_PATH.write_text(new_text)
     print(f"  Stamped metadata.txt version={qgis_version}")
 
+    # Warn if changelog doesn't mention this version
+    if qgis_version not in new_text.split("changelog=")[-1]:
+        print(f"  WARNING: changelog in metadata.txt has no entry for {qgis_version}")
+
 
 def copy_license():
     """Copy LICENSE from project root into the plugin directory (required by QGIS repo)."""

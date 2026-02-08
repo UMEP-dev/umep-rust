@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta5
+version=0.1.0-beta7
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,6 +42,11 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta7
+    - Publish workflow gates on passing tests before building wheels
+    0.1.0-beta6
+    - Auto-detect outdated solweig library and prompt to upgrade
+    - Plugin version synced automatically from pyproject.toml
     0.1.0-beta5
     - Fixed CI: simplified QGIS plugin build workflow (removed stale --universal flag)
     - CI: tags no longer trigger redundant test/docs workflows

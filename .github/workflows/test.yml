@@ -11,6 +11,7 @@ on:
     branches:
       - main
       - dev
+  workflow_call: # Allow publish workflow to call this as a dependency
 
 # Cancel in-progress runs for the same branch/PR
 concurrency:

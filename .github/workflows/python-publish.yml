@@ -6,21 +6,11 @@ on:
 permissions:
   contents: read
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Install uv
-        uses: astral-sh/setup-uv@v3
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+  test:
+    uses: ./.github/workflows/test.yml
   linux:
     runs-on: ${{ matrix.platform.runner }}
-    needs: check
+    needs: test
     strategy:
       matrix:
         platform:
@@ -47,7 +37,7 @@ jobs:
           path: dist
   musllinux:
     runs-on: ${{ matrix.platform.runner }}
-    needs: check
+    needs: test
     strategy:
       matrix:
         platform:
@@ -74,7 +64,7 @@ jobs:
           path: dist
   windows:
     runs-on: ${{ matrix.platform.runner }}
-    needs: check
+    needs: test
     strategy:
       matrix:
         platform:
@@ -99,7 +89,7 @@ jobs:
           path: dist
   macos:
     runs-on: ${{ matrix.platform.runner }}
-    needs: check
+    needs: test
     strategy:
       matrix:
         platform:
@@ -125,7 +115,7 @@ jobs:
           path: dist
   sdist:
     runs-on: ubuntu-latest
-    needs: check
+    needs: test
     steps:
       - uses: actions/checkout@v4
       - name: Build sdist
