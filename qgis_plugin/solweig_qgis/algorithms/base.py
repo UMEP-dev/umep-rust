@@ -65,7 +65,7 @@ class SolweigAlgorithmBase(QgsProcessingAlgorithm):
 
     def import_solweig(self):
         """
-        Import the solweig library with plugin-aware path setup.
+        Import the solweig library.
 
         Returns:
             The imported solweig module.
@@ -74,9 +74,8 @@ class SolweigAlgorithmBase(QgsProcessingAlgorithm):
             QgsProcessingException: If solweig cannot be imported.
         """
         try:
-            from .. import _setup_solweig_path, check_dependencies
+            from .. import check_dependencies
 
-            _setup_solweig_path()
             success, message = check_dependencies()
             if not success:
                 raise QgsProcessingException(message)
@@ -87,9 +86,7 @@ class SolweigAlgorithmBase(QgsProcessingAlgorithm):
         except QgsProcessingException:
             raise
         except Exception as e:
-            raise QgsProcessingException(
-                "SOLWEIG library not found. Please ensure the solweig package is installed or bundled with the plugin."
-            ) from e
+            raise QgsProcessingException("SOLWEIG library not found. Install it with:  pip install solweig") from e
 
     # -------------------------------------------------------------------------
     # Raster Loading

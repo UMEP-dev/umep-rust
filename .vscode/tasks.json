@@ -2,60 +2,18 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "QGIS: Build & Install",
+      "label": "QGIS: Dev Setup",
       "type": "shell",
-      "command": "uv run python build_plugin.py && ln -sfn ${workspaceFolder}/qgis_plugin/solweig_qgis ~/Library/Application\\ Support/QGIS/QGIS3/profiles/default/python/plugins/solweig_qgis",
-      "options": {
-        "cwd": "${workspaceFolder}/qgis_plugin"
-      },
+      "command": "ln -sfn ${workspaceFolder}/qgis_plugin/solweig_qgis ~/Library/Application\\ Support/QGIS/QGIS3/profiles/default/python/plugins/solweig_qgis",
       "problemMatcher": [],
-      "detail": "Build Intel plugin bundle + symlink to QGIS plugins folder",
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      }
+      "detail": "Symlink plugin into QGIS plugins folder. Restart QGIS after."
     },
     {
-      "label": "Build: Rust Extension (dev)",
+      "label": "QGIS: Package ZIP",
       "type": "shell",
-      "command": "uv run maturin develop --release",
+      "command": "uv run python qgis_plugin/build_plugin.py",
       "problemMatcher": [],
-      "detail": "Build Rust extension for local Python (tests, demos)"
-    },
-    {
-      "label": "Build: All Wheels (4 platforms)",
-      "type": "shell",
-      "command": "uv run maturin build --release --out dist --target x86_64-apple-darwin && uv run maturin build --release --out dist --target aarch64-apple-darwin",
-      "problemMatcher": [],
-      "detail": "Build macOS Intel + ARM64 wheels (Linux/Windows need CI)"
-    },
-    {
-      "label": "QGIS: Universal Package",
-      "type": "shell",
-      "command": "uv run python build_plugin.py --universal",
-      "options": {
-        "cwd": "${workspaceFolder}/qgis_plugin"
-      },
-      "problemMatcher": [],
-      "detail": "Create universal ZIP from all wheels in dist/"
-    },
-    {
-      "label": "Test: All",
-      "type": "shell",
-      "command": "uv run pytest tests/ -x -q",
-      "problemMatcher": [],
-      "detail": "Run full test suite",
-      "group": {
-        "kind": "test",
-        "isDefault": true
-      }
-    },
-    {
-      "label": "Verify: Full Project",
-      "type": "shell",
-      "command": "uv run poe verify_project",
-      "problemMatcher": [],
-      "detail": "Format, lint, typecheck, and test"
+      "detail": "Create distributable ZIP for QGIS Plugin Repository"
     }
   ]
 }

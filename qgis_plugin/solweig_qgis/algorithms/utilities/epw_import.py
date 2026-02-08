@@ -178,7 +178,7 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis."""
 
         # Import solweig
         self.import_solweig()
-        from solweig.io import download_epw, read_epw
+        from solweig.io import read_epw
 
         # Get parameters
         latitude = self.parameterAsDouble(parameters, "LATITUDE", context)
@@ -188,18 +188,49 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis."""
         if not output_path:
             output_path = str(Path(tempfile.gettempdir()) / f"pvgis_{latitude:.2f}_{longitude:.2f}.epw")
 
+        if not -90 <= latitude <= 90:
+            raise QgsProcessingException(f"Latitude must be between -90 and 90, got {latitude}")
+        if not -180 <= longitude <= 180:
+            raise QgsProcessingException(f"Longitude must be between -180 and 180, got {longitude}")
+
         feedback.pushInfo(f"Location: {latitude:.4f}N, {longitude:.4f}E")
         feedback.pushInfo(f"Output: {output_path}")
         feedback.pushInfo("")
         feedback.setProgressText("Downloading from PVGIS...")
         feedback.setProgress(10)
 
-        try:
-            download_epw(latitude, longitude, output_path)
-        except ConnectionError as e:
-            raise QgsProcessingException(f"Cannot reach PVGIS server. Check your internet connection.\n{e}") from e
-        except RuntimeError as e:
-            raise QgsProcessingException(str(e)) from e
+        # Use QgsNetworkAccessManager instead of urllib to respect QGIS proxy settings
+        from qgis.core import QgsNetworkAccessManager
+        from qgis.PyQt.QtCore import QUrl
+        from qgis.PyQt.QtNetwork import QNetworkRequest
+
+        url = f"https://re.jrc.ec.europa.eu/api/v5_3/tmy?lat={latitude}&lon={longitude}&outputformat=epw"
+        request = QNetworkRequest(QUrl(url))
+        reply = QgsNetworkAccessManager.instance().blockingGet(request)
+
+        # Check for network errors
+        error_code = reply.error()
+        if error_code != 0:
+            error_msg = reply.errorString()
+            raise QgsProcessingException(f"Cannot reach PVGIS server. Check your internet connection.\n{error_msg}")
+
+        http_status = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
+        data = bytes(reply.content())
+
+        if http_status == 400:
+            raise QgsProcessingException(
+                f"PVGIS has no data for ({latitude}, {longitude}). The location may be over ocean or outside coverage."
+            )
+        if http_status and http_status != 200:
+            raise QgsProcessingException(f"PVGIS download failed (HTTP {http_status})")
+
+        if len(data) < 1000:
+            text = data.decode("utf-8", errors="replace")
+            raise QgsProcessingException(f"PVGIS returned an error: {text.strip()}")
+
+        output = Path(output_path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(data)
 
         feedback.setProgress(60)
         feedback.pushInfo(f"Downloaded EPW file: {output_path}")

@@ -212,3 +212,4 @@ qgis_plugin/*.zip
 qgis_plugin/build/
 qgis_plugin/dist/
 qgis_plugin/solweig_qgis/_bundled/
+qgis_plugin/solweig_qgis/_native/
