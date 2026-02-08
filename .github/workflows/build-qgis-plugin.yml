@@ -12,58 +12,8 @@ on:
         default: "0.1.0"
 
 jobs:
-  build-wheels:
-    name: Build wheels on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # Linux x86_64 (manylinux for broad compatibility)
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            platform_tag: linux_x86_64
-            manylinux: "2_17"
-          # Windows x86_64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            platform_tag: windows_x86_64
-          # macOS x86_64 (Intel)
-          - os: macos-15-intel # Intel x86_64
-            target: x86_64-apple-darwin
-            platform_tag: macos_x86_64
-          # macOS ARM64 (Apple Silicon)
-          - os: macos-14
-            target: aarch64-apple-darwin
-            platform_tag: macos_aarch64
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      # Use official maturin-action for building wheels
-      # See: https://github.com/PyO3/maturin-action
-      - name: Build wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          args: --release --out dist
-          manylinux: ${{ matrix.manylinux || 'auto' }}
-          sccache: "true"
-
-      - name: Upload wheel
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheel-${{ matrix.platform_tag }}
-          path: dist/*.whl
-
   build-plugin:
-    name: Build Universal QGIS Plugin
-    needs: build-wheels
+    name: Build QGIS Plugin
     runs-on: ubuntu-latest
 
     steps:
@@ -73,16 +23,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Download all wheels
-        uses: actions/download-artifact@v4
-        with:
-          path: dist/
-          pattern: wheel-*
-          merge-multiple: true
-
-      - name: List downloaded wheels
-        run: ls -lh dist/
 
       - name: Get version
         id: version
@@ -94,51 +34,47 @@ jobs:
             echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build universal plugin package
-        run: python qgis_plugin/build_plugin.py --universal --version ${{ steps.version.outputs.version }}
+      - name: Build plugin package
+        run: python qgis_plugin/build_plugin.py --version ${{ steps.version.outputs.version }}
 
-      - name: Validate bundle structure
+      - name: Validate plugin ZIP
         run: |
           cd qgis_plugin
-          ZIP=$(ls solweig-qgis-*-universal.zip | head -1)
+          ZIP=$(ls solweig-qgis-*.zip | head -1)
           echo "Validating $ZIP..."
           unzip -l "$ZIP" | tee /tmp/bundle_contents.txt
 
-          # Check _native/ has platform binaries
-          for platform in linux_x86_64 windows_x86_64 darwin_x86_64 darwin_arm64; do
-            if grep -q "_native/$platform/rustalgos" /tmp/bundle_contents.txt; then
-              echo "  OK: $platform binary found"
+          # Check essential files exist
+          for file in metadata.txt __init__.py provider.py icon.png; do
+            if grep -q "solweig_qgis/$file" /tmp/bundle_contents.txt; then
+              echo "  OK: $file found"
             else
-              echo "  MISSING: $platform binary"
+              echo "  MISSING: $file"
+              exit 1
             fi
           done
 
-          # Check _bundled/solweig/ has NO .so/.pyd files
-          if grep -qE "_bundled/solweig/rustalgos\.(abi3\.)?so" /tmp/bundle_contents.txt || \
-             grep -qE "_bundled/solweig/rustalgos\.(abi3\.)?pyd" /tmp/bundle_contents.txt; then
-            echo "ERROR: Found binary in _bundled/ (should be in _native/ only)"
-            exit 1
-          fi
+          echo "Plugin validation passed."
 
-          echo "Bundle validation passed."
-
-      - name: Upload universal plugin package
+      - name: Upload plugin package
         uses: actions/upload-artifact@v4
         with:
-          name: plugin-universal
-          path: qgis_plugin/solweig-qgis-*-universal.zip
+          name: qgis-plugin
+          path: qgis_plugin/solweig-qgis-*.zip
 
   create-release:
     name: Create Release
     needs: build-plugin
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
 
     steps:
-      - name: Download universal plugin
+      - name: Download plugin
         uses: actions/download-artifact@v4
         with:
-          name: plugin-universal
+          name: qgis-plugin
           path: artifacts/
 
       - name: Create Release
