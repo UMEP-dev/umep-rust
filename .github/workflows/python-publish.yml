@@ -146,9 +146,9 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: "wheels-*/*"
+      - name: Merge wheels into dist/
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        run: mkdir -p dist && cp wheels-*/* dist/
       - name: Publish to PyPI
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
-        uses: PyO3/maturin-action@v1
-        with:
-          command: upload
-          args: --non-interactive --skip-existing wheels-*/*
+        uses: pypa/gh-action-pypi-publish@release/v1
