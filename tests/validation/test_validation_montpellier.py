@@ -434,7 +434,9 @@ class TestTmrtValidation:
         from solweig import SurfaceData
 
         dsm = build_canyon_dsm()
-        return SurfaceData(dsm=dsm, pixel_size=RESOLUTION)
+        surface = SurfaceData(dsm=dsm, pixel_size=RESOLUTION)
+        surface.compute_svf()
+        return surface
 
     @pytest.fixture
     def location(self):
@@ -727,7 +729,9 @@ class TestSkyModelComparison:
         from solweig import SurfaceData
 
         dsm = build_canyon_dsm()
-        return SurfaceData(dsm=dsm, pixel_size=RESOLUTION)
+        surface = SurfaceData(dsm=dsm, pixel_size=RESOLUTION)
+        surface.compute_svf()
+        return surface
 
     @pytest.fixture
     def location(self):
