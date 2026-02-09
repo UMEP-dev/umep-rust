@@ -2,132 +2,16 @@ from __future__ import annotations
 
 import logging
 import math
-import os
-import sys
 from pathlib import Path
 
 import numpy as np
 
+from ._compat import GDAL_ENV
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-def _detect_osgeo_environment() -> bool:
-    """
-    Detect if we're running in an OSGeo4W or QGIS environment.
-
-    These environments have their own GDAL installation and pip-installed
-    rasterio will cause DLL conflicts on Windows.
-    """
-    # Check for QGIS
-    if "qgis" in sys.modules or "qgis.core" in sys.modules:
-        return True
-
-    # Check for QGIS environment variables
-    if any(key in os.environ for key in ("QGIS_PREFIX_PATH", "QGIS_DEBUG")):
-        return True
-
-    # Check for OSGeo4W environment
-    if "OSGEO4W_ROOT" in os.environ:
-        return True
-
-    # Check if Python executable is inside OSGeo4W or QGIS directory (Windows)
-    exe_path = sys.executable.lower()
-    return any(marker in exe_path for marker in ("osgeo4w", "qgis"))
-
-
-def _try_import_gdal() -> bool:
-    """Try to import GDAL and return True if successful."""
-    try:
-        from osgeo import gdal, osr  # noqa: F401
-
-        return True
-    except (ImportError, OSError) as e:
-        logger.debug(f"GDAL import failed: {e}")
-        return False
-
-
-def _try_import_rasterio() -> bool:
-    """
-    Try to import rasterio and return True if successful.
-
-    This catches both ImportError and OSError (DLL load failures).
-    """
-    try:
-        import pyproj  # noqa: F401
-        import rasterio  # noqa: F401
-        from rasterio.features import rasterize  # noqa: F401
-        from rasterio.mask import mask  # noqa: F401
-        from rasterio.transform import Affine, from_origin  # noqa: F401
-        from rasterio.windows import Window  # noqa: F401
-        from shapely import geometry  # noqa: F401
-
-        return True
-    except (ImportError, OSError) as e:
-        logger.debug(f"Rasterio import failed: {e}")
-        return False
-
-
-def _setup_geospatial_backend() -> bool:
-    """
-    Set up the geospatial backend (rasterio or GDAL).
-
-    Returns GDAL_ENV: True if using GDAL, False if using rasterio.
-
-    Priority:
-    1. UMEP_USE_GDAL=1 environment variable forces GDAL
-    2. In OSGeo4W/QGIS environments: prefer GDAL (avoids DLL conflicts)
-    3. Otherwise: try rasterio first, fall back to GDAL
-    """
-    # Allow forcing GDAL via environment variable
-    if os.environ.get("UMEP_USE_GDAL", "").lower() in ("1", "true", "yes"):
-        if _try_import_gdal():
-            logger.info("Using GDAL for raster operations (forced via UMEP_USE_GDAL).")
-            return True
-        else:
-            raise ImportError(
-                "UMEP_USE_GDAL is set but GDAL could not be imported. Install GDAL or unset UMEP_USE_GDAL."
-            )
-
-    # In OSGeo4W/QGIS: prefer GDAL to avoid DLL conflicts
-    in_osgeo = _detect_osgeo_environment()
-    if in_osgeo:
-        logger.debug("Detected OSGeo4W/QGIS environment, preferring GDAL backend.")
-        if _try_import_gdal():
-            logger.info("Using GDAL for raster operations (OSGeo4W/QGIS environment).")
-            return True
-        # GDAL should always be available in OSGeo4W/QGIS, but fall back just in case
-        logger.warning("GDAL import failed in OSGeo4W/QGIS environment, trying rasterio...")
-        if _try_import_rasterio():
-            logger.info("Using rasterio for raster operations.")
-            return False
-        raise ImportError(
-            "Failed to import both GDAL and rasterio in OSGeo4W/QGIS environment.\n"
-            "This is unexpected - GDAL should be available. Check your installation."
-        )
-
-    # Standard environment: prefer rasterio, fall back to GDAL
-    if _try_import_rasterio():
-        logger.info("Using rasterio for raster operations.")
-        return False
-
-    logger.warning("Rasterio import failed, trying GDAL...")
-    if _try_import_gdal():
-        logger.info("Using GDAL for raster operations.")
-        return True
-
-    # Neither worked
-    raise ImportError(
-        "Neither rasterio nor GDAL could be imported.\n"
-        "Install with: pip install rasterio\n"
-        "Or for QGIS/OSGeo4W environments, ensure GDAL is properly configured."
-    )
-
-
-# Determine which backend to use
-GDAL_ENV = _setup_geospatial_backend()
-
-# Now do the actual imports based on the backend
+# Conditional imports based on the backend chosen in _compat
 if GDAL_ENV:
     from osgeo import gdal
 else:

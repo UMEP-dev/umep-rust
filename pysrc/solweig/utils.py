@@ -8,43 +8,19 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ._compat import GDAL_AVAILABLE, RASTERIO_AVAILABLE
+
 if TYPE_CHECKING:
     from affine import Affine
     from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Geospatial Backend Detection
-# =============================================================================
-
-# Detect available geospatial backends (rasterio preferred, GDAL as fallback)
-_RASTERIO_AVAILABLE = False
-_GDAL_AVAILABLE = False
-
-try:
-    import rasterio  # noqa: F401
+if RASTERIO_AVAILABLE:
     from rasterio.transform import array_bounds, from_bounds  # noqa: F401
     from rasterio.warp import Resampling, reproject  # noqa: F401
-
-    _RASTERIO_AVAILABLE = True
-except ImportError:
-    pass
-
-if not _RASTERIO_AVAILABLE:
-    try:
-        from osgeo import gdal, gdalconst  # noqa: F401
-
-        _GDAL_AVAILABLE = True
-        logger.debug("Using GDAL backend for geometric utilities (rasterio not available)")
-    except ImportError:
-        pass
-
-if not _RASTERIO_AVAILABLE and not _GDAL_AVAILABLE:
-    logger.warning(
-        "Neither rasterio nor GDAL available. Raster alignment operations will fail. "
-        "Install rasterio (pip install rasterio) or run in OSGeo4W/QGIS environment."
-    )
+elif GDAL_AVAILABLE:
+    from osgeo import gdal, gdalconst  # noqa: F401
 
 
 # =============================================================================
@@ -112,7 +88,7 @@ def extract_bounds(transform: list[float] | Affine, shape: tuple[int, ...]) -> l
     """
     rows, cols = shape
 
-    if _RASTERIO_AVAILABLE:
+    if RASTERIO_AVAILABLE:
         from affine import Affine as AffineClass
         from rasterio.transform import array_bounds
 
@@ -124,7 +100,7 @@ def extract_bounds(transform: list[float] | Affine, shape: tuple[int, ...]) -> l
         # array_bounds returns (left, bottom, right, top)
         return [bounds[0], bounds[1], bounds[2], bounds[3]]
 
-    elif _GDAL_AVAILABLE:
+    elif GDAL_AVAILABLE:
         # GDAL geotransform: [x_origin, x_pixel_size, x_rotation, y_origin, y_rotation, y_pixel_size]
         # Convert Affine to GDAL list if needed (Affine has .to_gdal() method)
         gt = transform if isinstance(transform, list) else list(transform.to_gdal())
@@ -218,7 +194,7 @@ def resample_to_grid(
     width = int(np.round((maxx - minx) / target_pixel_size))
     height = int(np.round((maxy - miny) / target_pixel_size))
 
-    if _RASTERIO_AVAILABLE:
+    if RASTERIO_AVAILABLE:
         from rasterio.transform import from_bounds
         from rasterio.warp import Resampling, reproject
 
@@ -248,7 +224,7 @@ def resample_to_grid(
 
         return destination, target_transform
 
-    elif _GDAL_AVAILABLE:
+    elif GDAL_AVAILABLE:
         from osgeo import gdal, gdalconst
 
         # Convert Affine to GDAL geotransform if needed (Affine has .to_gdal() method)
