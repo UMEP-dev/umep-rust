@@ -94,15 +94,49 @@ def _check_version(solweig_module) -> bool:
     """
     global _SOLWEIG_OUTDATED, _SOLWEIG_IMPORT_ERROR, _SOLWEIG_INSTALLED_VERSION
 
-    installed = getattr(solweig_module, "__version__", "0.0.0")
+    installed = getattr(solweig_module, "__version__", None) or "0.0.0"
     _SOLWEIG_INSTALLED_VERSION = installed
 
-    if _parse_version(installed) < _parse_version(_REQUIRED_SOLWEIG_VERSION):
+    # Version check (prefer robust PEP 440 parsing when available)
+    try:
+        from packaging.version import Version
+
+        if Version(installed) < Version(_REQUIRED_SOLWEIG_VERSION):
+            _SOLWEIG_OUTDATED = True
+            _SOLWEIG_IMPORT_ERROR = (
+                f"solweig {installed} is installed but this plugin requires >= {_REQUIRED_SOLWEIG_VERSION}"
+            )
+            return False
+    except Exception:
+        # Fallback for minimal environments (should be rare)
+        if _parse_version(installed) < _parse_version(_REQUIRED_SOLWEIG_VERSION):
+            _SOLWEIG_OUTDATED = True
+            _SOLWEIG_IMPORT_ERROR = (
+                f"solweig {installed} is installed but this plugin requires >= {_REQUIRED_SOLWEIG_VERSION}"
+            )
+            return False
+
+    # Feature check: ensure the imported SurfaceData supports the API used by this plugin.
+    # This guards against environments where a different/old `solweig` package is importable
+    # (or where version strings are missing/non-standard).
+    missing: list[str] = []
+    surface_cls = getattr(solweig_module, "SurfaceData", None)
+    if surface_cls is None:
+        missing.append("SurfaceData")
+    else:
+        for method_name in ("preprocess", "fill_nan", "compute_valid_mask", "apply_valid_mask", "crop_to_valid_bbox"):
+            if not hasattr(surface_cls, method_name):
+                missing.append(f"SurfaceData.{method_name}()")
+
+    if missing:
         _SOLWEIG_OUTDATED = True
         _SOLWEIG_IMPORT_ERROR = (
-            f"solweig {installed} is installed but this plugin requires >= {_REQUIRED_SOLWEIG_VERSION}"
+            "The imported solweig package is missing required APIs: "
+            + ", ".join(missing)
+            + f". Please upgrade solweig to >= {_REQUIRED_SOLWEIG_VERSION} and restart QGIS."
         )
         return False
+
     return True
 
 
@@ -120,41 +154,68 @@ def _setup_solweig_path():
     if _SOLWEIG_AVAILABLE:
         return
 
-    # Option 1: Try system-installed solweig
-    try:
-        import solweig  # noqa: F401
+    def _try_import_system() -> bool:
+        global _SOLWEIG_AVAILABLE, _SOLWEIG_SOURCE, _SOLWEIG_IMPORT_ERROR
+        try:
+            import solweig  # noqa: F401
 
-        if not _check_version(solweig):
-            return
-        _SOLWEIG_AVAILABLE = True
-        _SOLWEIG_SOURCE = "system"
-        _SOLWEIG_IMPORT_ERROR = None
-        return
-    except ImportError:
-        pass
+            if not _check_version(solweig):
+                return False
+            _SOLWEIG_AVAILABLE = True
+            _SOLWEIG_SOURCE = "system"
+            _SOLWEIG_IMPORT_ERROR = None
+            return True
+        except ImportError:
+            return False
 
-    # Option 2: Development mode - look for pysrc in parent directories
+    def _try_import_dev(dev_path: Path) -> bool:
+        global _SOLWEIG_AVAILABLE, _SOLWEIG_SOURCE, _SOLWEIG_IMPORT_ERROR
+        if not (dev_path.exists() and (dev_path / "solweig").exists()):
+            return False
+        inserted = False
+        if str(dev_path) not in sys.path:
+            sys.path.insert(0, str(dev_path))
+            inserted = True
+        try:
+            import solweig  # noqa: F401
+
+            if not _check_version(solweig):
+                return False
+            _SOLWEIG_AVAILABLE = True
+            _SOLWEIG_SOURCE = "development"
+            _SOLWEIG_IMPORT_ERROR = None
+            return True
+        except ImportError:
+            _SOLWEIG_IMPORT_ERROR = "development import failed"
+            return False
+        finally:
+            # If dev import didn't succeed, keep sys.path clean.
+            if not _SOLWEIG_AVAILABLE and inserted and str(dev_path) in sys.path:
+                sys.path.remove(str(dev_path))
+
+    # Development mode - look for pysrc in parent directories
     dev_paths = [
-        _PLUGIN_DIR.parent.parent / "pysrc",  # qgis_plugin/solweig -> pysrc
+        _PLUGIN_DIR.parent.parent / "pysrc",  # repo_root/pysrc
         _PLUGIN_DIR.parent.parent.parent / "pysrc",  # One more level up
     ]
-    for dev_path in dev_paths:
-        if dev_path.exists() and (dev_path / "solweig").exists():
-            if str(dev_path) not in sys.path:
-                sys.path.insert(0, str(dev_path))
-            try:
-                import solweig  # noqa: F401
 
-                if not _check_version(solweig):
-                    return
-                _SOLWEIG_AVAILABLE = True
-                _SOLWEIG_SOURCE = "development"
-                _SOLWEIG_IMPORT_ERROR = None
+    # If we're running from a repository checkout (symlinked plugin), prefer local pysrc
+    # to avoid accidentally using an older system-installed solweig.
+    repo_root = _PLUGIN_DIR.parent.parent
+    prefer_dev = (repo_root / "pyproject.toml").exists() and (repo_root / "pysrc" / "solweig").exists()
+
+    if prefer_dev:
+        for dev_path in dev_paths:
+            if _try_import_dev(dev_path):
                 return
-            except ImportError:
-                _SOLWEIG_IMPORT_ERROR = "development import failed"
-                if str(dev_path) in sys.path:
-                    sys.path.remove(str(dev_path))
+        if _try_import_system():
+            return
+    else:
+        if _try_import_system():
+            return
+        for dev_path in dev_paths:
+            if _try_import_dev(dev_path):
+                return
 
     # No solweig found
     _SOLWEIG_AVAILABLE = False
