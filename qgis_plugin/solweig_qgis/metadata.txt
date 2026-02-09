@@ -42,6 +42,9 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta8
+    - Fix plugin not appearing in Processing Toolbox when solweig library is missing
+    - Defer install prompt so it no longer blocks provider registration
     0.1.0-beta7
     - Publish workflow gates on passing tests before building wheels
     0.1.0-beta6

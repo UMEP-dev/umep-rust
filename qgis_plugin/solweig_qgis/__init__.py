@@ -371,10 +371,19 @@ class SolweigPlugin:
 
     def initGui(self):
         """Initialize the plugin GUI (called when plugin is activated)."""
-        if not _SOLWEIG_AVAILABLE or _SOLWEIG_OUTDATED:
-            _prompt_install()
-
+        # Register the Processing provider first — unconditionally — so
+        # SOLWEIG always appears in the Processing Toolbox even when the
+        # library isn't installed yet.  Showing a QMessageBox during
+        # initGui() can fail or block on some platforms (especially macOS),
+        # which would prevent initProcessing() from ever being called.
         self.initProcessing()
+
+        if not _SOLWEIG_AVAILABLE or _SOLWEIG_OUTDATED:
+            # Defer the install prompt to after the event loop starts,
+            # so it doesn't block plugin registration.
+            from qgis.PyQt.QtCore import QTimer
+
+            QTimer.singleShot(500, _prompt_install)
 
     def unload(self):
         """Unload the plugin (called when plugin is deactivated)."""
