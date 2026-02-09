@@ -187,6 +187,7 @@ class SurfaceData:
     relative_heights: bool = True  # Whether CDSM/TDSM are relative (not absolute)
 
     # Internal state
+    _nan_filled: bool = field(default=False, init=False, repr=False)
     _preprocessed: bool = field(default=False, init=False, repr=False)
     _geotransform: list[float] | None = field(default=None, init=False, repr=False)  # GDAL geotransform
     _crs_wkt: str | None = field(default=None, init=False, repr=False)  # CRS as WKT string
@@ -1397,6 +1398,9 @@ class SurfaceData:
         if self._preprocessed:
             return
 
+        # Fill NaN in surface layers before any height conversion
+        self.fill_nan()
+
         # Auto-generate TDSM from trunk ratio if CDSM provided but not TDSM
         if self.cdsm is not None and self.tdsm is None:
             logger.info(f"Auto-generating TDSM from CDSM using trunk_ratio={self.trunk_ratio}")
@@ -1411,8 +1415,8 @@ class SurfaceData:
             # Use DEM as base if available, otherwise DSM
             base = self.dem if self.dem is not None else self.dsm
 
-            # Store original relative heights for comparison
-            cdsm_rel = self.cdsm.copy()
+            # NaN in relative CDSM means "no vegetation" = 0 (ground level)
+            cdsm_rel = np.where(np.isnan(self.cdsm), zero32, self.cdsm)
 
             # CDSM = base + relative_cdsm
             cdsm_abs = np.where(~np.isnan(base), base + cdsm_rel, nan32)
@@ -1422,7 +1426,7 @@ class SurfaceData:
 
             # TDSM = base + relative_tdsm
             if self.tdsm is not None:
-                tdsm_rel = self.tdsm.copy()
+                tdsm_rel = np.where(np.isnan(self.tdsm), zero32, self.tdsm)
                 tdsm_abs = np.where(~np.isnan(base), base + tdsm_rel, nan32)
                 tdsm_abs = np.where(tdsm_abs - base < threshold, zero32, tdsm_abs)
                 self.tdsm = tdsm_abs.astype(np.float32)
@@ -1556,17 +1560,78 @@ class SurfaceData:
         """Return computed valid mask, or None if not yet computed."""
         return self._valid_mask
 
-    def compute_valid_mask(self) -> NDArray[np.bool_]:
-        """Compute combined valid mask: True where ALL provided layers have finite data.
+    def fill_nan(self, tolerance: float = 0.1) -> None:
+        """Fill NaN in surface layers using DEM as ground reference.
 
-        A pixel is valid only if every provided layer has a finite (non-NaN) value.
-        For land_cover (uint8), 255 is treated as nodata.
+        NaN in DSM/CDSM/TDSM means "no data, assume ground level."
+        After filling, values within *tolerance* of ground are clamped
+        to exactly the ground value to avoid shadow/SVF noise from
+        resampling jitter.
+
+        Fill rules:
+            - DSM NaN  → DEM value  (if DEM provided, else left as NaN)
+            - CDSM NaN → base value (DEM if available, else DSM)
+            - TDSM NaN → base value (DEM if available, else DSM)
+            - DEM NaN  → not filled (DEM is the ground-truth baseline)
+
+        Works identically for relative and absolute height conventions.
+
+        Args:
+            tolerance: Height difference (m) below which a surface pixel
+                is considered "at ground" and clamped. Default 0.1 m.
+        """
+        if self._nan_filled:
+            return
+
+        tol = np.float32(tolerance)
+
+        # DSM: fill with DEM where available
+        if self.dem is not None:
+            dsm_nan = np.isnan(self.dsm)
+            if np.any(dsm_nan):
+                n = int(dsm_nan.sum())
+                self.dsm = np.where(dsm_nan, self.dem, self.dsm).astype(np.float32)
+                logger.info(f"  Filled {n} NaN DSM pixels with DEM")
+
+        base = self.dem if self.dem is not None else self.dsm
+        base_label = "DEM" if self.dem is not None else "DSM"
+
+        # CDSM: fill NaN with base, clamp near-ground noise
+        if self.cdsm is not None:
+            cdsm_nan = np.isnan(self.cdsm)
+            if np.any(cdsm_nan):
+                n = int(cdsm_nan.sum())
+                self.cdsm = np.where(cdsm_nan, base, self.cdsm).astype(np.float32)
+                logger.info(f"  Filled {n} NaN CDSM pixels with {base_label}")
+            near_ground = np.abs(self.cdsm - base) < tol
+            if np.any(near_ground):
+                self.cdsm = np.where(near_ground, base, self.cdsm).astype(np.float32)
+
+        # TDSM: same treatment as CDSM
+        if self.tdsm is not None:
+            tdsm_nan = np.isnan(self.tdsm)
+            if np.any(tdsm_nan):
+                n = int(tdsm_nan.sum())
+                self.tdsm = np.where(tdsm_nan, base, self.tdsm).astype(np.float32)
+                logger.info(f"  Filled {n} NaN TDSM pixels with {base_label}")
+            near_ground = np.abs(self.tdsm - base) < tol
+            if np.any(near_ground):
+                self.tdsm = np.where(near_ground, base, self.tdsm).astype(np.float32)
+
+        self._nan_filled = True
+
+    def compute_valid_mask(self) -> NDArray[np.bool_]:
+        """Compute combined valid mask: True where ALL ground-reference layers have finite data.
+
+        A pixel is valid only if DSM (and DEM/walls if provided) have finite values.
+        CDSM/TDSM are excluded — NaN vegetation means "at ground", not "invalid pixel".
+        Call fill_nan() before this to fill vegetation NaN with ground values.
 
         Returns:
             Boolean array with same shape as DSM. True = valid pixel.
         """
         valid = np.isfinite(self.dsm)
-        for arr in [self.cdsm, self.dem, self.tdsm, self.wall_height, self.wall_aspect]:
+        for arr in [self.dem, self.wall_height, self.wall_aspect]:
             if arr is not None:
                 valid &= np.isfinite(arr)
         if self.land_cover is not None:

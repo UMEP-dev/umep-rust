@@ -84,6 +84,29 @@ surface = solweig.SurfaceData(
 surface.preprocess()
 ```
 
+### NaN Handling
+
+NaN values in DSM, CDSM, and TDSM are automatically filled with the ground
+reference before calculation:
+
+| Layer | NaN meaning     | Filled with           |
+| ----- | --------------- | --------------------- |
+| DSM   | No surface data | DEM (if provided)     |
+| CDSM  | No canopy       | DEM, or DSM if no DEM |
+| TDSM  | No trunk        | DEM, or DSM if no DEM |
+| DEM   | No ground data  | Not filled (baseline) |
+
+After filling, pixels within 0.1 m of the ground reference are clamped to
+exactly the ground value to prevent shadow/SVF artefacts from resampling noise.
+
+This happens automatically — `fill_nan()` is called inside both `preprocess()`
+and `calculate()`. You can also call it explicitly:
+
+```python
+surface.fill_nan()           # idempotent — safe to call multiple times
+surface.fill_nan(tolerance=0.2)  # custom noise tolerance (default 0.1 m)
+```
+
 ## Performance Tips
 
 ### First vs Repeat Calculations

@@ -8,6 +8,7 @@ The simplified API automatically handles:
 - Sky View Factor (SVF) calculation on-the-fly
 - Extent intersection and resampling
 - CRS validation and extraction
+- NaN filling in DSM/CDSM/TDSM with ground reference (DEM or DSM)
 
 For config file-driven workflows, see the legacy API at the bottom.
 """
@@ -55,6 +56,7 @@ solweig.io.save_raster(
 # %%
 # Step 1: Prepare surface data
 # - CRS automatically extracted from DSM
+# - NaN in DSM/CDSM/TDSM filled with ground reference (DEM or DSM)
 # - Walls and SVF computed and cached to working_dir if not provided
 # - Extent and resolution handled automatically
 # - Resampled data saved to working_dir for inspection

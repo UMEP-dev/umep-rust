@@ -106,6 +106,26 @@ This creates:
 - `output/shadow.tif`
 - etc.
 
+## NaN and NoData Handling
+
+SOLWEIG automatically handles NaN (missing) values in surface layers:
+
+- **At load time:** Only negative nodata sentinel values (e.g. -9999) are
+  converted to NaN. Zero-valued pixels are preserved as valid data.
+- **Before calculation:** `fill_nan()` is called automatically by both
+  `preprocess()` and `calculate()`. NaN pixels in DSM/CDSM/TDSM are filled
+  with the ground reference (DEM, or DSM if no DEM is provided).
+- **Noise clamping:** After filling, surface pixels within 0.1 m of the ground
+  reference are collapsed to exactly the ground value, preventing shadow and
+  SVF artefacts from resampling jitter.
+
+DEM NaN pixels are never filled — they represent truly missing ground data and
+are masked as invalid.
+
+When loading via `SurfaceData.prepare()`, this is all handled automatically.
+When constructing `SurfaceData` manually from arrays, `fill_nan()` runs inside
+`calculate()` so no extra steps are needed.
+
 ## Large Rasters
 
 For rasters larger than available memory, use tiled processing:

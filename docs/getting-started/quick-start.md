@@ -36,6 +36,7 @@ surface = solweig.SurfaceData.prepare(
 **What `prepare()` does:**
 
 - Loads and validates DSM (required) and optional CDSM/DEM/land cover
+- Fills NaN in surface layers with the ground reference (DEM or DSM)
 - Computes wall heights and aspects (cached to `working_dir/walls/`)
 - Computes Sky View Factor (cached to `working_dir/svf/`)
 - Aligns all rasters to common extent and resolution
@@ -240,6 +241,13 @@ except solweig.MissingPrecomputedData as e:
 ```
 
 ## Common Issues
+
+### NaN pixels in output
+
+NaN values in DSM, CDSM, or TDSM are automatically filled with the ground
+reference (DEM, or DSM if no DEM is provided) before calculation. If you see
+NaN in the output, it means the DSM itself has NaN at those pixels and no DEM
+was provided to fill them. Provide a DEM to maximize valid coverage.
 
 ### "SVF data not found"
 

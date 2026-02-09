@@ -50,9 +50,10 @@ def load_raster_from_layer(
         band = ds.GetRasterBand(1)
         array = band.ReadAsArray().astype(np.float32)
 
-        # Handle nodata
+        # Handle nodata — only honor negative sentinel values (e.g. -9999)
+        # to avoid converting valid zero-height pixels to NaN
         nodata = band.GetNoDataValue()
-        if nodata is not None:
+        if nodata is not None and nodata < 0:
             array = np.where(array == nodata, np.nan, array)
 
         geotransform = list(ds.GetGeoTransform())
@@ -204,8 +205,9 @@ def create_surface_from_parameters(
     # Build aligned geotransform for the target bbox
     aligned_gt = [target_bbox[0], pixel_size, 0, target_bbox[3], 0, -pixel_size]
 
-    # Get height convention flag
-    relative_heights = parameters.get("RELATIVE_HEIGHTS", True)
+    # Get height convention flag (enum: 0=relative, 1=absolute)
+    rh_value = parameters.get("RELATIVE_HEIGHTS", 0)
+    relative_heights = rh_value == 0 if isinstance(rh_value, int) else bool(rh_value)
 
     # Create SurfaceData
     surface = solweig.SurfaceData(
@@ -227,55 +229,14 @@ def create_surface_from_parameters(
         feedback.pushInfo("Converting relative vegetation heights to absolute...")
         surface.preprocess()
 
-    # Compute valid mask, apply, and crop (inline to avoid bundled version dependency)
-    valid = np.isfinite(surface.dsm)
-    for arr in [surface.cdsm, surface.dem, surface.tdsm]:
-        if arr is not None:
-            valid &= np.isfinite(arr)
-    if surface.land_cover is not None:
-        valid &= surface.land_cover != 255  # 255 = nodata in UMEP land cover
+    # Fill NaN with ground reference, mask invalid pixels, crop to valid bbox
+    # (uses SurfaceData library methods — single source of truth)
+    surface.fill_nan()
+    surface.compute_valid_mask()
+    surface.apply_valid_mask()
+    surface.crop_to_valid_bbox()
 
-    # Apply mask: set NaN wherever any layer is invalid
-    surface.dsm = np.where(valid, surface.dsm, np.nan)
-    if surface.cdsm is not None:
-        surface.cdsm = np.where(valid, surface.cdsm, np.nan)
-    if surface.dem is not None:
-        surface.dem = np.where(valid, surface.dem, np.nan)
-    if surface.tdsm is not None:
-        surface.tdsm = np.where(valid, surface.tdsm, np.nan)
-
-    # Crop to valid bounding box
-    rows_any = np.any(valid, axis=1)
-    cols_any = np.any(valid, axis=0)
-    if np.any(rows_any) and np.any(cols_any):
-        r0 = int(np.argmax(rows_any))
-        r1 = int(valid.shape[0] - np.argmax(rows_any[::-1]))
-        c0 = int(np.argmax(cols_any))
-        c1 = int(valid.shape[1] - np.argmax(cols_any[::-1]))
-
-        if r0 > 0 or r1 < valid.shape[0] or c0 > 0 or c1 < valid.shape[1]:
-            surface.dsm = surface.dsm[r0:r1, c0:c1].copy()
-            if surface.cdsm is not None:
-                surface.cdsm = surface.cdsm[r0:r1, c0:c1].copy()
-            if surface.dem is not None:
-                surface.dem = surface.dem[r0:r1, c0:c1].copy()
-            if surface.tdsm is not None:
-                surface.tdsm = surface.tdsm[r0:r1, c0:c1].copy()
-            if surface.land_cover is not None:
-                surface.land_cover = surface.land_cover[r0:r1, c0:c1].copy()
-
-            # Update geotransform for the crop offset
-            gt = surface._geotransform
-            surface._geotransform = [
-                gt[0] + c0 * gt[1],
-                gt[1],
-                gt[2],
-                gt[3] + r0 * gt[5],
-                gt[4],
-                gt[5],
-            ]
-
-    feedback.pushInfo(f"After NaN masking + crop: {surface.dsm.shape[1]}x{surface.dsm.shape[0]} pixels")
+    feedback.pushInfo(f"After NaN fill + mask + crop: {surface.dsm.shape[1]}x{surface.dsm.shape[0]} pixels")
 
     # Compute wall heights and aspects from DSM
     feedback.setProgressText("Computing wall heights...")
@@ -396,7 +357,7 @@ def _load_geotiff(path: str) -> tuple[NDArray[np.floating], list[float], str]:
         band = ds.GetRasterBand(1)
         array = band.ReadAsArray().astype(np.float32)
         nodata = band.GetNoDataValue()
-        if nodata is not None:
+        if nodata is not None and nodata < 0:
             array = np.where(array == nodata, np.nan, array)
         geotransform = list(ds.GetGeoTransform())
         crs_wkt = ds.GetProjection()

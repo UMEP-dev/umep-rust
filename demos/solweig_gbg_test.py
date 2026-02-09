@@ -30,6 +30,7 @@ trunk_ratio = 0.25  # Trunk height as fraction of canopy height
 # %%
 # Prepare surface data with automatic wall and SVF computation
 # SurfaceData.prepare() will:
+#   - Fill NaN in DSM/CDSM/TDSM with the ground reference (DEM or DSM)
 #   - Compute wall heights/aspects and cache in working_dir/walls/
 #   - Compute SVF and cache in working_dir/svf/
 #   - Reuse cached data on subsequent runs (use force_recompute=True to regenerate)

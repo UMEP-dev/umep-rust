@@ -386,6 +386,9 @@ def calculate(
     if poi_coords is not None:
         raise NotImplementedError("POI mode (point-of-interest calculation) is planned for Phase 4")
 
+    # Fill NaN in surface layers (idempotent — skipped if already done)
+    surface.fill_nan()
+
     # Fused Rust pipeline — single FFI call per daytime timestep.
     # Both isotropic and anisotropic sky models are supported.
     return calculate_core_fused(

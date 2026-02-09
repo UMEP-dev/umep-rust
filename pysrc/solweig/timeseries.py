@@ -240,6 +240,9 @@ def calculate_timeseries(
     materials = effective_materials
     outputs = effective_outputs
 
+    # Fill NaN in surface layers (idempotent — skipped if already done)
+    surface.fill_nan()
+
     # Log configuration summary
     logger.info("=" * 60)
     logger.info("Starting SOLWEIG timeseries calculation")

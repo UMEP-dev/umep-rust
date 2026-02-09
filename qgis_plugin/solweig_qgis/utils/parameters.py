@@ -34,7 +34,7 @@ def add_surface_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         DEM (optional): Digital Elevation Model (ground)
         TDSM (optional): Trunk zone DSM
         LAND_COVER (optional): Land cover classification
-        RELATIVE_HEIGHTS: Whether CDSM/TDSM are relative heights
+        RELATIVE_HEIGHTS: Vegetation height convention (0=relative, 1=absolute)
     """
     algorithm.addParameter(
         QgsProcessingParameterRasterLayer(
@@ -77,10 +77,14 @@ def add_surface_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     )
 
     algorithm.addParameter(
-        QgsProcessingParameterBoolean(
+        QgsProcessingParameterEnum(
             "RELATIVE_HEIGHTS",
-            algorithm.tr("CDSM/TDSM are relative heights (above ground)"),
-            defaultValue=True,
+            algorithm.tr("Vegetation height convention (CDSM/TDSM)"),
+            options=[
+                "Relative — height above ground (e.g. tree = 8 m)",
+                "Absolute — elevation above sea level (e.g. tree = 133 m)",
+            ],
+            defaultValue=0,  # Relative
         )
     )
 

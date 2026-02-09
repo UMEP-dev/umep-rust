@@ -117,9 +117,10 @@ class SolweigAlgorithmBase(QgsProcessingAlgorithm):
             band = ds.GetRasterBand(1)
             array = band.ReadAsArray().astype(np.float32)
 
-            # Handle nodata
+            # Handle nodata — only honor negative sentinel values (e.g. -9999)
+            # to avoid converting valid zero-height pixels to NaN
             nodata = band.GetNoDataValue()
-            if nodata is not None:
+            if nodata is not None and nodata < 0:
                 array = np.where(array == nodata, np.nan, array)
 
             geotransform = list(ds.GetGeoTransform())

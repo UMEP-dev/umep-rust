@@ -271,7 +271,7 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
         feedback.setProgressText("Computing valid mask and cropping...")
         feedback.setProgress(25)
 
-        relative_heights = self.parameterAsBool(parameters, "RELATIVE_HEIGHTS", context)
+        relative_heights = self.parameterAsEnum(parameters, "RELATIVE_HEIGHTS", context) == 0
 
         surface = solweig.SurfaceData(
             dsm=dsm,
@@ -290,55 +290,17 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
             feedback.pushInfo("Converting relative vegetation heights to absolute...")
             surface.preprocess()
 
-        # Compute valid mask, apply, and crop (inline to avoid version dependency)
-        valid = np.isfinite(surface.dsm)
-        for arr in [surface.cdsm, surface.dem, surface.tdsm]:
-            if arr is not None:
-                valid &= np.isfinite(arr)
-        if surface.land_cover is not None:
-            valid &= surface.land_cover != 255  # 255 = nodata in UMEP land cover
+        # Fill NaN with ground reference, mask invalid pixels, crop to valid bbox
+        # (uses SurfaceData library methods — single source of truth)
+        surface.fill_nan()
+        surface.compute_valid_mask()
+        surface.apply_valid_mask()
+        surface.crop_to_valid_bbox()
 
-        # Apply mask: set NaN wherever any layer is invalid
-        surface.dsm = np.where(valid, surface.dsm, np.nan)
-        if surface.cdsm is not None:
-            surface.cdsm = np.where(valid, surface.cdsm, np.nan)
-        if surface.dem is not None:
-            surface.dem = np.where(valid, surface.dem, np.nan)
-        if surface.tdsm is not None:
-            surface.tdsm = np.where(valid, surface.tdsm, np.nan)
+        # Update local geotransform reference after crop
+        aligned_gt = surface._geotransform
 
-        # Crop to valid bounding box
-        rows_any = np.any(valid, axis=1)
-        cols_any = np.any(valid, axis=0)
-        if np.any(rows_any) and np.any(cols_any):
-            r0, r1 = int(np.argmax(rows_any)), int(valid.shape[0] - np.argmax(rows_any[::-1]))
-            c0, c1 = int(np.argmax(cols_any)), int(valid.shape[1] - np.argmax(cols_any[::-1]))
-
-            if r0 > 0 or r1 < valid.shape[0] or c0 > 0 or c1 < valid.shape[1]:
-                surface.dsm = surface.dsm[r0:r1, c0:c1].copy()
-                if surface.cdsm is not None:
-                    surface.cdsm = surface.cdsm[r0:r1, c0:c1].copy()
-                if surface.dem is not None:
-                    surface.dem = surface.dem[r0:r1, c0:c1].copy()
-                if surface.tdsm is not None:
-                    surface.tdsm = surface.tdsm[r0:r1, c0:c1].copy()
-                if surface.land_cover is not None:
-                    surface.land_cover = surface.land_cover[r0:r1, c0:c1].copy()
-
-                # Update geotransform for the crop offset
-                gt = aligned_gt
-                aligned_gt = [
-                    gt[0] + c0 * gt[1],
-                    gt[1],
-                    gt[2],
-                    gt[3] + r0 * gt[5],
-                    gt[4],
-                    gt[5],
-                ]
-                surface._geotransform = aligned_gt
-                feedback.pushInfo(f"Cropped {r0}:{r1}, {c0}:{c1} from original grid")
-
-        feedback.pushInfo(f"After NaN masking + crop: {surface.dsm.shape[1]}x{surface.dsm.shape[0]} pixels")
+        feedback.pushInfo(f"After NaN fill + mask + crop: {surface.dsm.shape[1]}x{surface.dsm.shape[0]} pixels")
 
         if feedback.isCanceled():
             return {}
