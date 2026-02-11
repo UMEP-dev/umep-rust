@@ -173,18 +173,27 @@ class TestRasterIO:
         assert io.GDAL_ENV
 
     def test_rasterio_backend_default(self, monkeypatch):
-        """Test that rasterio is used by default when available."""
+        """Test that rasterio is the default backend in a standard environment."""
+        import importlib
+        import sys
+
+        from solweig import _compat
+
         # Ensure environment variable is not set
         monkeypatch.delenv("UMEP_USE_GDAL", raising=False)
 
-        # Reimport
-        import importlib
+        # Remove any QGIS mocks that earlier tests may have injected,
+        # so _compat.in_osgeo_environment() returns False.
+        qgis_keys = [k for k in sys.modules if k == "qgis" or k.startswith("qgis.")]
+        saved = {k: sys.modules.pop(k) for k in qgis_keys}
+        try:
+            importlib.reload(_compat)
+        finally:
+            sys.modules.update(saved)
 
-        importlib.reload(io)
-
-        # Check backend (should be rasterio if available)
-        # This test may pass or fail depending on whether rasterio is installed
-        # The important thing is that it doesn't crash
+        # In a standard environment with rasterio, GDAL_ENV should be False
+        assert _compat.RASTERIO_AVAILABLE is True
+        assert _compat.GDAL_ENV is False
 
 
 class TestGeoTIFFLoading:

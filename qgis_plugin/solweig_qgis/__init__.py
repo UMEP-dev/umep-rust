@@ -25,7 +25,7 @@ from pathlib import Path
 # Dependency management
 # ---------------------------------------------------------------------------
 
-_PLUGIN_DIR = Path(__file__).parent
+_PLUGIN_DIR = Path(__file__).resolve().parent
 
 
 def _read_required_version() -> str:
@@ -177,6 +177,15 @@ def _setup_solweig_path():
             sys.path.insert(0, str(dev_path))
             inserted = True
         try:
+            # If solweig was already imported (e.g. from a system install),
+            # remove the cached module so Python re-discovers it from pysrc/.
+            if "solweig" in sys.modules:
+                # Remove the main module and all submodules so the fresh
+                # import picks up the development source tree.
+                stale = [k for k in sys.modules if k == "solweig" or k.startswith("solweig.")]
+                for k in stale:
+                    del sys.modules[k]
+
             import solweig  # noqa: F401
 
             if not _check_version(solweig):

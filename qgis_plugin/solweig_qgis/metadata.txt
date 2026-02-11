@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta12
+version=0.1.0-beta13
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,6 +42,14 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta13
+    - Add Location.from_epw() for automatic lat/lon/timezone extraction from EPW files
+    - Enable anisotropic sky model in tiled mode (was previously blocked)
+    - Fix SVF cache not reused across runs (pixel_size missing from cache metadata)
+    - Fix SVF cache validation when loaded from zip format
+    - Clean up stale SVF zip/npz files when cache is invalidated
+    - Enforce release-mode Rust builds in CI and test suite (RELEASE_BUILD flag)
+    - Fix test instability from QGIS mock module contamination
     0.1.0-beta12
     - CI: create GitHub Release with wheels on tag push
     0.1.0-beta11

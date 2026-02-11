@@ -129,6 +129,35 @@ class TestLocation:
         assert d["longitude"] == 12.0
         assert d["altitude"] == 100.0
 
+    def test_from_epw(self, tmp_path):
+        """Location.from_epw extracts lat, lon, tz_offset, and elevation from EPW header."""
+        epw_content = (
+            "LOCATION,Madrid,ESP,NA,Test Data,NA,40.45,-3.55,1.0,667.0\n"
+            "DESIGN CONDITIONS,0\n"
+            "TYPICAL/EXTREME PERIODS,0\n"
+            "GROUND TEMPERATURES,0\n"
+            "HOLIDAYS/DAYLIGHT SAVINGS,No,0,0,0\n"
+            "COMMENTS 1,Test\n"
+            "COMMENTS 2,Test\n"
+            "DATA PERIODS,1,1,Data,Sunday, 1/ 1,12/31\n"
+            "2023,1,1,1,0,?9?9?9?9E0?9?9?9?9?9?9?9?9?9?9?9?9?9?9*_*9*9*9*9*9,"
+            "5.0,2.0,80,101325,0,0,0,0,0,0,0,0,0,0,180,3.0,5,5,10.0,77777,9,999999999,0,0.0,0,88,0.0,0.0,0.0\n"
+        )
+        epw_path = tmp_path / "madrid.epw"
+        epw_path.write_text(epw_content)
+
+        loc = Location.from_epw(epw_path)
+
+        assert loc.latitude == pytest.approx(40.45)
+        assert loc.longitude == pytest.approx(-3.55)
+        assert loc.utc_offset == 1
+        assert loc.altitude == pytest.approx(667.0)
+
+    def test_from_epw_file_not_found(self):
+        """Location.from_epw raises FileNotFoundError for missing file."""
+        with pytest.raises(FileNotFoundError):
+            Location.from_epw("/nonexistent/path.epw")
+
 
 class TestWeather:
     """Tests for Weather dataclass."""
@@ -914,19 +943,21 @@ class TestPreprocessing:
         psi_day_300 = compute_transmissivity(doy=300)
         assert psi_day_300 == 0.5  # No longer leaf-on
 
-    def test_relative_heights_parameter_default(self):
-        """relative_heights defaults to True."""
+    def test_per_layer_height_defaults(self):
+        """Per-layer height flags have correct defaults."""
         dsm = np.ones((10, 10), dtype=np.float32) * 100.0
         surface = SurfaceData(dsm=dsm)
-        assert surface.relative_heights is True
+        assert surface.dsm_relative is False
+        assert surface.cdsm_relative is True
+        assert surface.tdsm_relative is True
 
-    def test_relative_heights_parameter_explicit(self):
-        """relative_heights can be set explicitly."""
+    def test_per_layer_height_explicit(self):
+        """Per-layer height flags can be set explicitly."""
         dsm = np.ones((10, 10), dtype=np.float32) * 100.0
         cdsm = np.ones((10, 10), dtype=np.float32) * 105.0  # Absolute heights
 
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=False)
-        assert surface.relative_heights is False
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, cdsm_relative=False)
+        assert surface.cdsm_relative is False
 
     def test_looks_like_relative_heights_true(self):
         """_looks_like_relative_heights returns True for typical relative data."""
@@ -965,7 +996,7 @@ class TestPreprocessing:
         dsm = np.ones((10, 10), dtype=np.float32) * 100.0
         cdsm = np.ones((10, 10), dtype=np.float32) * 5.0
 
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True)
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, cdsm_relative=True)
 
         with caplog.at_level(logging.WARNING):
             surface._check_preprocessing_needed()
@@ -980,7 +1011,7 @@ class TestPreprocessing:
         dsm = np.ones((10, 10), dtype=np.float32) * 100.0
         cdsm = np.ones((10, 10), dtype=np.float32) * 5.0
 
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True)
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, cdsm_relative=True)
         surface.preprocess()  # This sets _preprocessed = True
 
         with caplog.at_level(logging.WARNING):
@@ -988,14 +1019,14 @@ class TestPreprocessing:
 
         assert "preprocess() was not called" not in caplog.text
 
-    def test_preprocessing_warning_not_issued_when_relative_heights_false(self, caplog):
-        """No warning when relative_heights=False (user says data is absolute)."""
+    def test_preprocessing_warning_not_issued_when_cdsm_relative_false(self, caplog):
+        """No warning when cdsm_relative=False (user says data is absolute)."""
         import logging
 
         dsm = np.ones((10, 10), dtype=np.float32) * 100.0
         cdsm = np.ones((10, 10), dtype=np.float32) * 5.0  # Looks relative but user says no
 
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=False)
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, cdsm_relative=False)
 
         with caplog.at_level(logging.WARNING):
             surface._check_preprocessing_needed()

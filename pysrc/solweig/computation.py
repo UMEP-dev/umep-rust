@@ -201,6 +201,7 @@ def calculate_core(
     materials: SimpleNamespace | None,
     conifer: bool = False,
     wall_material: str | None = None,
+    max_shadow_distance_m: float | None = None,
 ) -> SolweigResult:
     """
     Core SOLWEIG calculation orchestrating all components.
@@ -270,6 +271,13 @@ def calculate_core(
 
     # Maximum building height for shadow/SVF computation
     max_height = float(np.nanmax(surface.dsm)) if surface.dsm.size > 0 else 50.0
+
+    # Cap shadow reach if max_shadow_distance_m is set
+    if max_shadow_distance_m is not None:
+        from .tiling import MIN_SUN_ELEVATION_DEG
+
+        height_cap = max_shadow_distance_m * np.tan(np.radians(MIN_SUN_ELEVATION_DEG))
+        max_height = min(max_height, height_cap)
 
     # Step 1: SVF Resolution (sky view factors from cached/precomputed sources)
     svf_bundle, _needs_psi_adjustment = resolve_svf(
@@ -399,6 +407,7 @@ def calculate_core_fused(
     conifer: bool = False,
     wall_material: str | None = None,
     use_anisotropic_sky: bool = False,
+    max_shadow_distance_m: float | None = None,
 ) -> SolweigResult:
     """
     Fused SOLWEIG calculation — single Rust FFI call per daytime timestep.
@@ -462,6 +471,13 @@ def calculate_core_fused(
     wall_asp = surface.wall_aspect if has_walls else None
 
     max_height = float(np.nanmax(surface.dsm)) if surface.dsm.size > 0 else 50.0
+
+    # Cap shadow reach if max_shadow_distance_m is set
+    if max_shadow_distance_m is not None:
+        from .tiling import MIN_SUN_ELEVATION_DEG
+
+        height_cap = max_shadow_distance_m * np.tan(np.radians(MIN_SUN_ELEVATION_DEG))
+        max_height = min(max_height, height_cap)
 
     # SVF resolution (cached between timesteps)
     svf_bundle, _needs_psi_adjustment = resolve_svf(

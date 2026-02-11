@@ -128,11 +128,11 @@ class TestValidateInputs:
         assert "shadow_matrices" in str(excinfo.value)
 
     def test_unpreprocessed_cdsm_warning(self):
-        """Warning issued for unpreprocessed CDSM with relative_heights=True."""
+        """Warning issued for unpreprocessed CDSM with cdsm_relative=True."""
         dsm = np.ones((50, 50), dtype=np.float32) * 10.0
         cdsm = np.ones((50, 50), dtype=np.float32) * 5.0  # Relative heights
 
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True, svf=make_mock_svf((50, 50)))
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, cdsm_relative=True, svf=make_mock_svf((50, 50)))
 
         warnings = validate_inputs(surface)
 
@@ -143,7 +143,7 @@ class TestValidateInputs:
         dsm = np.ones((50, 50), dtype=np.float32) * 10.0
         cdsm = np.ones((50, 50), dtype=np.float32) * 5.0
 
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True, svf=make_mock_svf((50, 50)))
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, cdsm_relative=True, svf=make_mock_svf((50, 50)))
         surface.preprocess()
 
         warnings = validate_inputs(surface)
@@ -246,22 +246,22 @@ class TestHeightValidationWarnings:
         assert not any("no DEM" in w for w in warnings)
 
     def test_warns_cdsm_looks_absolute_with_relative_flag(self):
-        """CDSM with min non-zero >50m and relative_heights=True triggers warning."""
+        """CDSM with min non-zero >50m and cdsm_relative=True triggers warning."""
         dsm = np.ones((50, 50), dtype=np.float32) * 130.0
         cdsm = np.zeros((50, 50), dtype=np.float32)
         cdsm[10:20, 10:20] = 120.0  # Looks like absolute elevation, not tree height
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True, svf=make_mock_svf((50, 50)))
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, cdsm_relative=True, svf=make_mock_svf((50, 50)))
 
         warnings = validate_inputs(surface)
 
         assert any("CDSM minimum non-zero value is 120m" in w for w in warnings)
 
     def test_warns_cdsm_looks_relative_with_absolute_flag(self):
-        """CDSM with values much smaller than DSM and relative_heights=False triggers warning."""
+        """CDSM with values much smaller than DSM and cdsm_relative=False triggers warning."""
         dsm = np.ones((50, 50), dtype=np.float32) * 150.0
         cdsm = np.zeros((50, 50), dtype=np.float32)
         cdsm[10:20, 10:20] = 15.0  # Looks like relative tree heights
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=False, svf=make_mock_svf((50, 50)))
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, cdsm_relative=False, svf=make_mock_svf((50, 50)))
 
         warnings = validate_inputs(surface)
 
@@ -278,13 +278,15 @@ class TestHeightValidationWarnings:
         assert warnings == []
 
     def test_warns_tdsm_looks_absolute_with_relative_flag(self):
-        """TDSM with min non-zero >50m and relative_heights=True triggers warning."""
+        """TDSM with min non-zero >50m and tdsm_relative=True triggers warning."""
         dsm = np.ones((50, 50), dtype=np.float32) * 130.0
         cdsm = np.zeros((50, 50), dtype=np.float32)
         cdsm[10:20, 10:20] = 120.0
         tdsm = np.zeros((50, 50), dtype=np.float32)
         tdsm[10:20, 10:20] = 115.0  # Looks like absolute trunk elevation
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, tdsm=tdsm, relative_heights=True, svf=make_mock_svf((50, 50)))
+        surface = SurfaceData(
+            dsm=dsm, cdsm=cdsm, tdsm=tdsm, cdsm_relative=True, tdsm_relative=True, svf=make_mock_svf((50, 50))
+        )
 
         warnings = validate_inputs(surface)
 

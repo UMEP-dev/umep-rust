@@ -64,6 +64,26 @@ def load_raster_from_layer(
         ds = None
 
 
+def _read_height_mode(
+    parameters: dict[str, Any],
+    param_name: str,
+    default_absolute: bool = True,
+) -> bool:
+    """Read a per-layer height mode enum and return True if relative.
+
+    Args:
+        parameters: Algorithm parameters dict.
+        param_name: Enum parameter name (e.g. "DSM_HEIGHT_MODE").
+        default_absolute: If True, default is absolute (enum 1); if False, default is relative (enum 0).
+
+    Returns:
+        True if the layer uses relative heights, False if absolute.
+    """
+    default = 1 if default_absolute else 0
+    value = parameters.get(param_name, default)
+    return (int(value) if isinstance(value, (int, float)) else default) == 0
+
+
 def _load_optional_raster(
     parameters: dict[str, Any],
     param_name: str,
@@ -145,7 +165,8 @@ def create_surface_from_parameters(
         raise QgsProcessingException("DSM layer is required")
 
     dsm, dsm_gt, crs_wkt = load_raster_from_layer(dsm_layer)
-    feedback.pushInfo(f"Loaded DSM: {dsm.shape[1]}x{dsm.shape[0]} pixels")
+    lo, hi = float(np.nanmin(dsm)), float(np.nanmax(dsm))
+    feedback.pushInfo(f"Loaded DSM: {dsm.shape[1]}x{dsm.shape[0]} pixels, range: {lo:.1f} – {hi:.1f} m")
 
     pixel_size = abs(dsm_gt[1])
     feedback.pushInfo(f"Pixel size: {pixel_size:.2f} m")
@@ -153,15 +174,21 @@ def create_surface_from_parameters(
     # Load optional rasters (keeping geotransforms)
     cdsm, cdsm_gt = _load_optional_raster(parameters, "CDSM", context, param_handler)
     if cdsm is not None:
-        feedback.pushInfo("Loaded CDSM (vegetation)")
+        feedback.pushInfo(
+            f"Loaded CDSM (vegetation), range: {float(np.nanmin(cdsm)):.1f} – {float(np.nanmax(cdsm)):.1f} m"
+        )
 
     dem, dem_gt = _load_optional_raster(parameters, "DEM", context, param_handler)
     if dem is not None:
-        feedback.pushInfo("Loaded DEM (ground elevation)")
+        feedback.pushInfo(
+            f"Loaded DEM (ground elevation), range: {float(np.nanmin(dem)):.1f} – {float(np.nanmax(dem)):.1f} m"
+        )
 
     tdsm, tdsm_gt = _load_optional_raster(parameters, "TDSM", context, param_handler)
     if tdsm is not None:
-        feedback.pushInfo("Loaded TDSM (trunk zone)")
+        feedback.pushInfo(
+            f"Loaded TDSM (trunk zone), range: {float(np.nanmin(tdsm)):.1f} – {float(np.nanmax(tdsm)):.1f} m"
+        )
 
     lc_arr, lc_gt = _load_optional_raster(parameters, "LAND_COVER", context, param_handler)
     land_cover = lc_arr.astype(np.uint8) if lc_arr is not None else None
@@ -205,9 +232,10 @@ def create_surface_from_parameters(
     # Build aligned geotransform for the target bbox
     aligned_gt = [target_bbox[0], pixel_size, 0, target_bbox[3], 0, -pixel_size]
 
-    # Get height convention flag (enum: 0=relative, 1=absolute)
-    rh_value = parameters.get("RELATIVE_HEIGHTS", 0)
-    relative_heights = rh_value == 0 if isinstance(rh_value, int) else bool(rh_value)
+    # Get per-layer height convention flags (enum: 0=relative, 1=absolute)
+    dsm_relative = _read_height_mode(parameters, "DSM_HEIGHT_MODE", default_absolute=True)
+    cdsm_relative = _read_height_mode(parameters, "CDSM_HEIGHT_MODE", default_absolute=False)
+    tdsm_relative = _read_height_mode(parameters, "TDSM_HEIGHT_MODE", default_absolute=False)
 
     # Create SurfaceData
     surface = solweig.SurfaceData(
@@ -217,16 +245,19 @@ def create_surface_from_parameters(
         tdsm=tdsm,
         land_cover=land_cover,
         pixel_size=pixel_size,
-        relative_heights=relative_heights,
+        dsm_relative=dsm_relative,
+        cdsm_relative=cdsm_relative,
+        tdsm_relative=tdsm_relative,
     )
 
     # Store geospatial metadata for output georeferencing
     surface._geotransform = aligned_gt
     surface._crs_wkt = crs_wkt
 
-    # Preprocess if using relative heights and we have vegetation data
-    if relative_heights and (cdsm is not None or tdsm is not None):
-        feedback.pushInfo("Converting relative vegetation heights to absolute...")
+    # Convert relative heights to absolute where needed
+    needs_preprocess = dsm_relative or (cdsm_relative and cdsm is not None) or (tdsm_relative and tdsm is not None)
+    if needs_preprocess:
+        feedback.pushInfo("Converting relative heights to absolute...")
         surface.preprocess()
 
     # Fill NaN with ground reference, mask invalid pixels, crop to valid bbox
@@ -325,7 +356,9 @@ def load_prepared_surface(
         tdsm=tdsm,
         land_cover=land_cover,
         pixel_size=pixel_size,
-        relative_heights=False,  # Always absolute after preprocessing
+        dsm_relative=False,  # Always absolute after preprocessing
+        cdsm_relative=False,
+        tdsm_relative=False,
     )
     surface._geotransform = gt
     surface._crs_wkt = crs_wkt

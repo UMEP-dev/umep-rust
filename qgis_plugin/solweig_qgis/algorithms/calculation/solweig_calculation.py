@@ -23,7 +23,6 @@ from qgis.core import (
     QgsProcessingParameterEnum,
     QgsProcessingParameterFile,
     QgsProcessingParameterFolderDestination,
-    QgsProcessingParameterNumber,
 )
 
 from ...utils.converters import (
@@ -51,8 +50,8 @@ class SolweigCalculationAlgorithm(SolweigAlgorithmBase):
     """
     Unified SOLWEIG calculation algorithm.
 
-    Combines single timestep, timeseries, tiled processing, and optional
-    UTCI/PET post-processing into a single Processing algorithm.
+    Combines single timestep, timeseries, and optional UTCI/PET post-processing
+    into a single Processing algorithm. Large rasters are automatically tiled.
     """
 
     # Weather source enum values
@@ -81,7 +80,8 @@ All rasters (DSM, CDSM, DEM, walls) are loaded automatically.
 <li><b>UMEP met file:</b> Load from UMEP/SUEWS meteorological forcing files</li>
 </ul>
 For timeseries modes, thermal state (ground heating/cooling) accumulates
-across timesteps for physically accurate results.
+across timesteps for physically accurate results. Large rasters are
+automatically processed using overlapping tiles to manage memory.
 
 <b>Post-processing (optional):</b>
 <ul>
@@ -187,34 +187,6 @@ GeoTIFF files organised into subfolders of the output directory:
             param = self.parameterDefinition(name)
             if param:
                 param.setFlags(param.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
-
-        # --- Tiling (advanced) ---
-        enable_tiling = QgsProcessingParameterBoolean(
-            "ENABLE_TILING",
-            self.tr("Enable tiled processing (for large rasters, single timestep only)"),
-            defaultValue=False,
-        )
-        enable_tiling.setFlags(enable_tiling.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
-        self.addParameter(enable_tiling)
-
-        auto_tile = QgsProcessingParameterBoolean(
-            "AUTO_TILE_SIZE",
-            self.tr("Auto-calculate optimal tile size"),
-            defaultValue=True,
-        )
-        auto_tile.setFlags(auto_tile.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
-        self.addParameter(auto_tile)
-
-        tile_size = QgsProcessingParameterNumber(
-            "TILE_SIZE",
-            self.tr("Tile size (pixels, if not auto)"),
-            type=QgsProcessingParameterNumber.Integer,
-            defaultValue=1024,
-            minValue=256,
-            maxValue=4096,
-        )
-        tile_size.setFlags(tile_size.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
-        self.addParameter(tile_size)
 
         # --- Output selection (Tmrt always saved) ---
         self.addParameter(
@@ -376,6 +348,7 @@ GeoTIFF files organised into subfolders of the output directory:
         human = create_human_params_from_parameters(parameters)
         use_anisotropic_sky = self.parameterAsBool(parameters, "USE_ANISOTROPIC_SKY", context)
         conifer = self.parameterAsBool(parameters, "CONIFER", context)
+        max_shadow_distance_m = self.parameterAsDouble(parameters, "MAX_SHADOW_DISTANCE", context)
         output_dir = self.parameterAsString(parameters, "OUTPUT_DIR", context)
 
         # Default output to 'results/' inside prepared surface directory
@@ -409,16 +382,6 @@ GeoTIFF files organised into subfolders of the output directory:
                     f"Could not load SVF from {svf_dir}: {e}",
                     fatalError=False,
                 )
-
-        # Check tiling
-        enable_tiling = self.parameterAsBool(parameters, "ENABLE_TILING", context)
-        if enable_tiling and len(weather_series) > 1:
-            feedback.reportError(
-                "Tiled processing is only supported for single timesteps. "
-                "Disabling tiling and using standard processing.",
-                fatalError=False,
-            )
-            enable_tiling = False
 
         if feedback.isCanceled():
             return {}
@@ -465,21 +428,7 @@ GeoTIFF files organised into subfolders of the output directory:
         n_results = 0
         tmrt_stats = {}
 
-        if is_single and enable_tiling:
-            results = self._run_tiled(
-                solweig,
-                surface,
-                location,
-                weather_series[0],
-                human,
-                use_anisotropic_sky,
-                conifer,
-                parameters,
-                context,
-                output_dir,
-                feedback,
-            )
-        elif is_single:
+        if is_single:
             results = self._run_single(
                 solweig,
                 surface,
@@ -491,6 +440,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 precomputed,
                 output_dir,
                 selected_outputs,
+                max_shadow_distance_m,
                 feedback,
             )
         else:
@@ -505,6 +455,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 precomputed,
                 output_dir,
                 selected_outputs,
+                max_shadow_distance_m,
                 feedback,
             )
 
@@ -580,6 +531,7 @@ GeoTIFF files organised into subfolders of the output directory:
         precomputed,
         output_dir,
         selected_outputs,
+        max_shadow_distance_m,
         feedback,
     ) -> list:
         """Run single timestep with standard processing."""
@@ -595,6 +547,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 precomputed=precomputed,
                 use_anisotropic_sky=use_anisotropic_sky,
                 conifer=conifer,
+                max_shadow_distance_m=max_shadow_distance_m,
             )
         except Exception as e:
             raise QgsProcessingException(f"Calculation failed: {e}") from e
@@ -621,81 +574,6 @@ GeoTIFF files organised into subfolders of the output directory:
         feedback.setProgress(90)
         return [result]
 
-    def _run_tiled(
-        self,
-        solweig,
-        surface,
-        location,
-        weather,
-        human,
-        use_anisotropic_sky,
-        conifer,
-        parameters,
-        context,
-        output_dir,
-        feedback,
-    ) -> list:
-        """Run single timestep with tiled processing."""
-        rows, cols = surface.dsm.shape
-        feedback.pushInfo(f"Raster size: {cols}x{rows} pixels")
-
-        auto_tile = self.parameterAsBool(parameters, "AUTO_TILE_SIZE", context)
-        if auto_tile:
-            tile_size = self._calculate_auto_tile_size(rows, cols)
-            feedback.pushInfo(f"Auto tile size: {tile_size}x{tile_size}")
-        else:
-            tile_size = self.parameterAsInt(parameters, "TILE_SIZE", context)
-            feedback.pushInfo(f"Manual tile size: {tile_size}x{tile_size}")
-
-        # If raster fits in single tile, use standard processing
-        if rows <= tile_size and cols <= tile_size:
-            feedback.pushInfo("Raster fits in single tile, using standard processing")
-            try:
-                result = solweig.calculate(
-                    surface=surface,
-                    location=location,
-                    weather=weather,
-                    human=human,
-                    use_anisotropic_sky=use_anisotropic_sky,
-                    conifer=conifer,
-                )
-            except Exception as e:
-                raise QgsProcessingException(f"Calculation failed: {e}") from e
-        else:
-            feedback.setProgressText(f"Processing with {tile_size}x{tile_size} tiles...")
-            feedback.setProgress(25)
-
-            try:
-                result = solweig.calculate_tiled(
-                    surface=surface,
-                    location=location,
-                    weather=weather,
-                    human=human,
-                    tile_size=tile_size,
-                    use_anisotropic_sky=use_anisotropic_sky,
-                    conifer=conifer,
-                )
-            except Exception as e:
-                raise QgsProcessingException(f"Tiled calculation failed: {e}") from e
-
-        feedback.setProgress(80)
-
-        # Save tmrt output in subdirectory
-        timestamp = weather.datetime.strftime("%Y%m%d_%H%M")
-        tmrt_dir = os.path.join(output_dir, "tmrt")
-        os.makedirs(tmrt_dir, exist_ok=True)
-        filepath = os.path.join(tmrt_dir, f"tmrt_{timestamp}.tif")
-        self.save_georeferenced_output(
-            array=result.tmrt,
-            output_path=filepath,
-            geotransform=surface._geotransform,
-            crs_wkt=surface._crs_wkt,
-            feedback=feedback,
-        )
-
-        feedback.setProgress(90)
-        return [result]
-
     def _run_timeseries(
         self,
         solweig,
@@ -708,6 +586,7 @@ GeoTIFF files organised into subfolders of the output directory:
         precomputed,
         output_dir,
         selected_outputs,
+        max_shadow_distance_m,
         feedback,
     ) -> tuple[int, dict]:
         """Run multi-timestep timeseries with per-timestep progress.
@@ -763,6 +642,7 @@ GeoTIFF files organised into subfolders of the output directory:
                     use_anisotropic_sky=use_anisotropic_sky,
                     conifer=conifer,
                     state=state,
+                    max_shadow_distance_m=max_shadow_distance_m,
                 )
             except Exception as e:
                 raise QgsProcessingException(
@@ -919,16 +799,6 @@ GeoTIFF files organised into subfolders of the output directory:
     # -------------------------------------------------------------------------
     # Utility helpers
     # -------------------------------------------------------------------------
-
-    @staticmethod
-    def _calculate_auto_tile_size(rows: int, cols: int) -> int:
-        """Calculate optimal tile size based on raster dimensions."""
-        if rows * cols > 4000 * 4000:
-            return 1024
-        elif rows * cols > 2000 * 2000:
-            return min(rows, cols, 2048)
-        else:
-            return max(rows, cols)
 
     @staticmethod
     def _report_summary(

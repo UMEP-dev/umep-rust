@@ -91,7 +91,7 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
 
     def initAlgorithm(self, config=None):
         """Define algorithm parameters."""
-        # Surface inputs (DSM, CDSM, DEM, TDSM, Land cover, RELATIVE_HEIGHTS)
+        # Surface inputs (DSM, CDSM, DEM, TDSM, Land cover + per-layer height modes)
         add_surface_parameters(self)
 
         # Processing extent (optional)
@@ -179,6 +179,7 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
         dsm, dsm_gt, crs_wkt = load_raster_from_layer(dsm_layer)
         native_pixel_size = abs(dsm_gt[1])
         feedback.pushInfo(f"DSM: {dsm.shape[1]}x{dsm.shape[0]} pixels")
+        feedback.pushInfo(f"  range: {float(np.nanmin(dsm)):.1f} – {float(np.nanmax(dsm)):.1f} m")
         feedback.pushInfo(f"Native pixel size: {native_pixel_size:.2f} m")
 
         # Resolve output pixel size
@@ -201,15 +202,21 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
         # Load optional rasters
         cdsm, cdsm_gt = _load_optional_raster(parameters, "CDSM", context, self)
         if cdsm is not None:
-            feedback.pushInfo("Loaded CDSM (vegetation)")
+            feedback.pushInfo(
+                f"Loaded CDSM (vegetation), range: {float(np.nanmin(cdsm)):.1f} – {float(np.nanmax(cdsm)):.1f} m"
+            )
 
         dem, dem_gt = _load_optional_raster(parameters, "DEM", context, self)
         if dem is not None:
-            feedback.pushInfo("Loaded DEM (ground elevation)")
+            feedback.pushInfo(
+                f"Loaded DEM (ground elevation), range: {float(np.nanmin(dem)):.1f} – {float(np.nanmax(dem)):.1f} m"
+            )
 
         tdsm, tdsm_gt = _load_optional_raster(parameters, "TDSM", context, self)
         if tdsm is not None:
-            feedback.pushInfo("Loaded TDSM (trunk zone)")
+            feedback.pushInfo(
+                f"Loaded TDSM (trunk zone), range: {float(np.nanmin(tdsm)):.1f} – {float(np.nanmax(tdsm)):.1f} m"
+            )
 
         lc_arr, lc_gt = _load_optional_raster(parameters, "LAND_COVER", context, self)
         land_cover = lc_arr.astype(np.uint8) if lc_arr is not None else None
@@ -271,7 +278,9 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
         feedback.setProgressText("Computing valid mask and cropping...")
         feedback.setProgress(25)
 
-        relative_heights = self.parameterAsEnum(parameters, "RELATIVE_HEIGHTS", context) == 0
+        dsm_relative = self.parameterAsEnum(parameters, "DSM_HEIGHT_MODE", context) == 0
+        cdsm_relative = self.parameterAsEnum(parameters, "CDSM_HEIGHT_MODE", context) == 0
+        tdsm_relative = self.parameterAsEnum(parameters, "TDSM_HEIGHT_MODE", context) == 0
 
         surface = solweig.SurfaceData(
             dsm=dsm,
@@ -280,14 +289,17 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
             tdsm=tdsm,
             land_cover=land_cover,
             pixel_size=pixel_size,
-            relative_heights=relative_heights,
+            dsm_relative=dsm_relative,
+            cdsm_relative=cdsm_relative,
+            tdsm_relative=tdsm_relative,
         )
         surface._geotransform = aligned_gt
         surface._crs_wkt = crs_wkt
 
-        # Convert relative heights to absolute if needed
-        if relative_heights and (cdsm is not None or tdsm is not None):
-            feedback.pushInfo("Converting relative vegetation heights to absolute...")
+        # Convert relative heights to absolute where needed
+        needs_preprocess = dsm_relative or (cdsm_relative and cdsm is not None) or (tdsm_relative and tdsm is not None)
+        if needs_preprocess:
+            feedback.pushInfo("Converting relative heights to absolute...")
             surface.preprocess()
 
         # Fill NaN with ground reference, mask invalid pixels, crop to valid bbox
@@ -470,7 +482,9 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
             "geotransform": list(gt),
             "crs_wkt": crs,
             "shape": list(surface.dsm.shape),
-            "relative_heights": False,  # Always absolute after preprocessing
+            "dsm_relative": False,  # Always absolute after preprocessing
+            "cdsm_relative": False,
+            "tdsm_relative": False,
             "has_cdsm": surface.cdsm is not None,
             "has_dem": surface.dem is not None,
             "has_tdsm": surface.tdsm is not None,

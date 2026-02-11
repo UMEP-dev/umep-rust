@@ -30,17 +30,32 @@ def add_surface_parameters(algorithm: QgsProcessingAlgorithm) -> None:
 
     Parameters added:
         DSM (required): Digital Surface Model
+        DSM_HEIGHT_MODE: DSM height convention (0=relative, 1=absolute)
         CDSM (optional): Canopy DSM (vegetation heights)
+        CDSM_HEIGHT_MODE: CDSM height convention (0=relative, 1=absolute)
         DEM (optional): Digital Elevation Model (ground)
         TDSM (optional): Trunk zone DSM
+        TDSM_HEIGHT_MODE: TDSM height convention (0=relative, 1=absolute)
         LAND_COVER (optional): Land cover classification
-        RELATIVE_HEIGHTS: Vegetation height convention (0=relative, 1=absolute)
     """
+    _height_options = [
+        "Relative — above ground",
+        "Absolute — above sea level",
+    ]
+
     algorithm.addParameter(
         QgsProcessingParameterRasterLayer(
             "DSM",
             algorithm.tr("Digital Surface Model (DSM)"),
             optional=False,
+        )
+    )
+    algorithm.addParameter(
+        QgsProcessingParameterEnum(
+            "DSM_HEIGHT_MODE",
+            algorithm.tr("DSM height convention"),
+            options=_height_options,
+            defaultValue=1,  # Absolute (most common for DSM)
         )
     )
 
@@ -49,6 +64,14 @@ def add_surface_parameters(algorithm: QgsProcessingAlgorithm) -> None:
             "CDSM",
             algorithm.tr("Canopy DSM (vegetation heights)"),
             optional=True,
+        )
+    )
+    algorithm.addParameter(
+        QgsProcessingParameterEnum(
+            "CDSM_HEIGHT_MODE",
+            algorithm.tr("CDSM height convention"),
+            options=_height_options,
+            defaultValue=0,  # Relative (most common for CDSM)
         )
     )
 
@@ -67,24 +90,20 @@ def add_surface_parameters(algorithm: QgsProcessingAlgorithm) -> None:
             optional=True,
         )
     )
+    algorithm.addParameter(
+        QgsProcessingParameterEnum(
+            "TDSM_HEIGHT_MODE",
+            algorithm.tr("TDSM height convention"),
+            options=_height_options,
+            defaultValue=0,  # Relative (most common for TDSM)
+        )
+    )
 
     algorithm.addParameter(
         QgsProcessingParameterRasterLayer(
             "LAND_COVER",
             algorithm.tr("Land cover classification (UMEP IDs)"),
             optional=True,
-        )
-    )
-
-    algorithm.addParameter(
-        QgsProcessingParameterEnum(
-            "RELATIVE_HEIGHTS",
-            algorithm.tr("Vegetation height convention (CDSM/TDSM)"),
-            options=[
-                "Relative — height above ground (e.g. tree = 8 m)",
-                "Absolute — elevation above sea level (e.g. tree = 133 m)",
-            ],
-            defaultValue=0,  # Relative
         )
     )
 
@@ -328,7 +347,10 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         USE_ANISOTROPIC_SKY: Enable anisotropic sky model
         CONIFER: Treat vegetation as evergreen
         SVF_DIR: Override SVF directory (optional)
+        MAX_SHADOW_DISTANCE: Maximum shadow distance in metres
     """
+    from qgis.core import QgsProcessingParameterDefinition
+
     algorithm.addParameter(
         QgsProcessingParameterBoolean(
             "USE_ANISOTROPIC_SKY",
@@ -353,6 +375,17 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
             optional=True,
         )
     )
+
+    max_shadow = QgsProcessingParameterNumber(
+        "MAX_SHADOW_DISTANCE",
+        algorithm.tr("Maximum shadow distance (m) — caps shadow ray reach and tile overlap"),
+        type=QgsProcessingParameterNumber.Double,
+        defaultValue=500.0,
+        minValue=50.0,
+        maxValue=2000.0,
+    )
+    max_shadow.setFlags(max_shadow.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    algorithm.addParameter(max_shadow)
 
 
 def add_output_tmrt_parameter(algorithm: QgsProcessingAlgorithm) -> None:

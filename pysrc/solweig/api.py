@@ -65,6 +65,7 @@ from .postprocess import (
 from .tiling import (
     calculate_buffer_distance,
     calculate_tiled,
+    calculate_timeseries_tiled,
     generate_tiles,
     validate_tile_size,
 )
@@ -166,10 +167,15 @@ def validate_inputs(
             )
 
     # Check for potential issues (warnings, not errors)
-    if surface.cdsm is not None and not surface._preprocessed and surface.relative_heights:
+    if surface.cdsm is not None and not surface._preprocessed and surface.cdsm_relative:
         warnings.append(
-            "CDSM provided with relative_heights=True but preprocess() not called. "
+            "CDSM provided with cdsm_relative=True but preprocess() not called. "
             "Vegetation heights may be incorrect. Call surface.preprocess() first."
+        )
+    if surface.tdsm is not None and not surface._preprocessed and surface.tdsm_relative:
+        warnings.append(
+            "TDSM provided with tdsm_relative=True but preprocess() not called. "
+            "Trunk heights may be incorrect. Call surface.preprocess() first."
         )
 
     # DSM height sanity checks
@@ -191,25 +197,29 @@ def validate_inputs(
             "compute building heights correctly."
         )
 
-    # CDSM/TDSM relative_heights mismatch detection
-    for grid_name, grid in [("CDSM", surface.cdsm), ("TDSM", surface.tdsm)]:
-        if grid is not None and surface.relative_heights:
+    # Per-layer relative height mismatch detection
+    for grid_name, grid, is_relative in [
+        ("CDSM", surface.cdsm, surface.cdsm_relative),
+        ("TDSM", surface.tdsm, surface.tdsm_relative),
+    ]:
+        if grid is not None and is_relative:
             nonzero = grid[grid > 0]
             if nonzero.size > 0:
                 grid_min_nz = float(np.nanmin(nonzero))
                 if grid_min_nz > 50:
+                    flag = f"{grid_name.lower()}_relative"
                     warnings.append(
                         f"{grid_name} minimum non-zero value is {grid_min_nz:.0f}m with "
-                        "relative_heights=True. Relative vegetation heights are typically "
-                        "0-50m. If it contains absolute elevations, set relative_heights=False."
+                        f"{flag}=True. Relative vegetation heights are typically "
+                        f"0-50m. If it contains absolute elevations, set {flag}=False."
                     )
 
-    if surface.cdsm is not None and not surface.relative_heights and surface._looks_like_relative_heights():
+    if surface.cdsm is not None and not surface.cdsm_relative and surface._looks_like_relative_heights():
         cdsm_max = float(np.nanmax(surface.cdsm))
         warnings.append(
             f"CDSM values (max={cdsm_max:.1f}m) are much smaller than DSM "
-            f"(min={dsm_min:.1f}m) with relative_heights=False. "
-            "If CDSM contains height-above-ground, set relative_heights=True "
+            f"(min={dsm_min:.1f}m) with cdsm_relative=False. "
+            "If CDSM contains height-above-ground, set cdsm_relative=True "
             "and call surface.preprocess()."
         )
 
@@ -244,6 +254,7 @@ def calculate(
     physics: SimpleNamespace | None = None,
     materials: SimpleNamespace | None = None,
     wall_material: str | None = None,
+    max_shadow_distance_m: float | None = None,
 ) -> SolweigResult:
     """
     Calculate mean radiant temperature (Tmrt).
@@ -330,6 +341,7 @@ def calculate(
     effective_human = human
     effective_physics = physics
     effective_materials = materials
+    effective_max_shadow = max_shadow_distance_m
 
     if config is not None:
         # Use config values as fallback for None parameters
@@ -341,6 +353,8 @@ def calculate(
             effective_physics = config.physics
         if effective_materials is None:
             effective_materials = config.materials
+        if effective_max_shadow is None:
+            effective_max_shadow = config.max_shadow_distance_m
 
         # Debug log when explicit params override config
         overrides = []
@@ -403,6 +417,7 @@ def calculate(
         conifer=conifer,
         wall_material=wall_material,
         use_anisotropic_sky=use_anisotropic_sky,
+        max_shadow_distance_m=effective_max_shadow,
     )
 
 
@@ -415,6 +430,7 @@ __all__ = [
     "calculate",
     "calculate_timeseries",
     "calculate_tiled",
+    "calculate_timeseries_tiled",
     "validate_inputs",
     # Dataclasses - Core inputs
     "SurfaceData",

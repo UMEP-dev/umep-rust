@@ -68,16 +68,17 @@ surface = solweig.SurfaceData.prepare(
     pixel_size=1.0,  # Optional: specify resolution (default: from DSM)
 )
 
-# Step 2: Load weather data from EPW file
+# Step 2: Load weather data and location from EPW file
+epw_path = str(input_path / "athens_2023.epw")
 weather_list = solweig.Weather.from_epw(
-    str(input_path / "athens_2023.epw"),
+    epw_path,
     start="2023-07-01",
     end="2023-07-04",  # 4 days: July 1-4
 )
+location = solweig.Location.from_epw(epw_path)  # lat, lon, UTC offset, elevation
 
 # %%
 # Step 3: Calculate Tmrt with all defaults
-# Location is auto-extracted from surface CRS metadata
 # All parameters use bundled defaults:
 #  - Human: abs_k=0.7, abs_l=0.95, standing, 75kg, 180cm, 35yo, 80W activity
 #  - Physics: Tree transmissivity=0.03, seasonal dates, posture geometry
@@ -85,6 +86,7 @@ weather_list = solweig.Weather.from_epw(
 results = solweig.calculate_timeseries(
     surface=surface,
     weather_series=weather_list,
+    location=location,
     use_anisotropic_sky=True,  # Uses SVF (computed automatically if needed)
     conifer=False,  # Use seasonal leaf on/off (set True for evergreen trees)
     output_dir=str(output_dir),

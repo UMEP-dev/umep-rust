@@ -77,7 +77,7 @@ surface = solweig.SurfaceData(
     dsm=dsm,
     cdsm=cdsm,
     pixel_size=1.0,
-    relative_heights=True,  # CDSM is height above ground
+    cdsm_relative=True,  # CDSM is height above ground (default)
 )
 
 # Preprocess converts relative → absolute heights

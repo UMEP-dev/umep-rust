@@ -60,9 +60,12 @@ weather_list = solweig.Weather.from_umep_met(
     start="1975-07-01",
     end="1975-07-02",  # 2 days: July 1-2
 )
+# Location from surface CRS with explicit UTC offset (Gothenburg: CET = UTC+1)
+location = solweig.Location.from_surface(surface, utc_offset=1)
 results = solweig.calculate_timeseries(
     surface=surface,
     weather_series=weather_list,
+    location=location,
     output_dir=str(working_path / "output"),
 )
 

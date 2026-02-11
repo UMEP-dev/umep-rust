@@ -80,7 +80,7 @@ jobs:
         run: uv sync --group dev
 
       - name: Build Rust extension
-        run: uv run maturin develop
+        run: uv run maturin develop --release
 
       - name: Run tests (excluding slow)
         run: uv run python -m pytest tests/ -m 'not slow' -v --tb=short
@@ -107,7 +107,7 @@ jobs:
         run: uv sync --group dev
 
       - name: Build Rust extension
-        run: uv run maturin develop
+        run: uv run maturin develop --release
 
       - name: Run memory benchmark tests
         run: uv run python -m pytest tests/benchmarks/ -v --tb=short
@@ -140,7 +140,7 @@ jobs:
         run: uv pip install "gdal==$(gdal-config --version)"
 
       - name: Build Rust extension
-        run: uv run maturin develop
+        run: uv run maturin develop --release
 
       - name: Verify NumPy version
         run: uv run python -c "import numpy; assert numpy.__version__.startswith('1.26'), f'Expected NumPy 1.26.x, got {numpy.__version__}'"

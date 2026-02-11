@@ -16,6 +16,14 @@ from solweig import (
     calculate,
     calculate_tiled,
 )
+from solweig.models.state import ThermalState, TileSpec
+from solweig.tiling import (
+    _calculate_auto_tile_size,
+    _extract_tile_surface,
+    _merge_tile_state,
+    _should_use_tiling,
+    _slice_tile_state,
+)
 
 pytestmark = pytest.mark.slow
 
@@ -83,14 +91,14 @@ class TestMultiTileProcessing:
 
         caplog.set_level(logging.INFO)
 
-        # With 5m buildings: buffer ≈ 95m = 95px
+        # With 5m buildings and max_shadow_distance_m=100: buffer ≈ 95m = 95px
         # tile_size=350 gives ~160px core
-        # 800x800 / 350 = ~6 tiles (3x2 grid roughly)
         result = calculate_tiled(
             large_urban_surface,
             location_gothenburg,
             weather_noon,
             tile_size=350,
+            max_shadow_distance_m=100.0,
         )
 
         # Check that tiled processing was used (not fallback)
@@ -127,15 +135,14 @@ class TestMultiTileProcessing:
         # Non-tiled reference
         result_ref = calculate(surface, location_gothenburg, weather_noon)
 
-        # Tiled with small tiles to force actual tiling
-        # With 2m pixels and ~15m buildings, buffer = 15/tan(3°) ≈ 286m = 143 pixels
-        # So tile_size=256 with buffer 143 means core is only 113px, which is too small
-        # Use tile_size=512 to ensure meaningful core
+        # Tiled with limited shadow distance to keep buffer manageable
+        # With max_shadow_distance_m=200 and 2m pixels: buffer = 100 pixels
         result_tiled = calculate_tiled(
             surface,
             location_gothenburg,
             weather_noon,
-            tile_size=512,
+            tile_size=300,
+            max_shadow_distance_m=200.0,
         )
 
         # Compare Tmrt where both are valid
@@ -146,9 +153,10 @@ class TestMultiTileProcessing:
             mean_diff = diff.mean()
             max_diff = diff.max()
 
-            # Should be very close (tile boundaries shouldn't cause significant differences)
-            assert mean_diff < 0.5, f"Mean Tmrt diff {mean_diff:.2f}°C too large"
-            assert max_diff < 2.0, f"Max Tmrt diff {max_diff:.2f}°C too large (possible tile boundary issue)"
+            # Both paths now use the same mock SVF (tiled path slices from global).
+            # Only shadow edge effects from tiling should cause small differences.
+            assert mean_diff < 0.01, f"Mean Tmrt diff {mean_diff:.2f}°C too large"
+            assert max_diff < 0.1, f"Max Tmrt diff {max_diff:.2f}°C too large (possible tile boundary issue)"
 
     def test_tile_boundary_continuity(self, location_gothenburg, weather_noon):
         """Verify results are continuous across tile boundaries."""
@@ -163,6 +171,7 @@ class TestMultiTileProcessing:
             location_gothenburg,
             weather_noon,
             tile_size=256,
+            max_shadow_distance_m=50.0,
         )
 
         valid_tmrt = result.tmrt[np.isfinite(result.tmrt)]
@@ -182,7 +191,8 @@ class TestMultiTileProcessing:
             large_urban_surface,
             location_gothenburg,
             weather_noon,
-            tile_size=350,  # Must be large enough for buffer requirement
+            tile_size=350,
+            max_shadow_distance_m=100.0,
             progress_callback=track_progress,
         )
 
@@ -214,7 +224,292 @@ class TestTilingMemoryBehavior:
             global_rad=800.0,
         )
 
-        _ = calculate_tiled(surface, location, weather, tile_size=256)
+        _ = calculate_tiled(surface, location, weather, tile_size=256, max_shadow_distance_m=50.0)
 
         # Original DSM should be unchanged
         assert np.allclose(surface.dsm, original_dsm), "DSM was modified during tiled processing"
+
+
+class TestTilingHelpers:
+    """Tests for tiling helper functions."""
+
+    def test_should_use_tiling_below_threshold(self):
+        """Rasters at or below 2500px should not trigger tiling."""
+        assert not _should_use_tiling(2500, 2500)
+        assert not _should_use_tiling(100, 100)
+        assert not _should_use_tiling(2500, 1000)
+
+    def test_should_use_tiling_above_threshold(self):
+        """Rasters exceeding 2500px in either dimension should trigger tiling."""
+        assert _should_use_tiling(2501, 2501)
+        assert _should_use_tiling(2501, 100)
+        assert _should_use_tiling(100, 2501)
+
+    def test_auto_tile_size_large(self):
+        """Very large rasters (>16M px) should get 1024 tile size."""
+        assert _calculate_auto_tile_size(5000, 5000) == 1024
+
+    def test_auto_tile_size_medium(self):
+        """Medium rasters (>4M px) should get 2048 tile size."""
+        assert _calculate_auto_tile_size(3000, 3000) == 2048
+
+    def test_auto_tile_size_small(self):
+        """Smaller rasters should not tile (returns max dimension)."""
+        result = _calculate_auto_tile_size(1500, 1500)
+        assert result >= 1500
+
+    def test_extract_tile_surface_reuses_svf(self):
+        """When surface has precomputed SVF, tile surface should get sliced SVF."""
+        size = 100
+        dsm = np.ones((size, size), dtype=np.float32) * 5.0
+        mock_svf = make_mock_svf((size, size))
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=mock_svf)
+
+        # Create a tile covering rows 10-60, cols 10-60 (with 10px overlap)
+        tile = TileSpec(
+            row_start=20,
+            row_end=50,
+            col_start=20,
+            col_end=50,
+            row_start_full=10,
+            row_end_full=60,
+            col_start_full=10,
+            col_end_full=60,
+            overlap_top=10,
+            overlap_bottom=10,
+            overlap_left=10,
+            overlap_right=10,
+        )
+
+        tile_surface = _extract_tile_surface(surface, tile, pixel_size=1.0)
+
+        # SVF should be set (sliced from global, not recomputed)
+        assert tile_surface.svf is not None
+        assert tile_surface.svf.svf.shape == (50, 50)  # 60-10 = 50
+
+        # Values should match the sliced region of the global SVF
+        np.testing.assert_array_equal(
+            tile_surface.svf.svf,
+            mock_svf.svf[10:60, 10:60],
+        )
+
+    def test_extract_tile_surface_computes_svf_when_missing(self):
+        """When surface has no precomputed SVF, tile surface should compute it."""
+        size = 50
+        dsm = np.ones((size, size), dtype=np.float32) * 5.0
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        assert surface.svf is None
+
+        tile = TileSpec(
+            row_start=10,
+            row_end=40,
+            col_start=10,
+            col_end=40,
+            row_start_full=0,
+            row_end_full=50,
+            col_start_full=0,
+            col_end_full=50,
+            overlap_top=10,
+            overlap_bottom=10,
+            overlap_left=10,
+            overlap_right=10,
+        )
+
+        tile_surface = _extract_tile_surface(surface, tile, pixel_size=1.0)
+
+        # SVF should have been computed fresh
+        assert tile_surface.svf is not None
+        assert tile_surface.svf.svf.shape == (50, 50)
+
+
+class TestSliceMergeState:
+    """Tests for _slice_tile_state and _merge_tile_state."""
+
+    @pytest.fixture
+    def global_state(self):
+        """Create a global state with distinctive values."""
+        shape = (100, 100)
+        state = ThermalState(
+            tgmap1=np.random.rand(*shape).astype(np.float32),
+            tgmap1_e=np.random.rand(*shape).astype(np.float32),
+            tgmap1_s=np.random.rand(*shape).astype(np.float32),
+            tgmap1_w=np.random.rand(*shape).astype(np.float32),
+            tgmap1_n=np.random.rand(*shape).astype(np.float32),
+            tgout1=np.random.rand(*shape).astype(np.float32),
+            firstdaytime=1.0,
+            timeadd=0.5,
+            timestep_dec=0.042,
+        )
+        return state
+
+    @pytest.fixture
+    def tile(self):
+        """Create a tile spec for the center of a 100x100 grid."""
+        # Core: rows 20-60, cols 30-70
+        # Full (with 10px overlap): rows 10-70, cols 20-80
+        return TileSpec(
+            row_start=20,
+            row_end=60,
+            col_start=30,
+            col_end=70,
+            row_start_full=10,
+            row_end_full=70,
+            col_start_full=20,
+            col_end_full=80,
+            overlap_top=10,
+            overlap_bottom=10,
+            overlap_left=10,
+            overlap_right=10,
+        )
+
+    def test_slice_tile_state_shape(self, global_state, tile):
+        """Sliced state should have full tile shape."""
+        sliced = _slice_tile_state(global_state, tile)
+        expected_shape = (60, 60)  # rows 10-70, cols 20-80
+        assert sliced.tgmap1.shape == expected_shape
+        assert sliced.tgmap1_e.shape == expected_shape
+        assert sliced.tgout1.shape == expected_shape
+
+    def test_slice_tile_state_values(self, global_state, tile):
+        """Sliced state should contain correct values from global state."""
+        sliced = _slice_tile_state(global_state, tile)
+        read_slice = tile.read_slice
+        np.testing.assert_array_equal(sliced.tgmap1, global_state.tgmap1[read_slice])
+
+    def test_slice_tile_state_scalars(self, global_state, tile):
+        """Sliced state should copy scalar values."""
+        sliced = _slice_tile_state(global_state, tile)
+        assert sliced.firstdaytime == 1.0
+        assert sliced.timeadd == 0.5
+        assert sliced.timestep_dec == 0.042
+
+    def test_slice_tile_state_independent(self, global_state, tile):
+        """Sliced state should be a copy, not a view."""
+        sliced = _slice_tile_state(global_state, tile)
+        original_val = sliced.tgmap1[0, 0]
+        sliced.tgmap1[0, 0] = -999.0
+        assert global_state.tgmap1[tile.row_start_full, tile.col_start_full] == original_val
+
+    def test_merge_tile_state_writes_core(self, global_state, tile):
+        """Merge should write tile core region to correct global position."""
+        sliced = _slice_tile_state(global_state, tile)
+
+        # Modify tile state values
+        sliced.tgmap1[:] = 42.0
+        sliced.firstdaytime = 0.0
+        sliced.timeadd = 1.5
+
+        _merge_tile_state(sliced, tile, global_state)
+
+        # Core region should be updated
+        write_slice = tile.write_slice
+        np.testing.assert_array_equal(global_state.tgmap1[write_slice], 42.0)
+
+        # Scalar values should be updated
+        assert global_state.firstdaytime == 0.0
+        assert global_state.timeadd == 1.5
+
+    def test_merge_tile_state_preserves_outside(self, global_state, tile):
+        """Merge should not modify areas outside the tile's write region."""
+        original_tgmap1 = global_state.tgmap1.copy()
+        sliced = _slice_tile_state(global_state, tile)
+        sliced.tgmap1[:] = 42.0
+
+        _merge_tile_state(sliced, tile, global_state)
+
+        # Areas outside write_slice should be unchanged
+        # Check top-left corner (row 0, col 0) — outside tile
+        assert global_state.tgmap1[0, 0] == original_tgmap1[0, 0]
+        # Check bottom-right corner — outside tile
+        assert global_state.tgmap1[99, 99] == original_tgmap1[99, 99]
+
+
+class TestTimeseriesTiledIntegration:
+    """Integration tests for tiled timeseries processing."""
+
+    @pytest.fixture(scope="class")
+    def small_surface(self):
+        """Small 50x50 surface for fast tests (below tiling threshold)."""
+        np.random.seed(42)
+        size = 50
+        dsm = np.ones((size, size), dtype=np.float32) * 5.0
+        dsm[20:30, 20:30] = 10.0  # Small building
+        return SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
+
+    @pytest.fixture(scope="class")
+    def location(self):
+        return Location(latitude=57.7, longitude=12.0, utc_offset=2)
+
+    @pytest.fixture(scope="class")
+    def weather_pair(self):
+        """Two consecutive timesteps for minimal timeseries."""
+        return [
+            Weather(datetime=datetime(2024, 7, 15, 11, 0), ta=26.0, rh=50.0, global_rad=750.0, ws=2.0),
+            Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0),
+        ]
+
+    def test_timeseries_tiled_matches_nontiled(self, small_surface, location, weather_pair):
+        """Tiled timeseries should match non-tiled within numerical precision.
+
+        Both paths use the same mock SVF from the surface (tiled path slices
+        the global SVF per tile instead of recomputing).
+        """
+        from solweig import calculate_timeseries, calculate_timeseries_tiled
+
+        # Non-tiled (normal path — uses mock SVF from surface)
+        results_ref = calculate_timeseries(
+            surface=small_surface,
+            weather_series=weather_pair,
+            location=location,
+        )
+
+        # Tiled (forced via direct call — slices mock SVF from surface)
+        results_tiled = calculate_timeseries_tiled(
+            surface=small_surface,
+            weather_series=weather_pair,
+            location=location,
+        )
+
+        assert len(results_ref) == len(results_tiled)
+
+        for i, (ref, tiled) in enumerate(zip(results_ref, results_tiled)):
+            both_valid = np.isfinite(ref.tmrt) & np.isfinite(tiled.tmrt)
+            if both_valid.sum() > 0:
+                diff = np.abs(ref.tmrt[both_valid] - tiled.tmrt[both_valid])
+                # Both paths now use the same mock SVF (tiled path slices from global).
+                assert diff.mean() < 0.01, f"Timestep {i}: mean Tmrt diff {diff.mean():.2f}°C too large"
+                assert diff.max() < 0.1, f"Timestep {i}: max Tmrt diff {diff.max():.2f}°C too large"
+
+    def test_timeseries_tiled_state_accumulates(self, small_surface, location, weather_pair):
+        """Thermal state should evolve across timesteps in tiled mode."""
+        from solweig import calculate_timeseries_tiled
+
+        results = calculate_timeseries_tiled(
+            surface=small_surface,
+            weather_series=weather_pair,
+            location=location,
+        )
+
+        # Both timesteps should produce valid results
+        assert len(results) == 2
+        for r in results:
+            valid = np.isfinite(r.tmrt)
+            assert valid.sum() > 0, "Expected some valid Tmrt values"
+
+    def test_timeseries_tiled_progress_callback(self, small_surface, location, weather_pair):
+        """Progress callback should be called for tiled timeseries."""
+        from solweig import calculate_timeseries_tiled
+
+        calls = []
+
+        def track(current, total):
+            calls.append((current, total))
+
+        calculate_timeseries_tiled(
+            surface=small_surface,
+            weather_series=weather_pair,
+            location=location,
+            progress_callback=track,
+        )
+
+        assert len(calls) > 0, "No progress callbacks received"

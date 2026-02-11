@@ -198,9 +198,10 @@ class SolweigResult:
         from ..postprocess import compute_utci_grid
         from .weather import Weather as WeatherClass
 
-        # Check if first argument is a Weather object
-        if isinstance(weather_or_ta, WeatherClass):
-            return compute_utci_grid(self.tmrt, weather_or_ta.ta, weather_or_ta.rh, weather_or_ta.ws)
+        # Duck-type check avoids isinstance failure from dual module import paths
+        if hasattr(weather_or_ta, "ta") and hasattr(weather_or_ta, "rh"):
+            w: WeatherClass = weather_or_ta  # type: ignore[assignment]
+            return compute_utci_grid(self.tmrt, w.ta, w.rh, w.ws)
         else:
             # Individual values
             ta = float(weather_or_ta)
@@ -249,9 +250,10 @@ class SolweigResult:
         from ..postprocess import compute_pet_grid
         from .weather import Weather as WeatherClass
 
-        # Check if first argument is a Weather object
-        if isinstance(weather_or_ta, WeatherClass):
-            return compute_pet_grid(self.tmrt, weather_or_ta.ta, weather_or_ta.rh, weather_or_ta.ws, human)
+        # Duck-type check avoids isinstance failure from dual module import paths
+        if hasattr(weather_or_ta, "ta") and hasattr(weather_or_ta, "rh"):
+            w: WeatherClass = weather_or_ta  # type: ignore[assignment]
+            return compute_pet_grid(self.tmrt, w.ta, w.rh, w.ws, human)
         else:
             # Individual values
             ta = float(weather_or_ta)

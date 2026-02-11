@@ -65,6 +65,7 @@ from .api import (  # noqa: E402
     calculate_buffer_distance,
     calculate_tiled,
     calculate_timeseries,
+    calculate_timeseries_tiled,
     compute_pet,
     compute_pet_grid,
     # Post-processing: Thermal comfort indices
@@ -87,7 +88,7 @@ from .errors import SolweigError  # noqa: E402
 
 # Try to import Rust algorithms
 try:
-    from .rustalgos import GPU_ENABLED, gvf, pet, shadowing, sky, skyview, utci, vegetation
+    from .rustalgos import GPU_ENABLED, RELEASE_BUILD, gvf, pet, shadowing, sky, skyview, utci, vegetation
 
     # Enable GPU by default if available
     if GPU_ENABLED:
@@ -99,6 +100,7 @@ try:
 except ImportError as e:
     logger.warning(f"Failed to import Rust algorithms: {e}")
     GPU_ENABLED = False
+    RELEASE_BUILD = False
     shadowing = None
     skyview = None
     gvf = None
@@ -168,6 +170,7 @@ __all__ = [
     "calculate",
     "calculate_timeseries",
     "calculate_tiled",
+    "calculate_timeseries_tiled",
     "validate_inputs",
     "load_params",
     "load_physics",
@@ -196,4 +199,5 @@ __all__ = [
     "get_compute_backend",
     "disable_gpu",
     "GPU_ENABLED",
+    "RELEASE_BUILD",
 ]

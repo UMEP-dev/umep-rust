@@ -110,6 +110,7 @@ def calculate_timeseries(
     physics: SimpleNamespace | None = None,
     materials: SimpleNamespace | None = None,
     wall_material: str | None = None,
+    max_shadow_distance_m: float | None = None,
     output_dir: str | Path | None = None,
     outputs: list[str] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
@@ -119,6 +120,10 @@ def calculate_timeseries(
 
     Maintains thermal state across timesteps for accurate surface temperature
     modeling with thermal inertia (TsWaveDelay_2015a).
+
+    Large rasters (>2500x2500 pixels) are automatically processed using
+    overlapping tiles to manage memory. Shadow buffer distance is set to
+    max_shadow_distance_m, ensuring accurate results at tile boundaries.
 
     This is a convenience function that manages state automatically. For custom
     control over state, use calculate() directly with the state parameter.
@@ -145,6 +150,10 @@ def calculate_timeseries(
         wall_material: Wall material type for temperature model.
             One of "brick", "concrete", "wood", "cobblestone" (case-insensitive).
             If None (default), uses generic wall params from materials JSON.
+        max_shadow_distance_m: Maximum shadow reach in metres (default 500.0).
+            Caps shadow ray computation distance and serves as the tile overlap
+            buffer for automatic tiled processing of large rasters. If None,
+            uses config.max_shadow_distance_m or 500.0.
         output_dir: Directory to save results. If provided, results are saved
             incrementally as GeoTIFF files during calculation (recommended for
             long timeseries to avoid memory issues).
@@ -195,6 +204,7 @@ def calculate_timeseries(
     effective_physics = physics
     effective_materials = materials
     effective_outputs = outputs
+    effective_max_shadow = max_shadow_distance_m
 
     if config is not None:
         # Use config values as fallback for None parameters
@@ -208,6 +218,8 @@ def calculate_timeseries(
             effective_materials = config.materials
         if effective_outputs is None and config.outputs:
             effective_outputs = config.outputs
+        if effective_max_shadow is None:
+            effective_max_shadow = config.max_shadow_distance_m
 
         # Debug log when explicit params override config
         overrides = []
@@ -221,6 +233,8 @@ def calculate_timeseries(
             overrides.append("materials")
         if outputs is not None and config.outputs:
             overrides.append("outputs")
+        if max_shadow_distance_m is not None and max_shadow_distance_m != config.max_shadow_distance_m:
+            overrides.append(f"max_shadow_distance_m={max_shadow_distance_m}")
         if overrides:
             logger.debug(f"Explicit params override config: {', '.join(overrides)}")
 
@@ -242,6 +256,33 @@ def calculate_timeseries(
 
     # Fill NaN in surface layers (idempotent — skipped if already done)
     surface.fill_nan()
+
+    # Auto-tile large rasters transparently
+    from .tiling import _should_use_tiling
+
+    if _should_use_tiling(surface.shape[0], surface.shape[1]):
+        from .tiling import calculate_timeseries_tiled
+
+        logger.info(
+            f"Raster size {surface.dsm.shape[1]}×{surface.dsm.shape[0]} exceeds tiling threshold — "
+            "switching to tiled processing."
+        )
+        return calculate_timeseries_tiled(
+            surface=surface,
+            weather_series=weather_series,
+            location=location,
+            human=human,
+            precomputed=precomputed,
+            use_anisotropic_sky=use_anisotropic_sky,
+            conifer=conifer,
+            physics=physics,
+            materials=materials,
+            wall_material=wall_material,
+            max_shadow_distance_m=effective_max_shadow,
+            output_dir=output_dir,
+            outputs=outputs,
+            progress_callback=progress_callback,
+        )
 
     # Log configuration summary
     logger.info("=" * 60)
@@ -325,6 +366,7 @@ def calculate_timeseries(
             physics=physics,
             materials=materials,
             wall_material=wall_material,
+            max_shadow_distance_m=effective_max_shadow,
         )
 
         # Carry forward state to next timestep

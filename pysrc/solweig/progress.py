@@ -144,6 +144,16 @@ class ProgressReporter:
         if self._tqdm_bar is not None:
             self._tqdm_bar.set_description(desc)
 
+    def set_text(self, text: str) -> None:
+        """Update status text above the progress bar (QGIS only).
+
+        In QGIS, calls ``feedback.setProgressText()`` to update the label
+        shown above the progress bar.  In tqdm/fallback mode this is a no-op
+        (use :meth:`set_description` for tqdm bar text instead).
+        """
+        if self._qgis_feedback is not None:
+            self._qgis_feedback.setProgressText(text)
+
     def is_cancelled(self) -> bool:
         """Check if user requested cancellation (QGIS only)."""
         if self._qgis_feedback is not None:

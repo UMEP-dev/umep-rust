@@ -28,6 +28,10 @@ class ModelConfig:
         human: Human body parameters for Tmrt calculations.
         material_params: Optional material properties from JSON file.
         outputs: Which outputs to save in timeseries calculations.
+        max_shadow_distance_m: Maximum shadow reach in meters. Default 500.0.
+            Caps shadow ray computation distance and serves as tile overlap buffer
+            for automatic tiled processing of large rasters. At low sun angles (3°),
+            a 26m building casts a 500m shadow — taller buildings are capped.
 
     Note:
         UTCI and PET are now computed via post-processing functions (compute_utci, compute_pet)
@@ -57,6 +61,7 @@ class ModelConfig:
     outputs: list[str] = field(default_factory=lambda: ["tmrt"])
     physics: SimpleNamespace | None = None
     materials: SimpleNamespace | None = None
+    max_shadow_distance_m: float = 500.0
 
     def __post_init__(self):
         """Initialize default HumanParams if not provided."""
@@ -136,6 +141,7 @@ class ModelConfig:
         # Serialize to dict
         data = {
             "use_anisotropic_sky": self.use_anisotropic_sky,
+            "max_shadow_distance_m": self.max_shadow_distance_m,
             "outputs": self.outputs,
             "human": {
                 "posture": self.human.posture,
@@ -184,6 +190,7 @@ class ModelConfig:
 
         return cls(
             use_anisotropic_sky=data.get("use_anisotropic_sky", False),
+            max_shadow_distance_m=data.get("max_shadow_distance_m", 500.0),
             human=human,
             outputs=data.get("outputs", ["tmrt"]),
         )

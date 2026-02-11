@@ -167,6 +167,45 @@ class Location:
         logger.debug(f"Auto-extracted location: {lat:.4f}°N, {lon:.4f}°E (UTC{utc_offset:+d})")
         return cls(latitude=lat, longitude=lon, altitude=altitude, utc_offset=utc_offset)
 
+    @classmethod
+    def from_epw(cls, path: str | Path) -> Location:
+        """
+        Extract location from an EPW weather file header.
+
+        The EPW LOCATION line contains latitude, longitude, timezone offset,
+        and elevation — everything needed for a complete Location.
+
+        Args:
+            path: Path to the EPW file.
+
+        Returns:
+            Location with lat, lon, utc_offset, and altitude from the EPW header.
+
+        Raises:
+            FileNotFoundError: If the EPW file doesn't exist.
+            ValueError: If the EPW header is malformed.
+
+        Example:
+            location = Location.from_epw("madrid.epw")
+            # Location(latitude=40.45, longitude=-3.55, altitude=667.0, utc_offset=1)
+        """
+        from .. import io as common
+
+        metadata = common._parse_epw_metadata(Path(path))
+        utc_offset = int(metadata["tz_offset"])
+
+        logger.info(
+            f"Location from EPW: {metadata['city']} — "
+            f"{metadata['latitude']:.4f}°N, {metadata['longitude']:.4f}°E "
+            f"(UTC{utc_offset:+d}, {metadata['elevation']:.0f}m)"
+        )
+        return cls(
+            latitude=metadata["latitude"],
+            longitude=metadata["longitude"],
+            altitude=metadata["elevation"],
+            utc_offset=utc_offset,
+        )
+
     def to_sun_position_dict(self) -> dict:
         """Convert to dict format expected by sun_position module."""
         return {

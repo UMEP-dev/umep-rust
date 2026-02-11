@@ -103,8 +103,6 @@ class SurfaceData:
     Attributes:
         dsm: Digital Surface Model (elevation in meters). Required.
         cdsm: Canopy Digital Surface Model (vegetation heights). Optional.
-            Can be relative heights (above ground) or absolute elevations.
-            Set relative_heights=True if CDSM contains relative heights.
         dem: Digital Elevation Model (ground elevation). Optional.
         tdsm: Trunk Digital Surface Model (trunk zone heights). Optional.
         land_cover: Land cover classification grid (UMEP standard IDs). Optional.
@@ -119,8 +117,12 @@ class SurfaceData:
         shadow_matrices: Preprocessed shadow matrices for anisotropic sky. Optional.
         pixel_size: Pixel size in meters. Default 1.0.
         trunk_ratio: Ratio for auto-generating TDSM from CDSM. Default 0.25.
-        relative_heights: Whether CDSM/TDSM contain relative heights (above ground)
-            rather than absolute elevations. Default True.
+        dsm_relative: Whether DSM contains relative heights (above ground)
+            rather than absolute elevations. Default False. If True, DEM is
+            required and preprocess() converts DSM to absolute via DSM + DEM.
+        cdsm_relative: Whether CDSM contains relative heights. Default True.
+            If True and preprocess() is not called, a warning is issued.
+        tdsm_relative: Whether TDSM contains relative heights. Default True.
             If True and preprocess() is not called, a warning is issued.
 
     Note:
@@ -131,39 +133,46 @@ class SurfaceData:
         max_height is auto-computed from dsm as: np.nanmax(dsm) - np.nanmin(dsm)
 
     Height Conventions:
-        SOLWEIG supports two conventions for CDSM/TDSM vegetation data:
+        Each raster layer can independently use relative or absolute heights.
+        The per-layer flags (``dsm_relative``, ``cdsm_relative``,
+        ``tdsm_relative``) control the convention for each layer.
 
-        **Relative Heights** (default, `relative_heights=True`):
-            - CDSM values represent vegetation height above ground (e.g., 6m tree)
-            - TDSM values represent trunk zone height above ground (e.g., 1.5m)
+        **Relative Heights** (height above ground):
+            - CDSM/TDSM: vegetation height above ground (e.g., 6m tree)
+            - DSM: building/surface height above ground (requires DEM)
             - Typical range: 0-40m for CDSM, 0-10m for TDSM
-            - Must call `preprocess()` before calculations
+            - Must call ``preprocess()`` before calculations
 
-        **Absolute Heights** (`relative_heights=False`):
-            - CDSM values are absolute elevations (same reference as DSM)
-            - TDSM values are absolute elevations
+        **Absolute Heights** (elevation above sea level):
+            - Values in the same vertical reference system
             - Example: DSM=127m, CDSM=133m means 6m vegetation
             - No preprocessing needed
 
         The internal algorithms (Rust) always use **absolute heights**. The
-        `preprocess()` method converts relative → absolute using:
+        ``preprocess()`` method converts relative → absolute using:
+            dsm_absolute = dem + dsm_relative  (requires DEM)
             cdsm_absolute = base + cdsm_relative
             tdsm_absolute = base + tdsm_relative
-        where `base = DEM` if available, else `base = DSM`.
-
-        **Important**: External tools may have different conventions:
-            - UMEP Python `svfForProcessing153` (installed pkg): expects RELATIVE
-            - UMEP-core `svfForProcessing153`: expects ABSOLUTE
-            - QGIS plugins: typically use RELATIVE
+        where ``base = DEM`` if available, else ``base = DSM``.
 
     Example:
-        # With relative vegetation heights (common case):
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm_relative, relative_heights=True)
-        surface.preprocess()  # Convert to absolute heights
+        # Relative CDSM (common case):
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm_rel)
+        surface.preprocess()  # Converts CDSM to absolute
 
-        # With absolute vegetation heights (already preprocessed):
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm_absolute, relative_heights=False)
-        # No need to call preprocess()
+        # Absolute CDSM:
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm_abs, cdsm_relative=False)
+
+        # Mixed: absolute DSM, relative CDSM, absolute TDSM:
+        surface = SurfaceData(
+            dsm=dsm, cdsm=cdsm, tdsm=tdsm,
+            cdsm_relative=True, tdsm_relative=False,
+        )
+        surface.preprocess()  # Only converts CDSM
+
+        # Relative DSM (requires DEM):
+        surface = SurfaceData(dsm=ndsm, dem=dem, dsm_relative=True)
+        surface.preprocess()  # Converts DSM to absolute via DEM + nDSM
     """
 
     # Surface rasters
@@ -184,7 +193,9 @@ class SurfaceData:
     # Grid properties
     pixel_size: float = 1.0
     trunk_ratio: float = 0.25  # Trunk zone ratio for auto-generating TDSM from CDSM
-    relative_heights: bool = True  # Whether CDSM/TDSM are relative (not absolute)
+    dsm_relative: bool = False  # Whether DSM contains relative heights (requires DEM)
+    cdsm_relative: bool = True  # Whether CDSM contains relative heights
+    tdsm_relative: bool = True  # Whether TDSM contains relative heights
 
     # Internal state
     _nan_filled: bool = field(default=False, init=False, repr=False)
@@ -234,7 +245,9 @@ class SurfaceData:
         bbox: list[float] | None = None,
         pixel_size: float | None = None,
         trunk_ratio: float = 0.25,
-        relative_heights: bool = True,
+        dsm_relative: bool = False,
+        cdsm_relative: bool = True,
+        tdsm_relative: bool = True,
         force_recompute: bool = False,
         feedback: Any = None,
     ) -> SurfaceData:
@@ -273,7 +286,9 @@ class SurfaceData:
                 If None, uses auto-intersection of all provided data.
             pixel_size: Pixel size in meters. If None, computed from DSM geotransform.
             trunk_ratio: Ratio for auto-generating TDSM from CDSM. Default 0.25.
-            relative_heights: Whether CDSM/TDSM contain relative heights. Default True.
+            dsm_relative: Whether DSM contains relative heights. Default False.
+            cdsm_relative: Whether CDSM contains relative heights. Default True.
+            tdsm_relative: Whether TDSM contains relative heights. Default True.
             force_recompute: If True, skip cache and recompute walls/SVF even if they
                 exist in working_dir. Default False (use cached data when available).
             feedback: Optional QGIS QgsProcessingFeedback for progress/cancellation.
@@ -299,13 +314,13 @@ class SurfaceData:
             # Minimal case - walls and SVF computed automatically
             surface = SurfaceData.prepare(dsm="data/dsm.tif")
 
-            # Explicit extent override
+            # Mixed height conventions
             surface = SurfaceData.prepare(
                 dsm="data/dsm.tif",
-                wall_height="preprocessed/walls/wall_hts.tif",
-                wall_aspect="preprocessed/walls/wall_aspects.tif",
-                bbox=[476800, 4205850, 477200, 4206250],
-                pixel_size=1.0,
+                cdsm="data/cdsm.tif",
+                tdsm="data/tdsm.tif",
+                cdsm_relative=True,
+                tdsm_relative=False,
             )
         """
         logger.info("Preparing surface data from GeoTIFF files...")
@@ -336,18 +351,37 @@ class SurfaceData:
             aligned_rasters,
             pixel_size,
             trunk_ratio,
-            relative_heights,
+            dsm_relative=dsm_relative,
+            cdsm_relative=cdsm_relative,
+            tdsm_relative=tdsm_relative,
         )
 
         # Validate cached SVF against current inputs (if SVF was loaded)
         if preprocess_data["svf_data"] is not None and not force_recompute:
-            svf_cache_dir = working_path / "svf" / "memmap"
             dsm_arr = aligned_rasters["dsm_arr"]
             cdsm_arr = aligned_rasters.get("cdsm_arr")
+            svf_source = preprocess_data.get("svf_source", "none")
 
-            if not validate_cache(svf_cache_dir, dsm_arr, pixel_size, cdsm_arr):
+            cache_valid = False
+            if svf_source == "memmap":
+                # Memmap has cache_meta.json — use hash-based validation
+                svf_cache_dir = working_path / "svf" / "memmap"
+                cache_valid = validate_cache(svf_cache_dir, dsm_arr, pixel_size, cdsm_arr)
+            elif svf_source == "zip":
+                # Zip has no metadata — validate by shape match only
+                svf_shape = preprocess_data["svf_data"].svf.shape
+                cache_valid = svf_shape == dsm_arr.shape
+                if not cache_valid:
+                    logger.info(f"  SVF shape {svf_shape} doesn't match DSM {dsm_arr.shape}")
+
+            if not cache_valid:
                 logger.info("  → Cache stale, clearing and recomputing SVF...")
-                clear_stale_cache(svf_cache_dir)
+                clear_stale_cache(working_path / "svf" / "memmap")
+                # Also remove zip/npz so stale data doesn't persist
+                for stale_file in ("svfs.zip", "shadowmats.npz"):
+                    stale_path = working_path / "svf" / stale_file
+                    if stale_path.exists():
+                        stale_path.unlink()
                 preprocess_data["svf_data"] = None
                 preprocess_data["compute_svf"] = True
                 surface_data.svf = None
@@ -360,9 +394,14 @@ class SurfaceData:
         if preprocess_data["compute_svf"]:
             cls._compute_and_cache_svf(surface_data, aligned_rasters, working_path, trunk_ratio, feedback=feedback)
 
-        # Preprocess CDSM/TDSM if relative heights
-        if relative_heights and surface_data.cdsm is not None:
-            logger.debug("  Preprocessing CDSM/TDSM (relative → absolute heights)")
+        # Preprocess layers with relative heights to absolute
+        needs_preprocess = (
+            dsm_relative
+            or (cdsm_relative and surface_data.cdsm is not None)
+            or (tdsm_relative and surface_data.tdsm is not None)
+        )
+        if needs_preprocess:
+            logger.debug("  Preprocessing relative heights → absolute")
             surface_data.preprocess()
 
         # Compute unified valid mask, apply across all layers, crop to valid bbox
@@ -534,6 +573,7 @@ class SurfaceData:
             "wall_aspect_arr": None,
             "wall_aspect_transform": None,
             "svf_data": None,
+            "svf_source": "none",  # "memmap", "zip", or "none"
             "shadow_data": None,
             "compute_walls": False,
             "compute_svf": False,
@@ -575,8 +615,9 @@ class SurfaceData:
                     logger.info("  → No walls found in working_dir - will compute from DSM and cache")
                     result["compute_walls"] = True
 
-        # Helper to load SVF, preferring memmap for efficiency
-        def load_svf_from_dir(svf_path: Path) -> SvfArrays | None:
+        # Helper to load SVF, preferring memmap for efficiency.
+        # Returns (SvfArrays | None, source: str) where source is "memmap", "zip", or "none".
+        def load_svf_from_dir(svf_path: Path) -> tuple[SvfArrays | None, str]:
             memmap_dir = svf_path / "memmap"
             svf_zip_path = svf_path / "svfs.zip"
 
@@ -584,12 +625,12 @@ class SurfaceData:
             if memmap_dir.exists() and (memmap_dir / "svf.npy").exists():
                 svf_data = SvfArrays.from_memmap(memmap_dir)
                 logger.info("  ✓ SVF loaded from memmap (memory-efficient)")
-                return svf_data
+                return svf_data, "memmap"
             elif svf_zip_path.exists():
                 svf_data = SvfArrays.from_zip(str(svf_zip_path))
                 logger.info("  ✓ SVF loaded from zip")
-                return svf_data
-            return None
+                return svf_data, "zip"
+            return None, "none"
 
         # Load SVF with auto-discovery
         if svf_dir is not None:
@@ -597,9 +638,10 @@ class SurfaceData:
             svf_path = Path(svf_dir)
             shadow_npz_path = svf_path / "shadowmats.npz"
 
-            svf_data = load_svf_from_dir(svf_path)
+            svf_data, svf_source = load_svf_from_dir(svf_path)
             if svf_data is not None:
                 result["svf_data"] = svf_data
+                result["svf_source"] = svf_source
                 logger.info("  ✓ Existing SVF found (will use precomputed)")
 
                 if shadow_npz_path.exists():
@@ -619,9 +661,10 @@ class SurfaceData:
                 svf_cache_dir = working_path / "svf"
                 shadow_npz_path = svf_cache_dir / "shadowmats.npz"
 
-                svf_data = load_svf_from_dir(svf_cache_dir)
+                svf_data, svf_source = load_svf_from_dir(svf_cache_dir)
                 if svf_data is not None:
                     result["svf_data"] = svf_data
+                    result["svf_source"] = svf_source
                     logger.info(f"  ✓ SVF found in working_dir: {svf_cache_dir}")
 
                     if shadow_npz_path.exists():
@@ -806,6 +849,7 @@ class SurfaceData:
             "dsm_arr": dsm_arr,
             "dsm_transform": dsm_transform,
             "dsm_crs": dsm_crs,
+            "pixel_size": pixel_size,
             "cdsm_arr": terrain_rasters["cdsm_arr"],
             "dem_arr": terrain_rasters["dem_arr"],
             "tdsm_arr": terrain_rasters["tdsm_arr"],
@@ -822,7 +866,10 @@ class SurfaceData:
         aligned_rasters: dict,
         pixel_size: float,
         trunk_ratio: float,
-        relative_heights: bool,
+        *,
+        dsm_relative: bool = False,
+        cdsm_relative: bool = True,
+        tdsm_relative: bool = True,
     ) -> SurfaceData:
         """
         Create SurfaceData instance from aligned rasters.
@@ -831,7 +878,9 @@ class SurfaceData:
             aligned_rasters: Dictionary with all aligned rasters and metadata.
             pixel_size: Pixel size in meters.
             trunk_ratio: Trunk ratio for auto-generating TDSM from CDSM.
-            relative_heights: Whether CDSM/TDSM contain relative heights.
+            dsm_relative: Whether DSM contains relative heights.
+            cdsm_relative: Whether CDSM contains relative heights.
+            tdsm_relative: Whether TDSM contains relative heights.
 
         Returns:
             SurfaceData instance with loaded terrain and preprocessing data.
@@ -851,7 +900,9 @@ class SurfaceData:
             shadow_matrices=aligned_rasters["shadow_data"],
             pixel_size=pixel_size,
             trunk_ratio=trunk_ratio,
-            relative_heights=relative_heights,
+            dsm_relative=dsm_relative,
+            cdsm_relative=cdsm_relative,
+            tdsm_relative=tdsm_relative,
         )
 
         # Store geotransform and CRS for later export
@@ -1326,6 +1377,7 @@ class SurfaceData:
 
         for tile_idx in range(n_tiles):
             pbar.set_description(f"SVF tile {tile_idx + 1}/{n_tiles}")
+            pbar.set_text(f"Computing SVF — Tile {tile_idx + 1}/{n_tiles}")
             # Wait for current tile to finish
             thread.join()
             if box[1] is not None:
@@ -1378,22 +1430,23 @@ class SurfaceData:
 
     def preprocess(self) -> None:
         """
-        Preprocess CDSM/TDSM from relative to absolute heights.
+        Convert layers from relative to absolute heights based on per-layer flags.
 
-        Call this method if your CDSM and TDSM contain relative vegetation heights
-        (height above ground) rather than absolute surface heights (elevation).
+        Converts each layer that is flagged as relative (``dsm_relative``,
+        ``cdsm_relative``, ``tdsm_relative``) to absolute heights. Layers
+        already flagged as absolute are left unchanged.
 
         This method:
-        1. Auto-generates TDSM from CDSM * trunk_ratio if TDSM is not provided
-        2. Converts CDSM/TDSM from relative to absolute heights by adding DEM
-           (or DSM if DEM is not provided)
-        3. Zeros out pixels with height < 0.1m (below meaningful vegetation threshold)
-
-        The preprocessing matches the logic in configs.py raster_preprocessing().
+        1. Converts DSM from relative to absolute if ``dsm_relative=True``
+           (requires DEM: ``dsm_absolute = dem + dsm_relative``)
+        2. Auto-generates TDSM from CDSM * trunk_ratio if TDSM is not provided
+        3. Converts CDSM from relative to absolute if ``cdsm_relative=True``
+        4. Converts TDSM from relative to absolute if ``tdsm_relative=True``
+        5. Zeros out vegetation pixels with height < 0.1m
 
         Note:
-            This method modifies CDSM and TDSM in-place.
-            If CDSM/TDSM are already absolute heights, do NOT call this method.
+            This method modifies arrays in-place and clears the per-layer
+            relative flags once conversion is done.
         """
         if self._preprocessed:
             return
@@ -1401,39 +1454,48 @@ class SurfaceData:
         # Fill NaN in surface layers before any height conversion
         self.fill_nan()
 
-        # Auto-generate TDSM from trunk ratio if CDSM provided but not TDSM
+        threshold = np.float32(0.1)
+        zero32 = np.float32(0.0)
+        nan32 = np.float32(np.nan)
+
+        # Step 1: Convert DSM from relative to absolute (requires DEM)
+        if self.dsm_relative:
+            if self.dem is None:
+                raise ValueError(
+                    "DSM is flagged as relative (dsm_relative=True) but no DEM "
+                    "is provided. A DEM is required to convert relative DSM "
+                    "(height above ground) to absolute elevations."
+                )
+            logger.info("Converting relative DSM to absolute: DSM = DEM + nDSM")
+            self.dsm = (self.dem + self.dsm).astype(np.float32)
+            self.dsm_relative = False
+
+        # Step 2: Auto-generate TDSM from trunk ratio if CDSM provided but not TDSM
         if self.cdsm is not None and self.tdsm is None:
             logger.info(f"Auto-generating TDSM from CDSM using trunk_ratio={self.trunk_ratio}")
             self.tdsm = (self.cdsm * self.trunk_ratio).astype(np.float32)
+            self.tdsm_relative = self.cdsm_relative
 
-        # Boost CDSM/TDSM to absolute heights
-        if self.cdsm is not None:
-            threshold = np.float32(0.1)
-            zero32 = np.float32(0.0)
-            nan32 = np.float32(np.nan)
+        # Use DEM as base if available, otherwise DSM (now absolute after step 1)
+        base = self.dem if self.dem is not None else self.dsm
 
-            # Use DEM as base if available, otherwise DSM
-            base = self.dem if self.dem is not None else self.dsm
-
-            # NaN in relative CDSM means "no vegetation" = 0 (ground level)
+        # Step 3: Convert CDSM from relative to absolute
+        if self.cdsm_relative and self.cdsm is not None:
             cdsm_rel = np.where(np.isnan(self.cdsm), zero32, self.cdsm)
-
-            # CDSM = base + relative_cdsm
             cdsm_abs = np.where(~np.isnan(base), base + cdsm_rel, nan32)
-            # Zero out pixels where boosted height is below threshold
             cdsm_abs = np.where(cdsm_abs - base < threshold, zero32, cdsm_abs)
             self.cdsm = cdsm_abs.astype(np.float32)
+            self.cdsm_relative = False
+            logger.info(f"Converted relative CDSM to absolute (base: {'DEM' if self.dem is not None else 'DSM'})")
 
-            # TDSM = base + relative_tdsm
-            if self.tdsm is not None:
-                tdsm_rel = np.where(np.isnan(self.tdsm), zero32, self.tdsm)
-                tdsm_abs = np.where(~np.isnan(base), base + tdsm_rel, nan32)
-                tdsm_abs = np.where(tdsm_abs - base < threshold, zero32, tdsm_abs)
-                self.tdsm = tdsm_abs.astype(np.float32)
-
-            logger.info(
-                f"Preprocessed CDSM/TDSM to absolute heights (base: {'DEM' if self.dem is not None else 'DSM'})"
-            )
+        # Step 4: Convert TDSM from relative to absolute
+        if self.tdsm_relative and self.tdsm is not None:
+            tdsm_rel = np.where(np.isnan(self.tdsm), zero32, self.tdsm)
+            tdsm_abs = np.where(~np.isnan(base), base + tdsm_rel, nan32)
+            tdsm_abs = np.where(tdsm_abs - base < threshold, zero32, tdsm_abs)
+            self.tdsm = tdsm_abs.astype(np.float32)
+            self.tdsm_relative = False
+            logger.info(f"Converted relative TDSM to absolute (base: {'DEM' if self.dem is not None else 'DSM'})")
 
         self._preprocessed = True
 
@@ -1453,7 +1515,7 @@ class SurfaceData:
         (required for anisotropic sky model).
 
         Example:
-            surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True)
+            surface = SurfaceData(dsm=dsm, cdsm=cdsm)
             surface.preprocess()
             surface.compute_svf()
             result = calculate(surface, location, weather)
@@ -1814,13 +1876,13 @@ class SurfaceData:
         if self.cdsm is None:
             return
 
-        if self.relative_heights and not self._preprocessed and self._looks_like_relative_heights():
+        if self.cdsm_relative and not self._preprocessed and self._looks_like_relative_heights():
             logger.warning(
                 f"CDSM appears to contain relative vegetation heights "
                 f"(max CDSM={np.nanmax(self.cdsm):.1f}m < min DSM={np.nanmin(self.dsm):.1f}m), "
                 f"but preprocess() was not called. "
                 f"Call surface.preprocess() to convert to absolute heights, "
-                f"or set relative_heights=False if CDSM already contains absolute elevations."
+                f"or set cdsm_relative=False if CDSM already contains absolute elevations."
             )
 
     def get_land_cover_properties(

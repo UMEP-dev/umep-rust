@@ -46,6 +46,9 @@ fn rustalgos(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(not(feature = "gpu"))]
     py_module.add("GPU_ENABLED", false)?;
 
+    // Add build profile flag (false in debug builds, true in release builds)
+    py_module.add("RELEASE_BUILD", !cfg!(debug_assertions))?;
+
     py_module.add("__doc__", "SOLWEIG urban microclimate algorithms implemented in Rust.")?;
 
     Ok(())

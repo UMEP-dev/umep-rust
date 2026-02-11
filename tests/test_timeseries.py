@@ -300,7 +300,7 @@ class TestValidateInputs:
 
         dsm = np.zeros((20, 20), dtype=np.float32)
         cdsm = np.ones((20, 20), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, cdsm=cdsm, relative_heights=True, svf=make_mock_svf((20, 20)))
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, cdsm_relative=True, svf=make_mock_svf((20, 20)))
 
         warnings = validate_inputs(surface)
 
