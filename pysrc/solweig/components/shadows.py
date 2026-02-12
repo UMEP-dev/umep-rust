@@ -53,6 +53,7 @@ def compute_transmissivity(
     """
     # Default values matching configs.py
     transmissivity = 0.03
+    transmissivity_leafoff = 0.5
     first_day = 100  # ~April 10
     last_day = 300  # ~October 27
     is_conifer = conifer
@@ -61,6 +62,7 @@ def compute_transmissivity(
     if physics is not None and hasattr(physics, "Tree_settings"):
         ts = physics.Tree_settings.Value
         transmissivity = getattr(ts, "Transmissivity", 0.03)
+        transmissivity_leafoff = getattr(ts, "Transmissivity_leafoff", 0.5)
         first_day = int(getattr(ts, "First_day_leaf", 100))
         last_day = int(getattr(ts, "Last_day_leaf", 300))
         # Note: Conifer flag may not be in all params files
@@ -76,9 +78,7 @@ def compute_transmissivity(
         # Normal case: leaves on between first_day and last_day
         leaf_on = first_day < doy < last_day
 
-    # Return appropriate transmissivity
-    # Leaf-off uses 0.5 to match configs.py: self.psi[self.leafon == 0] = 0.5
-    return transmissivity if leaf_on else 0.5
+    return transmissivity if leaf_on else transmissivity_leafoff
 
 
 def compute_shadows(

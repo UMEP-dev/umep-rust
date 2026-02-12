@@ -325,8 +325,10 @@ def compute_radiation(
     else:
         # Isotropic model - use Rust functions for kside and lside
 
-        # Isotropic diffuse radiation
-        drad = rad_d * svfbuveg  # Diffuse weighted by combined SVF
+        # Isotropic diffuse radiation (psi-adjusted: vegetation partially transparent)
+        veg_block = np.maximum(1.0 - svf_veg, 0.0)
+        svfbuveg_eff = np.clip(svfbuveg + veg_block * psi, 0.0, 1.0)
+        drad = rad_d * svfbuveg_eff
 
         # Compute asvf for Rust functions (needed even for isotropic)
         asvf = np.arccos(np.sqrt(np.clip(svf, 0.0, 1.0)))

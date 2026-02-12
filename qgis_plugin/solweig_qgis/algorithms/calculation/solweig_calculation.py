@@ -28,6 +28,7 @@ from qgis.core import (
 from ...utils.converters import (
     create_human_params_from_parameters,
     create_location_from_parameters,
+    create_physics_from_parameters,
     create_weather_from_parameters,
     load_prepared_surface,
     load_weather_from_epw,
@@ -41,6 +42,7 @@ from ...utils.parameters import (
     add_location_parameters,
     add_options_parameters,
     add_umep_met_parameters,
+    add_vegetation_parameters,
     add_weather_parameters,
 )
 from ..base import SolweigAlgorithmBase
@@ -163,6 +165,9 @@ GeoTIFF files organised into subfolders of the output directory:
 
         # --- Options ---
         add_options_parameters(self)
+
+        # --- Vegetation (advanced) ---
+        add_vegetation_parameters(self)
 
         # --- Post-processing ---
         self.addParameter(
@@ -346,6 +351,7 @@ GeoTIFF files organised into subfolders of the output directory:
 
         # Step 4: Get options
         human = create_human_params_from_parameters(parameters)
+        physics = create_physics_from_parameters(parameters)
         use_anisotropic_sky = self.parameterAsBool(parameters, "USE_ANISOTROPIC_SKY", context)
         conifer = self.parameterAsBool(parameters, "CONIFER", context)
         max_shadow_distance_m = self.parameterAsDouble(parameters, "MAX_SHADOW_DISTANCE", context)
@@ -437,6 +443,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 human,
                 use_anisotropic_sky,
                 conifer,
+                physics,
                 precomputed,
                 output_dir,
                 selected_outputs,
@@ -452,6 +459,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 human,
                 use_anisotropic_sky,
                 conifer,
+                physics,
                 precomputed,
                 output_dir,
                 selected_outputs,
@@ -528,6 +536,7 @@ GeoTIFF files organised into subfolders of the output directory:
         human,
         use_anisotropic_sky,
         conifer,
+        physics,
         precomputed,
         output_dir,
         selected_outputs,
@@ -547,6 +556,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 precomputed=precomputed,
                 use_anisotropic_sky=use_anisotropic_sky,
                 conifer=conifer,
+                physics=physics,
                 max_shadow_distance_m=max_shadow_distance_m,
             )
         except Exception as e:
@@ -583,6 +593,7 @@ GeoTIFF files organised into subfolders of the output directory:
         human,
         use_anisotropic_sky,
         conifer,
+        physics,
         precomputed,
         output_dir,
         selected_outputs,
@@ -612,6 +623,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 human,
                 use_anisotropic_sky,
                 conifer,
+                physics,
                 precomputed,
                 output_dir,
                 selected_outputs,
@@ -663,6 +675,7 @@ GeoTIFF files organised into subfolders of the output directory:
                     precomputed=precomputed,
                     use_anisotropic_sky=use_anisotropic_sky,
                     conifer=conifer,
+                    physics=physics,
                     state=state,
                     max_shadow_distance_m=max_shadow_distance_m,
                 )
@@ -726,6 +739,7 @@ GeoTIFF files organised into subfolders of the output directory:
         human,
         use_anisotropic_sky,
         conifer,
+        physics,
         precomputed,
         output_dir,
         selected_outputs,
@@ -879,6 +893,7 @@ GeoTIFF files organised into subfolders of the output directory:
                         precomputed=tile_precomputed,
                         use_anisotropic_sky=use_anisotropic_sky,
                         conifer=conifer,
+                        physics=physics,
                         state=tile_state,
                         max_shadow_distance_m=max_shadow_distance_m,
                     )

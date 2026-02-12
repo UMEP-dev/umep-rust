@@ -2,11 +2,12 @@
   "Tree_settings": {
     "Value": {
       "Transmissivity": 0.03,
+      "Transmissivity_leafoff": 0.5,
       "Trunk_ratio": 0.25,
       "First_day_leaf": 97,
       "Last_day_leaf": 300
     },
-    "Comment": "Settings for trees. Shortwave transmissivity (leaf-on). Trunk ratio as a fraction of total height. Seasonal dates (day of year)."
+    "Comment": "Settings for trees. Shortwave transmissivity for leaf-on and leaf-off seasons. Trunk ratio as a fraction of total height. Seasonal dates (day of year)."
   },
   "Posture": {
     "Standing": {

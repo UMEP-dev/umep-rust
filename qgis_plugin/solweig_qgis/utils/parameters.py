@@ -413,6 +413,62 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     algorithm.addParameter(max_shadow)
 
 
+def add_vegetation_parameters(algorithm: QgsProcessingAlgorithm) -> None:
+    """Add vegetation transmissivity parameters (advanced).
+
+    Parameters added:
+        TRANSMISSIVITY: Leaf-on canopy transmissivity (0-1)
+        TRANSMISSIVITY_LEAFOFF: Leaf-off (winter) transmissivity (0-1)
+        LEAF_START: First day of year with leaves (1-366)
+        LEAF_END: Last day of year with leaves (1-366)
+    """
+    from qgis.core import QgsProcessingParameterDefinition
+
+    trans_on = QgsProcessingParameterNumber(
+        "TRANSMISSIVITY",
+        algorithm.tr("Vegetation transmissivity — leaf-on season (0 = opaque, 1 = transparent)"),
+        type=QgsProcessingParameterNumber.Double,
+        defaultValue=0.03,
+        minValue=0.0,
+        maxValue=1.0,
+    )
+    trans_on.setFlags(trans_on.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    algorithm.addParameter(trans_on)
+
+    trans_off = QgsProcessingParameterNumber(
+        "TRANSMISSIVITY_LEAFOFF",
+        algorithm.tr("Vegetation transmissivity — leaf-off season (bare branches)"),
+        type=QgsProcessingParameterNumber.Double,
+        defaultValue=0.5,
+        minValue=0.0,
+        maxValue=1.0,
+    )
+    trans_off.setFlags(trans_off.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    algorithm.addParameter(trans_off)
+
+    leaf_start = QgsProcessingParameterNumber(
+        "LEAF_START",
+        algorithm.tr("First day of year with leaves (1–366)"),
+        type=QgsProcessingParameterNumber.Integer,
+        defaultValue=97,
+        minValue=1,
+        maxValue=366,
+    )
+    leaf_start.setFlags(leaf_start.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    algorithm.addParameter(leaf_start)
+
+    leaf_end = QgsProcessingParameterNumber(
+        "LEAF_END",
+        algorithm.tr("Last day of year with leaves (1–366)"),
+        type=QgsProcessingParameterNumber.Integer,
+        defaultValue=300,
+        minValue=1,
+        maxValue=366,
+    )
+    leaf_end.setFlags(leaf_end.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    algorithm.addParameter(leaf_end)
+
+
 def add_output_tmrt_parameter(algorithm: QgsProcessingAlgorithm) -> None:
     """Add Tmrt output raster parameter."""
     algorithm.addParameter(

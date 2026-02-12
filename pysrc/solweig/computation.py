@@ -501,6 +501,15 @@ def calculate_core_fused(
     doy = weather.datetime.timetuple().tm_yday
     psi = compute_transmissivity(doy, physics, conifer)
 
+    # Adjust svfbuveg for vegetation transmissivity (shortwave sees through canopy)
+    # Without this, isotropic diffuse (drad), Kup, and Kdown treat vegetation as
+    # fully opaque.  The anisotropic path already applies psi per sky patch via
+    # diffsh(psi), and kside_veg applies psi per direction, but the scalar svfbuveg
+    # used for isotropic diffuse and wall reflection was unadjusted.
+    from .components.svf_resolution import adjust_svfbuveg_with_psi
+
+    svf_bundle.svfbuveg = adjust_svfbuveg_with_psi(svf_bundle.svf, svf_bundle.svf_veg, psi, use_veg)
+
     # Wall material resolution
     tgk_wall = 0.37
     tstart_wall = -3.41

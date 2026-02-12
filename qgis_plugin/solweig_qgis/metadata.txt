@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta25
+version=0.1.0-beta26
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,6 +42,10 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta26
+    - Apply vegetation transmissivity (psi) to isotropic diffuse SVF: drad, Kup, and Kdown now account for light passing through canopy (previously treated as fully opaque)
+    - Add configurable leaf-off transmissivity to physics defaults (was hardcoded to 0.5)
+    - Expose vegetation parameters in QGIS: transmissivity (leaf-on/off), seasonal leaf dates — all as advanced options
     0.1.0-beta25
     - Fix GVF shadow convention inversion: simplified (no-walls) path now correctly attenuates ground temperature in shaded areas instead of sunlit areas
     - Fix CDSM/TDSM below-threshold clamping: near-ground vegetation now clamps to base elevation instead of absolute zero

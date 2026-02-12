@@ -571,6 +571,36 @@ def create_human_params_from_parameters(
     return human
 
 
+def create_physics_from_parameters(
+    parameters: dict[str, Any],
+) -> Any:  # Returns types.SimpleNamespace
+    """
+    Create a physics namespace from QGIS vegetation parameters.
+
+    Loads default physics and overrides Tree_settings with user-supplied
+    transmissivity and seasonal date values.
+
+    Args:
+        parameters: Algorithm parameters dict.
+
+    Returns:
+        SimpleNamespace with Tree_settings overridden by QGIS parameters.
+    """
+    try:
+        from solweig.loaders import load_physics
+    except ImportError as e:
+        raise QgsProcessingException("SOLWEIG library not found. Please install solweig package.") from e
+
+    physics = load_physics()
+    ts = physics.Tree_settings.Value
+    ts.Transmissivity = parameters.get("TRANSMISSIVITY", 0.03)
+    ts.Transmissivity_leafoff = parameters.get("TRANSMISSIVITY_LEAFOFF", 0.5)
+    ts.First_day_leaf = int(parameters.get("LEAF_START", 97))
+    ts.Last_day_leaf = int(parameters.get("LEAF_END", 300))
+
+    return physics
+
+
 def load_weather_from_epw(
     epw_path: str,
     start_dt: Any | None,  # QDateTime, datetime, or None

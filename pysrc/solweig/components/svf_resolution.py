@@ -94,7 +94,7 @@ def resolve_svf(
             west=svf_data.svf_aveg_west,
         )
         svfbuveg = svf_data.svfbuveg
-        # Cached svfbuveg already includes transmissivity adjustment
+        # Geometric svfbuveg without psi — adjusted at calculation time
         needs_psi_adjustment = False
 
     # Priority 2: Check precomputed.svf (legacy)
@@ -122,7 +122,7 @@ def resolve_svf(
             west=svf_data.svf_aveg_west,
         )
         svfbuveg = svf_data.svfbuveg
-        # Precomputed svfbuveg already includes transmissivity adjustment
+        # Geometric svfbuveg without psi — adjusted at calculation time
         needs_psi_adjustment = False
 
     # No SVF available — require explicit computation
