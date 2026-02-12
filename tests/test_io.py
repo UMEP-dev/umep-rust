@@ -164,13 +164,16 @@ class TestRasterIO:
         # Set environment variable
         monkeypatch.setenv("UMEP_USE_GDAL", "1")
 
-        # Reimport to pick up environment variable
+        # Reload _compat (the source of truth for backend selection)
+        # to pick up the environment variable change.
         import importlib
 
-        importlib.reload(io)
+        from solweig import _compat
+
+        importlib.reload(_compat)
 
         # Should use GDAL backend
-        assert io.GDAL_ENV
+        assert _compat.GDAL_ENV
 
     def test_rasterio_backend_default(self, monkeypatch):
         """Test that rasterio is the default backend in a standard environment."""

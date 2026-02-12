@@ -12,8 +12,12 @@ on:
         default: "0.1.0"
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   build-plugin:
     name: Build QGIS Plugin
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
