@@ -166,7 +166,11 @@ def _setup_solweig_path():
             _SOLWEIG_SOURCE = "system"
             _SOLWEIG_IMPORT_ERROR = None
             return True
-        except ImportError:
+        except Exception as exc:
+            # Catch all exceptions, not just ImportError — older solweig versions
+            # may crash on import (e.g. rasterio incompatibility) and we must
+            # still load the plugin so the upgrade prompt can appear.
+            _SOLWEIG_IMPORT_ERROR = f"system import failed: {exc}"
             return False
 
     def _try_import_dev(dev_path: Path) -> bool:
@@ -195,8 +199,8 @@ def _setup_solweig_path():
             _SOLWEIG_SOURCE = "development"
             _SOLWEIG_IMPORT_ERROR = None
             return True
-        except ImportError:
-            _SOLWEIG_IMPORT_ERROR = "development import failed"
+        except Exception as exc:
+            _SOLWEIG_IMPORT_ERROR = f"development import failed: {exc}"
             return False
         finally:
             # If dev import didn't succeed, keep sys.path clean.
