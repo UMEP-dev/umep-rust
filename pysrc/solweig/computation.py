@@ -64,7 +64,10 @@ def _nighttime_result(
     _, emis_grid, _, _, _ = surface.get_land_cover_properties(materials)
 
     # Nighttime: Tmrt ≈ Ta (simplified, no solar heating)
+    # Preserve NaN from DSM to mark invalid pixels (consistent with daytime path)
+    nan_mask = np.isnan(surface.dsm)
     tmrt = np.full((rows, cols), weather.ta, dtype=np.float32)
+    tmrt[nan_mask] = np.nan
     shadow = np.zeros((rows, cols), dtype=np.float32)  # 0 = shaded (night)
 
     # Nighttime longwave: Lup = SBC × emis × Ta⁴
@@ -73,12 +76,12 @@ def _nighttime_result(
     # Ldown from sky with typical nighttime emissivity ~0.95
     ldown_night = np.full((rows, cols), SBC * 0.95 * np.power(ta_k, 4), dtype=np.float32)
 
-    # Update thermal state for nighttime (reset for next morning)
+    # Update thermal state for nighttime (copy first, then mutate)
     output_state = None
     if state is not None:
-        state.firstdaytime = 1.0  # Reset for morning
-        state.timeadd = 0.0  # Reset time accumulator
         output_state = state.copy()
+        output_state.firstdaytime = 1.0  # Reset for morning
+        output_state.timeadd = 0.0  # Reset time accumulator
 
     return SolweigResult(
         tmrt=tmrt,
@@ -153,24 +156,22 @@ def _apply_thermal_delay(
         lup_w = np.asarray(result.lup_w)
         lup_n = np.asarray(result.lup_n)
 
-        # Update state with new values
-        state.timeadd = result.timeadd
-        state.tgmap1 = np.asarray(result.tgmap1)
-        state.tgmap1_e = np.asarray(result.tgmap1_e)
-        state.tgmap1_s = np.asarray(result.tgmap1_s)
-        state.tgmap1_w = np.asarray(result.tgmap1_w)
-        state.tgmap1_n = np.asarray(result.tgmap1_n)
-        state.tgout1 = np.asarray(result.tgout1)
+        # Build output state from result (copy first, then mutate the copy)
+        output_state = state.copy()
+        output_state.timeadd = result.timeadd
+        output_state.tgmap1 = np.asarray(result.tgmap1)
+        output_state.tgmap1_e = np.asarray(result.tgmap1_e)
+        output_state.tgmap1_s = np.asarray(result.tgmap1_s)
+        output_state.tgmap1_w = np.asarray(result.tgmap1_w)
+        output_state.tgmap1_n = np.asarray(result.tgmap1_n)
+        output_state.tgout1 = np.asarray(result.tgout1)
 
         # Update firstdaytime flag for next timestep
         if weather.is_daytime:
-            state.firstdaytime = 0.0
+            output_state.firstdaytime = 0.0
         else:
-            state.firstdaytime = 1.0
-            state.timeadd = 0.0
-
-        # Return a copy of state to avoid mutation issues
-        output_state = state.copy()
+            output_state.firstdaytime = 1.0
+            output_state.timeadd = 0.0
     else:
         # Single timestep: use raw GVF values (no thermal delay)
         lup = gvf_bundle.lup
@@ -205,6 +206,11 @@ def calculate_core(
 ) -> SolweigResult:
     """
     Core SOLWEIG calculation orchestrating all components.
+
+    .. deprecated::
+        This non-fused path is no longer used by the public API.
+        Use ``calculate_core_fused()`` instead, which is called by ``calculate()``.
+        This function is retained for reference but may diverge from the fused path.
 
     This is the clean orchestration layer that wires together all extracted
     components in a linear flow:

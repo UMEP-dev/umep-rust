@@ -857,7 +857,7 @@ class TestPreprocessing:
         assert np.allclose(surface.cdsm, 111.0, atol=0.01)
 
     def test_preprocess_zeros_below_threshold(self):
-        """Preprocessing zeros out vegetation heights below 0.1m threshold."""
+        """Preprocessing clamps vegetation below 0.1m threshold to base elevation."""
         dsm = np.ones((10, 10), dtype=np.float32) * 100.0
         cdsm = np.array([[0.05, 0.5], [1.0, 0.0]], dtype=np.float32)  # Some below threshold
         cdsm = np.pad(cdsm, ((0, 8), (0, 8)), constant_values=0.0)
@@ -865,12 +865,12 @@ class TestPreprocessing:
         surface = SurfaceData(dsm=dsm, cdsm=cdsm)
         surface.preprocess()
 
-        # Values below 0.1m should be zeroed
+        # CDSM is now absolute elevation; below-threshold values clamped to base (DSM=100)
         assert surface.cdsm is not None
-        assert surface.cdsm[0, 0] == 0.0  # Was 0.05, below threshold
-        assert surface.cdsm[0, 1] > 0.0  # Was 0.5, above threshold
-        assert surface.cdsm[1, 0] > 0.0  # Was 1.0, above threshold
-        assert surface.cdsm[1, 1] == 0.0  # Was 0.0, below threshold
+        assert surface.cdsm[0, 0] == 100.0  # Was 0.05 relative, below threshold → base
+        assert surface.cdsm[0, 1] > 100.0  # Was 0.5 relative, above threshold → 100.5
+        assert surface.cdsm[1, 0] > 100.0  # Was 1.0 relative, above threshold → 101.0
+        assert surface.cdsm[1, 1] == 100.0  # Was 0.0 relative, below threshold → base
 
     def test_preprocess_idempotent(self):
         """Calling preprocess() multiple times has no effect after first call."""

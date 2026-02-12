@@ -221,10 +221,9 @@ def compute_gvf(
         gvf_simple = 1.0 - svf
 
         # Ground temperature with shadow effect
-        # Note: shadow=1 for sunlit, shadow=0 for shaded
-        # Multiply tg by shadow - shaded areas have cooler ground
-        # (Rust gvf_calc does this internally for the full path)
-        tg_with_shadow = tg * shadow
+        # Convention: shadow=0 for sunlit, shadow=1 for shaded
+        # Sunlit areas get full ground temperature deviation; shaded areas get none
+        tg_with_shadow = tg * (1.0 - shadow)
 
         # Upwelling longwave: Stefan-Boltzmann law for ground emission
         # Lup = emissivity × SBC × T^4

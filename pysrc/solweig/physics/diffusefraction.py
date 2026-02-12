@@ -32,7 +32,8 @@ def diffusefraction(radG, altitude, Kt, Ta, RH):
         else:
             radD = radG * (0.426 * Kt - 0.256 * np.sin(alfa) + 0.00349 * Ta + 0.0734 * RH)
 
-    radI = (radG - radD) / (np.sin(alfa))
+    sin_alfa = np.sin(alfa)
+    radI = 0.0 if sin_alfa < 0.01 else (radG - radD) / sin_alfa
 
     # Corrections for low sun altitudes (20130307)
     if radI < 0:

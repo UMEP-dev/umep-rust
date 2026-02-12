@@ -75,7 +75,7 @@ def _precompute_weather(weather_series: list, location: Location) -> None:
                 if altitude_step > sunmaximum:
                     sunmaximum = altitude_step
 
-            altmax_cache[day] = sunmaximum
+            altmax_cache[day] = max(sunmaximum, 0.0)
 
     # Step 2: Pre-assign altmax to each weather object
     for weather in weather_series:

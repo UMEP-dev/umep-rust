@@ -540,9 +540,18 @@ class Weather:
 
         if is_tmy:
             # TMY mode: match month and day, ignore year
-            mask = (
-                (df_idx.month > start_dt.month) | ((df_idx.month == start_dt.month) & (df_idx.day >= start_dt.day))
-            ) & ((df_idx.month < end_dt.month) | ((df_idx.month == end_dt.month) & (df_idx.day <= end_dt.day)))
+            # Build (month, day) tuples for comparison — handles year-crossing ranges
+            # like Dec 15 → Jan 15 correctly.
+            start_md = (start_dt.month, start_dt.day)
+            end_md = (end_dt.month, end_dt.day)
+            idx_md = list(zip(df_idx.month, df_idx.day))
+
+            if start_md <= end_md:
+                # Normal range (e.g., Feb 7 → Feb 8)
+                mask = [(start_md <= md <= end_md) for md in idx_md]
+            else:
+                # Year-crossing range (e.g., Dec 15 → Jan 15)
+                mask = [(md >= start_md or md <= end_md) for md in idx_md]
         else:
             # Normal mode: match full datetime
             mask = (df_idx >= start_dt) & (df_idx <= end_dt)

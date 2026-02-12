@@ -76,12 +76,21 @@ def clearnessindex_2013b(zen, jday, Ta, RH, radG, location, P):
     if not (np.isreal(I0)):
         I0 = 0
 
-    corr = 0.1473 * np.log(90 - (zen / np.pi * 180)) + 0.3454  # 20070329
+    zen_deg = zen / np.pi * 180
+    log_arg = 90 - zen_deg
+    if log_arg < 0.01:
+        # Sun at or below horizon — clearness index undefined
+        return 0.0, float("Inf"), 0.0, 0.0, 0.0
+
+    corr = 0.1473 * np.log(log_arg) + 0.3454  # 20070329
+
+    if I0 == 0:
+        return 0.0, float("Inf"), 0.0, 0.0, 0.0
 
     CIuncorr = radG / I0
     CI = CIuncorr + (1 - corr)
     I0et = Itoa * np.cos(zen) * D  # extra terrestial solar radiation
-    Kt = radG / I0et
+    Kt = radG / I0et if I0et != 0 else 0.0
     if math.isnan(CI):
         CI = float("Inf")
 

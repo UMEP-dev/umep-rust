@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta24
+version=0.1.0-beta25
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,6 +42,17 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta25
+    - Fix GVF shadow convention inversion: simplified (no-walls) path now correctly attenuates ground temperature in shaded areas instead of sunlit areas
+    - Fix CDSM/TDSM below-threshold clamping: near-ground vegetation now clamps to base elevation instead of absolute zero
+    - Fix state mutation in thermal delay: copy state before mutating to prevent cross-timestep contamination
+    - Fix nighttime result NaN propagation: NaN pixels in DSM now propagate to nighttime Tmrt output
+    - Fix division by zero in diffuse fraction at sunrise/sunset (sin(altitude) ≈ 0)
+    - Fix log(0) crash in clearness index when sun is exactly at horizon
+    - Fix TMY date filter for month-crossing ranges (e.g. Dec→Jan)
+    - Fix altmax not floored at 0 for polar winter (negative max sun altitude)
+    - Fix missing conifer/precomputed parameters in single-tile fallback path
+    - Mark non-fused calculate_core() as deprecated in favour of Rust pipeline
     0.1.0-beta24
     - Skip tiling for nighttime timesteps: compute nighttime result on full grid in one pass instead of iterating all tiles
     - Nighttime timesteps now complete in milliseconds instead of processing N tiles with GPU pipeline overhead

@@ -1476,7 +1476,7 @@ class SurfaceData:
         if self.cdsm_relative and self.cdsm is not None:
             cdsm_rel = np.where(np.isnan(self.cdsm), zero32, self.cdsm)
             cdsm_abs = np.where(~np.isnan(base), base + cdsm_rel, nan32)
-            cdsm_abs = np.where(cdsm_abs - base < threshold, zero32, cdsm_abs)
+            cdsm_abs = np.where(cdsm_abs - base < threshold, base, cdsm_abs)
             self.cdsm = cdsm_abs.astype(np.float32)
             self.cdsm_relative = False
             logger.info(f"Converted relative CDSM to absolute (base: {'DEM' if self.dem is not None else 'DSM'})")
@@ -1485,7 +1485,7 @@ class SurfaceData:
         if self.tdsm_relative and self.tdsm is not None:
             tdsm_rel = np.where(np.isnan(self.tdsm), zero32, self.tdsm)
             tdsm_abs = np.where(~np.isnan(base), base + tdsm_rel, nan32)
-            tdsm_abs = np.where(tdsm_abs - base < threshold, zero32, tdsm_abs)
+            tdsm_abs = np.where(tdsm_abs - base < threshold, base, tdsm_abs)
             self.tdsm = tdsm_abs.astype(np.float32)
             self.tdsm_relative = False
             logger.info(f"Converted relative TDSM to absolute (base: {'DEM' if self.dem is not None else 'DSM'})")
