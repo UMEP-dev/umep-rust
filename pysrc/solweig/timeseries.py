@@ -140,7 +140,7 @@ def calculate_timeseries(
             If None, uses config.human or HumanParams defaults.
         precomputed: Pre-computed SVF and/or shadow matrices. Optional.
         use_anisotropic_sky: Use anisotropic sky model.
-            If None, uses config.use_anisotropic_sky or defaults to False.
+            If None, uses config.use_anisotropic_sky (default True).
         conifer: Treat vegetation as evergreen conifers (always leaf-on). Default False.
         physics: Physics parameters (Tree_settings, Posture geometry) from load_physics().
             Site-independent scientific constants. If None, uses config.physics or bundled defaults.

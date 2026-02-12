@@ -274,7 +274,7 @@ def calculate(
             When provided, skips expensive preprocessing computations.
             Use PrecomputedData.load() to load from directories.
         use_anisotropic_sky: Use anisotropic sky model for radiation.
-            If None, uses config.use_anisotropic_sky or defaults to False.
+            If None, uses config.use_anisotropic_sky (default True).
             Requires precomputed.shadow_matrices to be provided.
             Uses Perez diffuse model and patch-based longwave calculation.
         conifer: Treat vegetation as evergreen conifers (always leaf-on). Default False.
@@ -371,7 +371,7 @@ def calculate(
 
     # Apply defaults for anything still None
     if effective_aniso is None:
-        effective_aniso = False
+        effective_aniso = True
     if effective_human is None:
         effective_human = HumanParams()
     # Auto-load bundled UMEP JSON as default materials (single source of truth)

@@ -355,7 +355,7 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterBoolean(
             "USE_ANISOTROPIC_SKY",
             algorithm.tr("Use anisotropic sky model"),
-            defaultValue=False,
+            defaultValue=True,
         )
     )
 

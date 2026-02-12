@@ -419,6 +419,7 @@ class ShadowArrays:
     _shmat_f32: NDArray[np.floating] | None = field(init=False, default=None, repr=False)
     _vegshmat_f32: NDArray[np.floating] | None = field(init=False, default=None, repr=False)
     _vbshmat_f32: NDArray[np.floating] | None = field(init=False, default=None, repr=False)
+    _steradians: NDArray[np.float32] | None = field(init=False, default=None, repr=False)
 
     def __post_init__(self):
         # Ensure uint8 dtype
@@ -434,6 +435,7 @@ class ShadowArrays:
         self._shmat_f32 = None
         self._vegshmat_f32 = None
         self._vbshmat_f32 = None
+        self._steradians = None
 
     @property
     def shmat(self) -> NDArray[np.floating]:
@@ -461,6 +463,19 @@ class ShadowArrays:
         """Patch option code (1=145, 2=153, 3=306, 4=612 patches)."""
         patch_map = {145: 1, 153: 2, 306: 3, 612: 4}
         return patch_map.get(self.patch_count, 2)
+
+    @property
+    def steradians(self) -> NDArray[np.float32]:
+        """Patch steradians (cached, depends only on patch layout)."""
+        if self._steradians is None:
+            from ..physics.create_patches import create_patches
+            from ..physics.patch_radiation import patch_steradians
+
+            skyvaultalt, skyvaultazi, *_ = create_patches(self.patch_option)
+            # patch_steradians only uses column 0 (altitudes)
+            lv_stub = np.column_stack([skyvaultalt.ravel(), skyvaultazi.ravel(), np.zeros(skyvaultalt.size)])
+            self._steradians, _, _ = patch_steradians(lv_stub)
+        return self._steradians
 
     def diffsh(self, transmissivity: float = 0.03, use_vegetation: bool = True) -> NDArray[np.floating]:
         """

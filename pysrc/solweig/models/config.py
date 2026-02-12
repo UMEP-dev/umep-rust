@@ -55,7 +55,7 @@ class ModelConfig:
         >>> config = ModelConfig.from_json("parametersforsolweig.json")
     """
 
-    use_anisotropic_sky: bool = False
+    use_anisotropic_sky: bool = True
     human: HumanParams | None = None
     material_params: SimpleNamespace | None = None
     outputs: list[str] = field(default_factory=lambda: ["tmrt"])
