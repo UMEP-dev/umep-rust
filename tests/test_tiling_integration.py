@@ -243,10 +243,17 @@ class TestTilingHelpers:
     """Tests for tiling helper functions."""
 
     def test_should_use_tiling_below_threshold(self):
-        """Rasters within resource-derived max should not trigger tiling."""
+        """Rasters below pipelining threshold should not trigger tiling."""
         assert not _should_use_tiling(100, 100)
-        # Resource-derived max should be at least the fallback (2500)
-        assert not _should_use_tiling(2500, 1000)
+        assert not _should_use_tiling(400, 400)
+
+    def test_should_use_tiling_pipelining(self):
+        """Rasters >= MIN_PIPELINING_SIDE should trigger tiling for GPU pipelining."""
+        from solweig.tiling import MIN_PIPELINING_SIDE
+
+        assert _should_use_tiling(MIN_PIPELINING_SIDE, MIN_PIPELINING_SIDE)
+        assert _should_use_tiling(2500, 1000)
+        assert not _should_use_tiling(MIN_PIPELINING_SIDE - 1, MIN_PIPELINING_SIDE - 1)
 
     def test_should_use_tiling_above_threshold(self):
         """Rasters exceeding resource-derived max should trigger tiling."""
@@ -260,15 +267,16 @@ class TestTilingHelpers:
         max_side = compute_max_tile_side(context="solweig")
         assert _calculate_auto_tile_size(max_side + 1000, max_side + 1000) == max_side
 
-    def test_auto_tile_size_medium(self):
-        """Rasters within max tile side return the larger dimension."""
+    def test_auto_tile_size_medium_pipelining(self):
+        """Rasters within max tile side are halved for GPU pipelining."""
         result = _calculate_auto_tile_size(3000, 3000)
-        assert result >= 3000
+        # Should halve for pipelining: (3000+1)//2 = 1500
+        assert result == 1500
 
     def test_auto_tile_size_small(self):
-        """Smaller rasters should not tile (returns max dimension)."""
-        result = _calculate_auto_tile_size(1500, 1500)
-        assert result >= 1500
+        """Genuinely small rasters return full size (no pipelining split)."""
+        result = _calculate_auto_tile_size(400, 400)
+        assert result == 400
 
     def test_extract_tile_surface_reuses_svf(self):
         """When surface has precomputed SVF, tile surface should get sliced SVF."""

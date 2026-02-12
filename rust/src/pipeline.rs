@@ -25,9 +25,21 @@ use crate::gpu::AnisoGpuContext;
 #[cfg(feature = "gpu")]
 use std::sync::OnceLock;
 
+use std::time::Instant;
+
 const PI: f32 = std::f32::consts::PI;
 const SBC: f32 = 5.67e-8;
 const KELVIN_OFFSET: f32 = 273.15;
+
+/// Check once per process whether timing output is enabled (``SOLWEIG_TIMING=1``).
+fn timing_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("SOLWEIG_TIMING")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
 
 // ── GPU anisotropic sky context (lazy-initialized, shares device with shadows) ──
 
@@ -654,6 +666,7 @@ pub fn compute_timestep(
     let wall_asp_rad_view = wall_asp_rad.as_ref().map(|a| a.view());
 
     // ── Step 1: Shadows ──────────────────────────────────────────────────
+    let t_shadow = Instant::now();
     let shadow_result: ShadowingResultRust = calculate_shadows_rust(
         weather.sun_azimuth,
         weather.sun_altitude,
@@ -684,7 +697,10 @@ pub fn compute_timestep(
         .wall_sun
         .unwrap_or_else(|| Array2::zeros(shape));
 
+    let shadow_dur = t_shadow.elapsed();
+
     // ── Step 2: Ground Temperature ───────────────────────────────────────
+    let t_ground = Instant::now();
     let ground: GroundTempResult = compute_ground_temperature_pure(
         weather.sun_altitude,
         weather.altmax,
@@ -701,7 +717,10 @@ pub fn compute_timestep(
         config.tmaxlst_wall,
     );
 
+    let ground_dur = t_ground.elapsed();
+
     // ── Step 3: GVF ─────────────────────────────────────────────────────
+    let t_gvf = Instant::now();
     let first = {
         let h = human.height.round();
         if h == 0.0 { 1.0 } else { h }
@@ -793,7 +812,10 @@ pub fn compute_timestep(
         }
     };
 
+    let gvf_dur = t_gvf.elapsed();
+
     // ── Step 4: Thermal Delay ────────────────────────────────────────────
+    let t_delay = Instant::now();
     let tg_temp = &ground.tg * &shadow_f32 + weather.ta;
 
     let delay = ts_wave_delay_batch_pure(
@@ -814,7 +836,10 @@ pub fn compute_timestep(
         tgout1_v,
     );
 
+    let delay_dur = t_delay.elapsed();
+
     // ── Step 5: Radiation ─────────────────────────────────────────────────
+    let t_radiation = Instant::now();
     let esky = compute_esky(weather.ta, weather.rh);
     let sin_alt = (weather.sun_altitude * PI / 180.0).sin();
     let rad_i = weather.direct_rad;
@@ -1225,7 +1250,10 @@ pub fn compute_timestep(
         )
     };
 
+    let radiation_dur = t_radiation.elapsed();
+
     // ── Step 6: Tmrt ─────────────────────────────────────────────────────
+    let t_tmrt = Instant::now();
     let tmrt = compute_tmrt_pure(
         kdown.view(),
         kup.view(),
@@ -1246,6 +1274,27 @@ pub fn compute_timestep(
         human.is_standing,
         use_aniso,
     );
+    let tmrt_dur = t_tmrt.elapsed();
+
+    if timing_enabled() {
+        let total = shadow_dur + ground_dur + gvf_dur + delay_dur + radiation_dur + tmrt_dur;
+        let total_ms = total.as_secs_f64() * 1000.0;
+        let shadow_ms = shadow_dur.as_secs_f64() * 1000.0;
+        let ground_ms = ground_dur.as_secs_f64() * 1000.0;
+        let gvf_ms = gvf_dur.as_secs_f64() * 1000.0;
+        let delay_ms = delay_dur.as_secs_f64() * 1000.0;
+        let rad_ms = radiation_dur.as_secs_f64() * 1000.0;
+        let tmrt_ms = tmrt_dur.as_secs_f64() * 1000.0;
+        // GPU duty cycle: shadow always uses GPU (when available);
+        // radiation includes GPU aniso dispatch when anisotropic is active.
+        let gpu_ms = shadow_ms + if use_aniso { rad_ms } else { 0.0 };
+        let duty = if total_ms > 0.0 { gpu_ms / total_ms * 100.0 } else { 0.0 };
+        eprintln!(
+            "[TIMING] shadow={:.1}ms ground={:.1}ms gvf={:.1}ms delay={:.1}ms \
+             radiation={:.1}ms tmrt={:.1}ms | total={:.1}ms gpu_duty={:.0}%",
+            shadow_ms, ground_ms, gvf_ms, delay_ms, rad_ms, tmrt_ms, total_ms, duty,
+        );
+    }
 
     TimestepResultRaw {
         tmrt,

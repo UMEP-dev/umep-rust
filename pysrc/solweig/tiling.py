@@ -12,6 +12,8 @@ ensuring physically accurate ground temperature modeling with thermal inertia.
 
 from __future__ import annotations
 
+import os
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -24,6 +26,8 @@ from .models import HumanParams, PrecomputedData, SolweigResult, SurfaceData, Th
 from .solweig_logging import get_logger
 
 logger = get_logger(__name__)
+
+_TIMING_ENABLED = os.environ.get("SOLWEIG_TIMING", "").lower() in ("1", "true")
 
 if TYPE_CHECKING:
     from .models import (
@@ -38,6 +42,7 @@ if TYPE_CHECKING:
 # =============================================================================
 
 MIN_TILE_SIZE = 256  # Minimum tile size in pixels
+MIN_PIPELINING_SIDE = 512  # Minimum raster side to trigger 4-tile GPU pipelining
 _FALLBACK_MAX_TILE_SIZE = 2500  # Used when GPU + RAM detection both fail
 MIN_SUN_ELEVATION_DEG = 3.0  # Minimum sun elevation for shadow calculations
 MAX_BUFFER_M = 500.0  # Default maximum buffer / shadow distance in meters
@@ -180,26 +185,41 @@ def compute_max_tile_side(*, context: str = "solweig") -> int:
 
 
 def _should_use_tiling(rows: int, cols: int) -> bool:
-    """Check if raster size requires automatic tiling."""
+    """Check if raster size requires or benefits from tiling."""
     max_side = compute_max_tile_side(context="solweig")
-    return rows > max_side or cols > max_side
+    if rows > max_side or cols > max_side:
+        return True
+    # Medium rasters benefit from GPU pipelining (≥4 tiles keeps GPU busy)
+    return max(rows, cols) >= MIN_PIPELINING_SIDE
 
 
 def _calculate_auto_tile_size(rows: int, cols: int) -> int:
     """
     Calculate optimal tile size based on raster dimensions and real resources.
 
-    Uses the largest tile size that fits within the resource-derived maximum
-    to minimise the number of tiles (fewer tiles = less overhead from
-    overlapping buffers and tile merging).
+    For large rasters that exceed GPU/RAM limits, returns the resource-derived
+    maximum. For rasters that fit in a single tile but are large enough to
+    benefit from GPU pipelining (≥ ``MIN_PIPELINING_SIDE``), halves the tile
+    size to produce a 2×2 grid (~4 tiles) for better GPU utilisation.
+    Small rasters below the threshold are processed as a single tile.
 
     Returns:
         Tile size in pixels.
     """
     max_side = compute_max_tile_side(context="solweig")
+    raster_side = max(rows, cols)
+
+    # Case 1: raster exceeds resource limits — must tile
     if rows > max_side or cols > max_side:
         return max_side
-    return max(rows, cols)
+
+    # Case 2: raster fits in 1 tile but is large enough for GPU pipelining
+    if raster_side >= MIN_PIPELINING_SIDE:
+        half = (raster_side + 1) // 2
+        return max(MIN_TILE_SIZE, min(half, max_side))
+
+    # Case 3: genuinely small raster — single tile
+    return raster_side
 
 
 def _extract_tile_surface(
@@ -884,11 +904,16 @@ def calculate_timeseries_tiled(
                 _progress.set_text(f"Timestep {t_idx + 1}/{n_steps} \u2014 Tile {tile_idx + 1}/{n_tiles}")
 
             # Extract tile surface
+            if _TIMING_ENABLED:
+                _t0 = time.perf_counter()
+
             tile_surface = _extract_tile_surface(surface, tile, pixel_size)
             tile_precomputed = _slice_tile_precomputed(precomputed, tile)
-
-            # Slice state for this tile
             tile_state = _slice_tile_state(state, tile)
+
+            if _TIMING_ENABLED:
+                _t_extract = time.perf_counter() - _t0
+                _t1 = time.perf_counter()
 
             # Compute tile
             tile_result = calculate(
@@ -906,12 +931,27 @@ def calculate_timeseries_tiled(
                 max_shadow_distance_m=effective_max_shadow,
             )
 
+            if _TIMING_ENABLED:
+                _t_ffi = time.perf_counter() - _t1
+                _t2 = time.perf_counter()
+
             # Write core results to global arrays
             _write_tile_result(tile_result, tile, tmrt_out, shadow_out, kdown_out, kup_out, ldown_out, lup_out)
 
             # Merge tile state back to global state
             if tile_result.state is not None:
                 _merge_tile_state(tile_result.state, tile, state)
+
+            if _TIMING_ENABLED:
+                _t_merge = time.perf_counter() - _t2
+                print(
+                    f"[TIMING] tile {tile_idx + 1}/{n_tiles} "
+                    f"extract={_t_extract * 1000:.1f}ms "
+                    f"ffi={_t_ffi * 1000:.1f}ms "
+                    f"merge={_t_merge * 1000:.1f}ms "
+                    f"total={(_t_extract + _t_ffi + _t_merge) * 1000:.1f}ms",
+                    file=sys.stderr,
+                )
 
             # Report progress
             step = t_idx * n_tiles + tile_idx + 1
