@@ -260,7 +260,7 @@ def _install_solweig() -> tuple[bool, str]:
     try:
         output = io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
-            exit_code = pip_main(["install", "--upgrade", "solweig"])
+            exit_code = pip_main(["install", "--upgrade", "--no-deps", "solweig"])
         if exit_code == 0:
             return True, "SOLWEIG installed successfully."
         return False, f"pip install failed (exit code {exit_code}):\n{output.getvalue()}"
