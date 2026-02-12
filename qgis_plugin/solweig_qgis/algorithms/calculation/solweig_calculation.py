@@ -797,11 +797,58 @@ GeoTIFF files organised into subfolders of the output directory:
         tmrt_min = np.inf
         tmrt_count = 0
 
+        from solweig.computation import _nighttime_result
+
         for t_idx, weather in enumerate(weather_series):
             if feedback.isCanceled():
                 break
 
             timestamp_str = weather.datetime.strftime("%Y-%m-%d %H:%M")
+
+            # Nighttime shortcut: skip tiling entirely when sun is below horizon
+            if weather.sun_altitude <= 0:
+                feedback.setProgressText(f"Timestep {t_idx + 1}/{n_steps} ({timestamp_str}) \u2014 nighttime")
+                night_result = _nighttime_result(surface, weather, state, None)
+                if night_result.state is not None:
+                    state = night_result.state
+
+                # Save outputs
+                timestamp = weather.datetime.strftime("%Y%m%d_%H%M")
+                output_map = {
+                    "tmrt": night_result.tmrt,
+                    "shadow": night_result.shadow,
+                    "kdown": night_result.kdown,
+                    "kup": night_result.kup,
+                    "ldown": night_result.ldown,
+                    "lup": night_result.lup,
+                }
+                for component in selected_outputs:
+                    array = output_map.get(component)
+                    if array is not None:
+                        comp_dir = os.path.join(output_dir, component)
+                        os.makedirs(comp_dir, exist_ok=True)
+                        filepath = os.path.join(comp_dir, f"{component}_{timestamp}.tif")
+                        self.save_georeferenced_output(
+                            array=array,
+                            output_path=filepath,
+                            geotransform=surface._geotransform,
+                            crs_wkt=surface._crs_wkt,
+                        )
+
+                valid = night_result.tmrt[np.isfinite(night_result.tmrt)]
+                if valid.size > 0:
+                    tmrt_sum += valid.sum()
+                    tmrt_count += valid.size
+                    tmrt_max = max(tmrt_max, float(valid.max()))
+                    tmrt_min = min(tmrt_min, float(valid.min()))
+
+                n_results += 1
+
+                # Advance progress by all tiles for this timestep
+                step = (t_idx + 1) * n_tiles
+                pct = 25 + int(55 * step / total_work)
+                feedback.setProgress(pct)
+                continue
 
             # Initialize output arrays for this timestep
             tmrt_out = np.full((rows, cols), np.nan, dtype=np.float32)
