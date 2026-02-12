@@ -18,6 +18,7 @@ Citation:
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -262,6 +263,10 @@ def _install_solweig() -> tuple[bool, str]:
     except Exception as e:
         return False, f"Installation failed: {e}"
 
+
+# Force GDAL backend before importing solweig — we know we're in QGIS,
+# so bypass _compat.py heuristic detection to avoid rasterio/numpy crashes.
+os.environ["UMEP_USE_GDAL"] = "1"
 
 # Run setup on module load
 _setup_solweig_path()
