@@ -1,22 +1,28 @@
 repos:
   - repo: local
     hooks:
-      - id: ruff
-        name: ruff
-        entry: .venv/bin/ruff check --fix
+      - id: upgrade-linters
+        name: upgrade ruff & ty to latest
+        entry: uv lock --upgrade-package ruff --upgrade-package ty
         language: system
-        types: [python]
-      - id: ruff-format
-        name: ruff-format
-        entry: .venv/bin/ruff format
+        always_run: true
+        pass_filenames: false
+
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
         language: system
         types: [python]
 
-  - repo: local
-    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+
       - id: ty
         name: ty type check
-        entry: .venv/bin/ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/
+        entry: uv run ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/
         language: system
         types: [python]
         pass_filenames: false

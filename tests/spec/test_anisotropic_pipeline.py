@@ -95,7 +95,9 @@ class TestAnisotropicNoVegetation:
         """Anisotropic sky on flat surface with shadows produces valid Tmrt."""
         surface = _make_flat_surface_with_shadows()
         result = calculate(
-            surface, location, noon_weather,
+            surface,
+            location,
+            noon_weather,
             use_anisotropic_sky=True,
         )
         tmrt = result.tmrt
@@ -114,7 +116,9 @@ class TestAnisotropicNoVegetation:
         """
         surface = _make_flat_surface_with_shadows()
         result = calculate(
-            surface, location, noon_weather,
+            surface,
+            location,
+            noon_weather,
             use_anisotropic_sky=True,
         )
         # kdown should be close to global radiation for open sky
@@ -136,11 +140,15 @@ class TestAnisotropicVsIsotropic:
         surface_iso = _make_flat_surface_with_shadows()
 
         result_aniso = calculate(
-            surface_aniso, location, noon_weather,
+            surface_aniso,
+            location,
+            noon_weather,
             use_anisotropic_sky=True,
         )
         result_iso = calculate(
-            surface_iso, location, noon_weather,
+            surface_iso,
+            location,
+            noon_weather,
             use_anisotropic_sky=False,
         )
 
@@ -156,11 +164,15 @@ class TestAnisotropicVsIsotropic:
         surface_iso = _make_flat_surface_with_shadows()
 
         result_aniso = calculate(
-            surface_aniso, location, noon_weather,
+            surface_aniso,
+            location,
+            noon_weather,
             use_anisotropic_sky=True,
         )
         result_iso = calculate(
-            surface_iso, location, noon_weather,
+            surface_iso,
+            location,
+            noon_weather,
             use_anisotropic_sky=False,
         )
 
@@ -173,9 +185,7 @@ class TestAnisotropicVsIsotropic:
             mean_diff = np.mean(diff)
             # Models should produce somewhat different results (aniso adds Lside*Fcyl)
             # but not wildly different on a flat surface
-            assert mean_diff < 20, (
-                f"Mean Tmrt difference = {mean_diff:.1f}°C — too large for flat surface"
-            )
+            assert mean_diff < 20, f"Mean Tmrt difference = {mean_diff:.1f}°C — too large for flat surface"
 
 
 class TestAnisotropicWithPartialShadows:
@@ -211,7 +221,9 @@ class TestAnisotropicWithPartialShadows:
         )
 
         result = calculate(
-            surface, location, noon_weather,
+            surface,
+            location,
+            noon_weather,
             use_anisotropic_sky=True,
         )
 
@@ -276,6 +288,7 @@ class TestShadowArraysDiffshParity:
 
         # Use Perez luminance as weights (realistic test)
         from solweig.rustalgos import pipeline
+
         lv = np.asarray(pipeline.perez_v3_py(30.0, 180.0, 200.0, 400.0, 180, 2))
         weights = lv[:, 2].astype(np.float32)  # luminance column
 
@@ -284,11 +297,15 @@ class TestShadowArraysDiffshParity:
 
         # Python manual sum
         py_result = np.sum(
-            py_diffsh * weights[np.newaxis, np.newaxis, :], axis=2,
+            py_diffsh * weights[np.newaxis, np.newaxis, :],
+            axis=2,
         )
 
         np.testing.assert_allclose(
-            rs_result, py_result, rtol=1e-5, atol=1e-6,
+            rs_result,
+            py_result,
+            rtol=1e-5,
+            atol=1e-6,
             err_msg="Rust and Python weighted_patch_sum differ on diffsh",
         )
 
@@ -306,7 +323,9 @@ class TestAnisotropicGoldenRegression:
         """Compute anisotropic result for golden comparison."""
         surface = _make_flat_surface_with_shadows(shape=(5, 5))
         return calculate(
-            surface, location, noon_weather,
+            surface,
+            location,
+            noon_weather,
             use_anisotropic_sky=True,
         )
 
@@ -317,9 +336,7 @@ class TestAnisotropicGoldenRegression:
         mean_tmrt = np.nanmean(tmrt[valid])
         # Capture golden range (tight enough to catch regressions, loose enough
         # for f32 variation across platforms)
-        assert 20 < mean_tmrt < 70, (
-            f"Mean aniso Tmrt = {mean_tmrt:.2f}°C — outside expected range"
-        )
+        assert 20 < mean_tmrt < 70, f"Mean aniso Tmrt = {mean_tmrt:.2f}°C — outside expected range"
 
     def test_kdown_golden_mean(self, golden_result):
         """Mean kdown should be stable across code changes."""
@@ -327,12 +344,8 @@ class TestAnisotropicGoldenRegression:
         valid = ~np.isnan(kdown)
         mean_kdown = np.nanmean(kdown[valid])
         # Open sky, 800 W/m² global → kdown should be substantial
-        assert mean_kdown > 200, (
-            f"Mean kdown = {mean_kdown:.1f} — too low, may indicate attenuation bug"
-        )
-        assert mean_kdown < 900, (
-            f"Mean kdown = {mean_kdown:.1f} — too high for 800 W/m² global"
-        )
+        assert mean_kdown > 200, f"Mean kdown = {mean_kdown:.1f} — too low, may indicate attenuation bug"
+        assert mean_kdown < 900, f"Mean kdown = {mean_kdown:.1f} — too high for 800 W/m² global"
 
     def test_shadow_golden(self, golden_result):
         """Shadow field should be all-sunlit for flat surface at noon."""

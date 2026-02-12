@@ -1,6 +1,6 @@
 [project]
 name = "solweig"
-version = "0.1.0b18"
+version = "0.1.0b19"
 description = "High-performance SOLWEIG urban microclimate model (Rust + Python)"
 readme = "README.md"
 requires-python = ">=3.9, <3.14"
@@ -178,3 +178,5 @@ markers = [
 # Ignore unresolved imports for external/optional modules that ty cannot resolve
 # (rustalgos is a Rust extension, osgeo/qgis are optional dependencies)
 unresolved-import = "ignore"
+# numpy stub overloads are too strict for np.nanmean / np.mean on ndarray
+no-matching-overload = "ignore"

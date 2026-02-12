@@ -51,17 +51,24 @@ class TestPerez_v3Parity:
 
         # Altitudes and azimuths (columns 0,1) come from create_patches — should match exactly
         np.testing.assert_allclose(
-            rs_lv[:, 0], py_lv[:, 0], atol=0.01,
+            rs_lv[:, 0],
+            py_lv[:, 0],
+            atol=0.01,
             err_msg=f"[{label}] Patch altitudes differ",
         )
         np.testing.assert_allclose(
-            rs_lv[:, 1], py_lv[:, 1], atol=0.01,
+            rs_lv[:, 1],
+            py_lv[:, 1],
+            atol=0.01,
             err_msg=f"[{label}] Patch azimuths differ",
         )
 
         # Luminances (column 2) — allow f32 precision tolerance
         np.testing.assert_allclose(
-            rs_lv[:, 2], py_lv[:, 2].astype(np.float32), rtol=1e-3, atol=1e-6,
+            rs_lv[:, 2],
+            py_lv[:, 2].astype(np.float32),
+            rtol=1e-3,
+            atol=1e-6,
             err_msg=f"[{label}] Patch luminances differ",
         )
 
@@ -92,7 +99,10 @@ class TestSteradiansParity:
 
         assert len(rs_ster) == len(py_ster), f"length mismatch: rs={len(rs_ster)} py={len(py_ster)}"
         np.testing.assert_allclose(
-            rs_ster, py_ster.astype(np.float32), rtol=1e-4, atol=1e-6,
+            rs_ster,
+            py_ster.astype(np.float32),
+            rtol=1e-4,
+            atol=1e-6,
             err_msg=f"Steradians differ for patch_option={patch_option}",
         )
 
@@ -133,7 +143,9 @@ class TestSteradiansCaching:
 
         assert len(cached_ster) == n_patches
         np.testing.assert_allclose(
-            cached_ster, py_ster, rtol=1e-5,
+            cached_ster,
+            py_ster,
+            rtol=1e-5,
             err_msg=f"Cached steradians differ from direct computation (patch_option={patch_option})",
         )
 

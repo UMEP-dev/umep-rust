@@ -55,9 +55,7 @@ class TestBitpackRoundTrip:
             unpacked = _unpack_bitpacked_to_float32(packed, n_patches)
             for q in range(n_patches):
                 expected = 1.0 if q == p else 0.0
-                assert unpacked[0, 0, q] == expected, (
-                    f"Patch {q} should be {expected} when only patch {p} is set"
-                )
+                assert unpacked[0, 0, q] == expected, f"Patch {q} should be {expected} when only patch {p} is set"
 
     def test_round_trip_alternating_pattern(self):
         """Alternating on/off round-trips correctly."""
@@ -71,7 +69,8 @@ class TestBitpackRoundTrip:
         for p in range(n_patches):
             expected = 1.0 if p % 2 == 0 else 0.0
             np.testing.assert_array_equal(
-                unpacked[:, :, p], expected,
+                unpacked[:, :, p],
+                expected,
                 err_msg=f"Patch {p} expected {expected}",
             )
 
@@ -218,7 +217,10 @@ class TestRustBitExtractionParity:
         py_result = np.sum(py_diffsh * weights[np.newaxis, np.newaxis, :], axis=2)
 
         np.testing.assert_allclose(
-            rs_result, py_result, rtol=1e-5, atol=1e-6,
+            rs_result,
+            py_result,
+            rtol=1e-5,
+            atol=1e-6,
             err_msg="Rust weighted_patch_sum differs from Python sum on diffsh",
         )
 
@@ -273,11 +275,24 @@ class TestRustBitExtractionParity:
         surf_p = sky.SurfaceParams(tgwall=2.0, ewall=0.9, rad_i=600.0, rad_d=200.0)
 
         result = sky.anisotropic_sky(
-            shmat, vegshmat, vbshmat,
-            sun, asvf, sky_p, l_patches,
-            None, None, steradians, surf_p,
-            lup, lv, shadow,
-            kup, kup, kup, kup,
+            shmat,
+            vegshmat,
+            vbshmat,
+            sun,
+            asvf,
+            sky_p,
+            l_patches,
+            None,
+            None,
+            steradians,
+            surf_p,
+            lup,
+            lv,
+            shadow,
+            kup,
+            kup,
+            kup,
+            kup,
         )
 
         ldown = np.asarray(result.ldown)
@@ -290,20 +305,29 @@ class TestRustBitExtractionParity:
         # so ldown may increase or decrease depending on wall/sky temperatures)
         shmat_blocked = np.zeros((rows, cols, n_pack), dtype=np.uint8)
         result_blocked = sky.anisotropic_sky(
-            shmat_blocked, vegshmat, vbshmat,
-            sun, asvf, sky_p, l_patches,
-            None, None, steradians, surf_p,
-            lup, lv, shadow,
-            kup, kup, kup, kup,
+            shmat_blocked,
+            vegshmat,
+            vbshmat,
+            sun,
+            asvf,
+            sky_p,
+            l_patches,
+            None,
+            None,
+            steradians,
+            surf_p,
+            lup,
+            lv,
+            shadow,
+            kup,
+            kup,
+            kup,
+            kup,
         )
         ldown_blocked = np.asarray(result_blocked.ldown)
-        assert not np.allclose(ldown, ldown_blocked, atol=0.1), (
-            "Blocking all patches should change ldown"
-        )
+        assert not np.allclose(ldown, ldown_blocked, atol=0.1), "Blocking all patches should change ldown"
 
         # Diffuse shortwave (kside_d) should definitely decrease when sky is blocked
         kside_d_open = np.asarray(result.kside_d)
         kside_d_blocked = np.asarray(result_blocked.kside_d)
-        assert np.all(kside_d_open >= kside_d_blocked - 1e-3), (
-            "Blocking sky should not increase diffuse shortwave"
-        )
+        assert np.all(kside_d_open >= kside_d_blocked - 1e-3), "Blocking sky should not increase diffuse shortwave"
