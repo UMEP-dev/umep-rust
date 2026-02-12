@@ -1041,12 +1041,10 @@ class SurfaceData:
             veg_max = float(np.nanmax(cdsm_arr))
             max_height = max(max_height, veg_max)
 
-        # Auto-detect whether tiling is needed based on GPU buffer limits.
-        # wgpu max buffer = 256 MiB. SVF staging uses ~32 bytes/pixel.
-        # Use 80% headroom to trigger tiling before hitting the limit.
-        _GPU_MAX_BUFFER = 268_435_456  # 256 MiB
-        _BYTES_PER_PIXEL = 32  # empirical: staging buffers for SVF
-        _max_pixels = int(_GPU_MAX_BUFFER * 0.8) // _BYTES_PER_PIXEL  # ~6.7M pixels
+        # Auto-detect whether tiling is needed based on real GPU/RAM limits.
+        from ..tiling import compute_max_tile_pixels
+
+        _max_pixels = compute_max_tile_pixels(context="svf")
         needs_tiling = rows * cols > _max_pixels
 
         svf_cache_dir = working_path / "svf"
@@ -1238,17 +1236,12 @@ class SurfaceData:
         buffer_m = calculate_buffer_distance(max_height)
         buffer_pixels = int(np.ceil(buffer_m / pixel_size))
 
-        # Compute the largest safe tile size from GPU buffer limit.
-        # The tile includes overlap buffers on each side, so the full tile
-        # (core + 2*buffer) must fit in GPU memory.
-        # wgpu max buffer = 256MB. SVF uses ~32 bytes/pixel for staging
-        # buffers (shadow matrices, intermediate arrays). Use 80% headroom.
-        _GPU_MAX_BUFFER = 268_435_456  # 256 MiB
-        _BYTES_PER_PIXEL = 32  # empirical: staging buffers for SVF
-        max_tile_pixels = int(_GPU_MAX_BUFFER * 0.8) // _BYTES_PER_PIXEL
-        # Full tile side = core + 2*buffer, so core = sqrt(max_pixels) - 2*buffer
-        max_full_side = int(max_tile_pixels**0.5)
-        tile_size = max(256, max_full_side - 2 * buffer_pixels)
+        # Compute the largest safe tile size from real GPU/RAM limits.
+        # The full tile (core + 2*buffer) must fit, so subtract buffer from max side.
+        from ..tiling import MIN_TILE_SIZE, compute_max_tile_side
+
+        max_full_side = compute_max_tile_side(context="svf")
+        tile_size = max(MIN_TILE_SIZE, max_full_side - 2 * buffer_pixels)
 
         adjusted_tile_size, warning = validate_tile_size(tile_size, buffer_pixels, pixel_size)
         if warning:

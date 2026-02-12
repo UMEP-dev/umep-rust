@@ -68,6 +68,24 @@ pub fn is_gpu_enabled() -> bool {
     GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+#[cfg(feature = "gpu")]
+#[pyfunction]
+/// Return GPU buffer limits as a dict, or None if GPU is unavailable.
+///
+/// Keys:
+///   - "max_buffer_size": u64 — largest single wgpu buffer in bytes
+///
+/// Initialises the GPU context lazily on first call.
+pub fn gpu_limits(py: Python<'_>) -> PyResult<Option<PyObject>> {
+    let ctx = match get_gpu_context() {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("max_buffer_size", ctx.max_buffer_size)?;
+    Ok(Some(dict.into()))
+}
+
 /// Rust-native result struct for internal shadow calculations.
 pub(crate) struct ShadowingResultRust {
     pub bldg_sh: Array2<f32>,

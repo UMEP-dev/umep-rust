@@ -39,9 +39,140 @@ if TYPE_CHECKING:
 # =============================================================================
 
 MIN_TILE_SIZE = 256  # Minimum tile size in pixels
-MAX_TILE_SIZE = 2500  # Maximum tile size in pixels
+_FALLBACK_MAX_TILE_SIZE = 2500  # Used when GPU + RAM detection both fail
 MIN_SUN_ELEVATION_DEG = 3.0  # Minimum sun elevation for shadow calculations
 MAX_BUFFER_M = 500.0  # Default maximum buffer / shadow distance in meters
+
+# Backward-compat alias (imported by tests and calculate_timeseries_tiled docstring)
+MAX_TILE_SIZE = _FALLBACK_MAX_TILE_SIZE
+
+# Resource estimation constants
+_RAM_FRACTION = 0.50  # Use at most 50% of total physical RAM for tile arrays
+_SVF_BYTES_PER_PIXEL = 32  # GPU staging bytes per pixel for SVF computation
+_SOLWEIG_BYTES_PER_PIXEL = 400  # Peak Python-side bytes per pixel (benchmarked ~370)
+_GPU_HEADROOM = 0.80  # Use 80% of GPU max buffer to leave headroom
+
+# Cache for computed tile limits (populated once per context on first call)
+_cached_max_tile_side: dict[str, int] = {}
+
+
+# =============================================================================
+# Resource detection
+# =============================================================================
+
+
+def _get_total_ram_bytes() -> int | None:
+    """
+    Detect total physical RAM in bytes.
+
+    Uses ``os.sysconf`` on POSIX (macOS/Linux) and ``ctypes`` on Windows.
+    Returns ``None`` if detection fails.  No external dependencies.
+    """
+    import os
+    import sys
+
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(stat)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            return stat.ullTotalPhys
+        else:
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            if pages > 0 and page_size > 0:
+                return pages * page_size
+    except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def compute_max_tile_pixels(*, context: str = "solweig") -> int:
+    """
+    Compute the maximum number of pixels that fit in a single tile,
+    based on real GPU buffer limits and system RAM.
+
+    Args:
+        context: ``"solweig"`` for timestep tiling, or ``"svf"`` for SVF-only
+            tiling. Affects the bytes-per-pixel estimate used for the RAM
+            constraint.
+
+    Returns:
+        Maximum pixel count for a tile (rows * cols).
+    """
+    from . import get_gpu_limits
+
+    bytes_per_pixel = _SVF_BYTES_PER_PIXEL if context == "svf" else _SOLWEIG_BYTES_PER_PIXEL
+
+    # GPU constraint: largest single buffer must fit the tile's staging data
+    gpu_max_pixels = None
+    limits = get_gpu_limits()
+    if limits is not None:
+        max_buf = limits["max_buffer_size"]
+        gpu_max_pixels = int(max_buf * _GPU_HEADROOM) // _SVF_BYTES_PER_PIXEL
+
+    # RAM constraint: total physical RAM × fraction / bytes per pixel
+    ram_max_pixels = None
+    total_ram = _get_total_ram_bytes()
+    if total_ram is not None:
+        usable_ram = int(total_ram * _RAM_FRACTION)
+        ram_max_pixels = usable_ram // bytes_per_pixel
+
+    # Use the tighter of the two constraints
+    candidates = [c for c in [gpu_max_pixels, ram_max_pixels] if c is not None]
+    if candidates:
+        return max(MIN_TILE_SIZE**2, min(candidates))
+
+    # Fallback: no detection succeeded
+    return _FALLBACK_MAX_TILE_SIZE**2
+
+
+def compute_max_tile_side(*, context: str = "solweig") -> int:
+    """
+    Compute the maximum tile side length (square tiles) from resource limits.
+
+    The result is cached per *context* for the lifetime of the process.
+
+    Returns:
+        Maximum tile side in pixels (at least ``MIN_TILE_SIZE``).
+    """
+    import math
+
+    if context in _cached_max_tile_side:
+        return _cached_max_tile_side[context]
+
+    max_pixels = compute_max_tile_pixels(context=context)
+    side = max(MIN_TILE_SIZE, int(math.isqrt(max_pixels)))
+
+    # Log once so the user can see what limits are driving tile sizing
+    from . import get_gpu_limits
+
+    limits = get_gpu_limits()
+    total_ram = _get_total_ram_bytes()
+    gpu_str = f"{limits['max_buffer_size']:,} bytes" if limits else "N/A"
+    ram_str = f"{total_ram:,} bytes" if total_ram else "N/A"
+    logger.info(
+        f"Resource-aware tile sizing (context={context}): "
+        f"GPU max_buffer={gpu_str}, system RAM={ram_str}, max_tile_side={side} px"
+    )
+
+    _cached_max_tile_side[context] = side
+    return side
 
 
 # =============================================================================
@@ -51,28 +182,25 @@ MAX_BUFFER_M = 500.0  # Default maximum buffer / shadow distance in meters
 
 def _should_use_tiling(rows: int, cols: int) -> bool:
     """Check if raster size requires automatic tiling."""
-    return rows > MAX_TILE_SIZE or cols > MAX_TILE_SIZE
+    max_side = compute_max_tile_side(context="solweig")
+    return rows > max_side or cols > max_side
 
 
 def _calculate_auto_tile_size(rows: int, cols: int) -> int:
     """
-    Calculate optimal tile size based on raster dimensions.
+    Calculate optimal tile size based on raster dimensions and real resources.
 
-    Heuristic:
-    - >16M pixels (4000x4000): use 1024x1024 tiles
-    - >4M pixels (2000x2000): use 2048x2048 tiles
-    - Otherwise: no tiling needed (full raster)
+    Uses the largest tile size that fits within the resource-derived maximum
+    to minimise the number of tiles (fewer tiles = less overhead from
+    overlapping buffers and tile merging).
 
     Returns:
         Tile size in pixels.
     """
-    total_pixels = rows * cols
-    if total_pixels > 4000 * 4000:
-        return 1024
-    elif total_pixels > 2000 * 2000:
-        return min(rows, cols, 2048)
-    else:
-        return max(rows, cols)
+    max_side = compute_max_tile_side(context="solweig")
+    if rows > max_side or cols > max_side:
+        return max_side
+    return max(rows, cols)
 
 
 def _extract_tile_surface(
@@ -314,7 +442,8 @@ def validate_tile_size(
     Validate and adjust tile size for tiled processing.
 
     Ensures the tile size is within bounds and leaves meaningful core area
-    after accounting for buffer overlap.
+    after accounting for buffer overlap. The maximum is determined
+    dynamically from available GPU and system resources.
 
     Args:
         tile_size: Requested tile size in pixels.
@@ -326,9 +455,10 @@ def validate_tile_size(
 
     Constraints:
         - tile_size >= MIN_TILE_SIZE (256)
-        - tile_size <= MAX_TILE_SIZE (2500)
+        - tile_size <= resource-derived maximum
         - Core area (tile_size - 2*buffer) >= 128 pixels
     """
+    max_tile = compute_max_tile_side(context="solweig")
     warning = None
     adjusted = tile_size
 
@@ -338,14 +468,14 @@ def validate_tile_size(
         adjusted = MIN_TILE_SIZE
 
     # Enforce maximum
-    if adjusted > MAX_TILE_SIZE:
-        warning = f"Tile size {tile_size} above maximum, using {MAX_TILE_SIZE}"
-        adjusted = MAX_TILE_SIZE
+    if adjusted > max_tile:
+        warning = f"Tile size {tile_size} above maximum, using {max_tile}"
+        adjusted = max_tile
 
     # Ensure meaningful core area (at least 128 pixels after buffer)
     min_for_buffer = 2 * buffer_pixels + 128
     if adjusted < min_for_buffer:
-        adjusted = min(min_for_buffer, MAX_TILE_SIZE)
+        adjusted = min(min_for_buffer, max_tile)
         buffer_m = buffer_pixels * pixel_size
         warning = f"Tile size increased to {adjusted} to ensure meaningful core area with {buffer_m:.0f}m buffer"
 
@@ -591,7 +721,7 @@ def calculate_timeseries_tiled(
     both tiles and timesteps.
 
     This function is called automatically by calculate_timeseries() when the
-    raster exceeds MAX_TILE_SIZE in either dimension.
+    raster exceeds the resource-derived maximum tile side in either dimension.
 
     Args:
         surface: Surface/terrain data (DSM required).

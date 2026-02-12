@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta19
+version=0.1.0-beta20
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,6 +42,12 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta20
+    - QGIS progress monitor now shows current timestamp and tile during timeseries runs
+    - Auto-tile large rasters in QGIS timeseries path (was previously untiled, risking OOM)
+    - Resource-aware tile sizing: query real GPU buffer limits (wgpu adapter) and system RAM instead of hardcoded 256 MiB / 2500 px constants
+    - Expose gpu_limits() from Rust to Python (solweig.get_gpu_limits())
+    - Larger tile sizes on capable hardware (fewer tiles = less overhead)
     0.1.0-beta19
     - Fix import sorting and unused imports (ruff formatting)
     0.1.0-beta18

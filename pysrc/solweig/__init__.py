@@ -155,6 +155,24 @@ def disable_gpu() -> None:
             shadowing.disable_gpu()
 
 
+def get_gpu_limits() -> dict[str, int] | None:
+    """
+    Query real GPU buffer limits from the wgpu adapter.
+
+    Returns a dict with keys:
+      - ``max_buffer_size``: largest single GPU buffer in bytes
+
+    Returns ``None`` if GPU is not available or not compiled in.
+    Lazily initialises the GPU context on first call.
+    """
+    if not GPU_ENABLED or shadowing is None:
+        return None
+    try:
+        return shadowing.gpu_limits()
+    except (AttributeError, RuntimeError):
+        return None
+
+
 __all__ = [
     # Version
     "__version__",
@@ -197,6 +215,7 @@ __all__ = [
     # GPU utilities
     "is_gpu_available",
     "get_compute_backend",
+    "get_gpu_limits",
     "disable_gpu",
     "GPU_ENABLED",
     "RELEASE_BUILD",

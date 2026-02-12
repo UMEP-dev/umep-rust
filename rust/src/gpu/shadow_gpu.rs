@@ -116,8 +116,10 @@ struct CachedBuffers {
 
 /// GPU context for shadow calculations - maintains GPU resources across multiple calls
 pub struct ShadowGpuContext {
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
+    pub(crate) device: Arc<wgpu::Device>,
+    pub(crate) queue: Arc<wgpu::Queue>,
+    /// Adapter-reported maximum single buffer size in bytes.
+    pub(crate) max_buffer_size: u64,
     pipeline: wgpu::ComputePipeline,
     wall_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -576,6 +578,7 @@ impl ShadowGpuContext {
         Ok(Self {
             device,
             queue,
+            max_buffer_size: adapter_limits.max_buffer_size,
             pipeline,
             wall_pipeline,
             bind_group_layout,

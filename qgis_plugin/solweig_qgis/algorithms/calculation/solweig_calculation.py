@@ -599,6 +599,26 @@ GeoTIFF files organised into subfolders of the output directory:
         accumulating all result arrays in memory (~46 MB per timestep).
         """
         n_steps = len(weather_series)
+
+        # Auto-tile large rasters for memory efficiency and accurate shadows
+        from solweig.tiling import _should_use_tiling
+
+        if _should_use_tiling(*surface.shape):
+            return self._run_timeseries_tiled(
+                solweig,
+                surface,
+                location,
+                weather_series,
+                human,
+                use_anisotropic_sky,
+                conifer,
+                precomputed,
+                output_dir,
+                selected_outputs,
+                max_shadow_distance_m,
+                feedback,
+            )
+
         feedback.setProgressText(f"Running timeseries ({n_steps} timesteps)...")
         feedback.setProgress(25)
 
@@ -631,6 +651,8 @@ GeoTIFF files organised into subfolders of the output directory:
         for i, weather in enumerate(weather_series):
             if feedback.isCanceled():
                 break
+
+            feedback.setProgressText(f"Timestep {i + 1}/{n_steps} \u2014 {weather.datetime.strftime('%Y-%m-%d %H:%M')}")
 
             try:
                 result = solweig.calculate(
@@ -682,6 +704,191 @@ GeoTIFF files organised into subfolders of the output directory:
             # Update progress bar (25-80% range)
             pct = 25 + int(55 * (i + 1) / n_steps)
             feedback.setProgress(pct)
+
+        feedback.setProgress(80)
+
+        tmrt_stats = {}
+        if tmrt_count > 0:
+            tmrt_stats = {
+                "mean": tmrt_sum / tmrt_count,
+                "min": tmrt_min,
+                "max": tmrt_max,
+            }
+
+        return n_results, tmrt_stats
+
+    def _run_timeseries_tiled(
+        self,
+        solweig,
+        surface,
+        location,
+        weather_series,
+        human,
+        use_anisotropic_sky,
+        conifer,
+        precomputed,
+        output_dir,
+        selected_outputs,
+        max_shadow_distance_m,
+        feedback,
+    ) -> tuple[int, dict]:
+        """Run multi-timestep timeseries with tiled processing for large rasters.
+
+        Tiles the raster with overlapping buffers and iterates
+        timestep -> tile, updating the QGIS progress bar with both
+        the current timestamp and tile number.
+
+        Returns (n_results, tmrt_stats), same as _run_timeseries().
+        """
+        from solweig.models.state import ThermalState
+        from solweig.tiling import (
+            _calculate_auto_tile_size,
+            _extract_tile_surface,
+            _merge_tile_state,
+            _slice_tile_precomputed,
+            _slice_tile_state,
+            _write_tile_result,
+            generate_tiles,
+            validate_tile_size,
+        )
+        from solweig.timeseries import _precompute_weather
+
+        n_steps = len(weather_series)
+        rows, cols = surface.shape
+        pixel_size = surface.pixel_size
+
+        # Generate tiles
+        buffer_pixels = int(np.ceil(max_shadow_distance_m / pixel_size))
+        tile_size = _calculate_auto_tile_size(rows, cols)
+        adjusted_tile_size, warning = validate_tile_size(tile_size, buffer_pixels, pixel_size)
+        if warning:
+            feedback.reportError(f"Tile warning: {warning}", fatalError=False)
+
+        tiles = generate_tiles(rows, cols, adjusted_tile_size, buffer_pixels)
+        n_tiles = len(tiles)
+        total_work = n_steps * n_tiles
+
+        feedback.setProgressText(f"Running tiled timeseries ({n_steps} timesteps, {n_tiles} tiles)...")
+        feedback.setProgress(25)
+        feedback.pushInfo(
+            f"Large raster ({cols}\u00d7{rows}) \u2014 using {n_tiles} tiles "
+            f"(size={adjusted_tile_size}, buffer={max_shadow_distance_m:.0f}m)"
+        )
+
+        # Pre-compute sun positions and radiation splits
+        feedback.pushInfo("Pre-computing sun positions and radiation splits...")
+        _precompute_weather(weather_series, location)
+        feedback.pushInfo(f"  Pre-computed {n_steps} timesteps")
+
+        # Initialize thermal state
+        state = ThermalState.initial(surface.shape)
+        if n_steps >= 2:
+            dt0 = weather_series[0].datetime
+            dt1 = weather_series[1].datetime
+            state.timestep_dec = (dt1 - dt0).total_seconds() / 86400.0
+
+        # Incremental stats
+        n_results = 0
+        tmrt_sum = 0.0
+        tmrt_max = -np.inf
+        tmrt_min = np.inf
+        tmrt_count = 0
+
+        for t_idx, weather in enumerate(weather_series):
+            if feedback.isCanceled():
+                break
+
+            timestamp_str = weather.datetime.strftime("%Y-%m-%d %H:%M")
+
+            # Initialize output arrays for this timestep
+            tmrt_out = np.full((rows, cols), np.nan, dtype=np.float32)
+            shadow_out = np.full((rows, cols), np.nan, dtype=np.float32)
+            kdown_out = np.full((rows, cols), np.nan, dtype=np.float32)
+            kup_out = np.full((rows, cols), np.nan, dtype=np.float32)
+            ldown_out = np.full((rows, cols), np.nan, dtype=np.float32)
+            lup_out = np.full((rows, cols), np.nan, dtype=np.float32)
+
+            for tile_idx, tile in enumerate(tiles):
+                if feedback.isCanceled():
+                    break
+
+                feedback.setProgressText(
+                    f"Timestep {t_idx + 1}/{n_steps} ({timestamp_str}) \u2014 Tile {tile_idx + 1}/{n_tiles}"
+                )
+
+                tile_surface = _extract_tile_surface(surface, tile, pixel_size)
+                tile_precomputed = _slice_tile_precomputed(precomputed, tile)
+                tile_state = _slice_tile_state(state, tile)
+
+                try:
+                    tile_result = solweig.calculate(
+                        surface=tile_surface,
+                        location=location,
+                        weather=weather,
+                        human=human,
+                        precomputed=tile_precomputed,
+                        use_anisotropic_sky=use_anisotropic_sky,
+                        conifer=conifer,
+                        state=tile_state,
+                        max_shadow_distance_m=max_shadow_distance_m,
+                    )
+                except Exception as e:
+                    raise QgsProcessingException(
+                        f"Calculation failed at timestep {t_idx + 1}/{n_steps} "
+                        f"({timestamp_str}), tile {tile_idx + 1}/{n_tiles}: {e}"
+                    ) from e
+
+                _write_tile_result(
+                    tile_result,
+                    tile,
+                    tmrt_out,
+                    shadow_out,
+                    kdown_out,
+                    kup_out,
+                    ldown_out,
+                    lup_out,
+                )
+
+                if tile_result.state is not None:
+                    _merge_tile_state(tile_result.state, tile, state)
+
+                # Update progress (25-80% range)
+                step = t_idx * n_tiles + tile_idx + 1
+                pct = 25 + int(55 * step / total_work)
+                feedback.setProgress(pct)
+
+            # Save outputs for this timestep
+            timestamp = weather.datetime.strftime("%Y%m%d_%H%M")
+            output_map = {
+                "tmrt": tmrt_out,
+                "shadow": shadow_out,
+                "kdown": kdown_out,
+                "kup": kup_out,
+                "ldown": ldown_out,
+                "lup": lup_out,
+            }
+            for component in selected_outputs:
+                array = output_map.get(component)
+                if array is not None:
+                    comp_dir = os.path.join(output_dir, component)
+                    os.makedirs(comp_dir, exist_ok=True)
+                    filepath = os.path.join(comp_dir, f"{component}_{timestamp}.tif")
+                    self.save_georeferenced_output(
+                        array=array,
+                        output_path=filepath,
+                        geotransform=surface._geotransform,
+                        crs_wkt=surface._crs_wkt,
+                    )
+
+            # Update incremental stats
+            valid = tmrt_out[np.isfinite(tmrt_out)]
+            if valid.size > 0:
+                tmrt_sum += valid.sum()
+                tmrt_count += valid.size
+                tmrt_max = max(tmrt_max, float(valid.max()))
+                tmrt_min = min(tmrt_min, float(valid.min()))
+
+            n_results += 1
 
         feedback.setProgress(80)
 

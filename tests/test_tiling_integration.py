@@ -23,6 +23,7 @@ from solweig.tiling import (
     _merge_tile_state,
     _should_use_tiling,
     _slice_tile_state,
+    compute_max_tile_side,
 )
 
 pytestmark = pytest.mark.slow
@@ -234,24 +235,27 @@ class TestTilingHelpers:
     """Tests for tiling helper functions."""
 
     def test_should_use_tiling_below_threshold(self):
-        """Rasters at or below 2500px should not trigger tiling."""
-        assert not _should_use_tiling(2500, 2500)
+        """Rasters within resource-derived max should not trigger tiling."""
         assert not _should_use_tiling(100, 100)
+        # Resource-derived max should be at least the fallback (2500)
         assert not _should_use_tiling(2500, 1000)
 
     def test_should_use_tiling_above_threshold(self):
-        """Rasters exceeding 2500px in either dimension should trigger tiling."""
-        assert _should_use_tiling(2501, 2501)
-        assert _should_use_tiling(2501, 100)
-        assert _should_use_tiling(100, 2501)
+        """Rasters exceeding resource-derived max should trigger tiling."""
+        max_side = compute_max_tile_side(context="solweig")
+        assert _should_use_tiling(max_side + 1, max_side + 1)
+        assert _should_use_tiling(max_side + 1, 100)
+        assert _should_use_tiling(100, max_side + 1)
 
     def test_auto_tile_size_large(self):
-        """Very large rasters (>16M px) should get 1024 tile size."""
-        assert _calculate_auto_tile_size(5000, 5000) == 1024
+        """Rasters exceeding max tile side should return the max tile side."""
+        max_side = compute_max_tile_side(context="solweig")
+        assert _calculate_auto_tile_size(max_side + 1000, max_side + 1000) == max_side
 
     def test_auto_tile_size_medium(self):
-        """Medium rasters (>4M px) should get 2048 tile size."""
-        assert _calculate_auto_tile_size(3000, 3000) == 2048
+        """Rasters within max tile side return the larger dimension."""
+        result = _calculate_auto_tile_size(3000, 3000)
+        assert result >= 3000
 
     def test_auto_tile_size_small(self):
         """Smaller rasters should not tile (returns max dimension)."""

@@ -69,6 +69,7 @@ fn register_shadowing_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
         submodule.add_function(wrap_pyfunction!(shadowing::enable_gpu, &submodule)?)?;
         submodule.add_function(wrap_pyfunction!(shadowing::disable_gpu, &submodule)?)?;
         submodule.add_function(wrap_pyfunction!(shadowing::is_gpu_enabled, &submodule)?)?;
+        submodule.add_function(wrap_pyfunction!(shadowing::gpu_limits, &submodule)?)?;
     }
 
     py_module.add_submodule(&submodule)?;
@@ -172,6 +173,15 @@ fn register_pipeline_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     submodule.add_function(wrap_pyfunction!(pipeline::precompute_gvf_cache, &submodule)?)?;
     submodule.add_function(wrap_pyfunction!(perez::perez_v3_py, &submodule)?)?;
     submodule.add_function(wrap_pyfunction!(perez::compute_steradians_py, &submodule)?)?;
+
+    // Anisotropic sky GPU control functions
+    #[cfg(feature = "gpu")]
+    {
+        submodule.add_function(wrap_pyfunction!(pipeline::enable_aniso_gpu, &submodule)?)?;
+        submodule.add_function(wrap_pyfunction!(pipeline::disable_aniso_gpu, &submodule)?)?;
+        submodule.add_function(wrap_pyfunction!(pipeline::is_aniso_gpu_enabled, &submodule)?)?;
+    }
+
     py_module.add_submodule(&submodule)?;
     Ok(())
 }

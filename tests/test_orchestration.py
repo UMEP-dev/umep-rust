@@ -20,9 +20,9 @@ from solweig.constants import KELVIN_OFFSET, SBC
 from solweig.models.state import ThermalState, TileSpec
 from solweig.tiling import (
     MAX_BUFFER_M,
-    MAX_TILE_SIZE,
     MIN_TILE_SIZE,
     calculate_buffer_distance,
+    compute_max_tile_side,
     generate_tiles,
     validate_tile_size,
 )
@@ -694,8 +694,9 @@ class TestValidateTileSize:
         assert "below minimum" in warning
 
     def test_above_maximum_adjusted(self):
-        adjusted, warning = validate_tile_size(8000, buffer_pixels=50, pixel_size=1.0)
-        assert adjusted == MAX_TILE_SIZE
+        max_side = compute_max_tile_side(context="solweig")
+        adjusted, warning = validate_tile_size(max_side + 5000, buffer_pixels=50, pixel_size=1.0)
+        assert adjusted == max_side
         assert warning is not None
         assert "above maximum" in warning
 
@@ -712,8 +713,9 @@ class TestValidateTileSize:
         assert warning is None
 
     def test_exact_maximum(self):
-        adjusted, warning = validate_tile_size(MAX_TILE_SIZE, buffer_pixels=10, pixel_size=1.0)
-        assert adjusted == MAX_TILE_SIZE
+        max_side = compute_max_tile_side(context="solweig")
+        adjusted, warning = validate_tile_size(max_side, buffer_pixels=10, pixel_size=1.0)
+        assert adjusted == max_side
         assert warning is None
 
 

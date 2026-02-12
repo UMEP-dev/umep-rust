@@ -5,7 +5,7 @@
 //!
 //! Supports both isotropic and anisotropic (Perez) sky models.
 
-use ndarray::{Array2, Array3, ArrayView2, Zip};
+use ndarray::{Array1, Array2, Array3, ArrayView2, Zip};
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2, PyReadonlyArray3};
 use pyo3::prelude::*;
 use rayon::prelude::*;
@@ -20,9 +20,64 @@ use crate::sky::{anisotropic_sky_pure, cylindric_wedge_pure_masked, weighted_pat
 use crate::tmrt::compute_tmrt_pure;
 use crate::vegetation::{kside_veg_isotropic_pure, lside_veg_pure};
 
+#[cfg(feature = "gpu")]
+use crate::gpu::AnisoGpuContext;
+#[cfg(feature = "gpu")]
+use std::sync::OnceLock;
+
 const PI: f32 = std::f32::consts::PI;
 const SBC: f32 = 5.67e-8;
 const KELVIN_OFFSET: f32 = 273.15;
+
+// ── GPU anisotropic sky context (lazy-initialized, shares device with shadows) ──
+
+#[cfg(feature = "gpu")]
+static ANISO_GPU_CONTEXT: OnceLock<Option<AnisoGpuContext>> = OnceLock::new();
+
+#[cfg(feature = "gpu")]
+static ANISO_GPU_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+#[cfg(feature = "gpu")]
+fn get_aniso_gpu_context() -> Option<&'static AnisoGpuContext> {
+    if !ANISO_GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    ANISO_GPU_CONTEXT
+        .get_or_init(|| {
+            // Share device/queue from the shadow GPU context
+            let shadow_ctx = crate::shadowing::get_gpu_context()?;
+            let device = shadow_ctx.device.clone();
+            let queue = shadow_ctx.queue.clone();
+            let ctx = AnisoGpuContext::new(device, queue);
+            eprintln!("[GPU] Anisotropic sky GPU context initialized");
+            Some(ctx)
+        })
+        .as_ref()
+}
+
+#[cfg(feature = "gpu")]
+#[pyfunction]
+/// Enable GPU acceleration for anisotropic sky computation
+pub fn enable_aniso_gpu() {
+    ANISO_GPU_ENABLED.store(true, std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[GPU] Anisotropic sky GPU acceleration enabled");
+}
+
+#[cfg(feature = "gpu")]
+#[pyfunction]
+/// Disable GPU acceleration for anisotropic sky computation (CPU fallback)
+pub fn disable_aniso_gpu() {
+    ANISO_GPU_ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[GPU] Anisotropic sky GPU acceleration disabled");
+}
+
+#[cfg(feature = "gpu")]
+#[pyfunction]
+/// Check if GPU acceleration is enabled for anisotropic sky
+pub fn is_aniso_gpu_enabled() -> bool {
+    ANISO_GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 // ── Input structs (created once in Python, passed by reference) ───────────
 
@@ -902,35 +957,133 @@ pub fn compute_timestep(
         );
 
         // Full anisotropic sky calculation (ldown, kside, lside totals)
-        let ani = anisotropic_sky_pure(
-            shmat_a,
-            vegshmat_a,
-            vbshmat_a,
-            weather.sun_altitude,
-            weather.sun_azimuth,
-            esky_a,
-            weather.ta,
-            cyl,
-            false, // wall_scheme
-            config.albedo_wall,
-            ground.tg_wall,
-            config.emis_wall,
-            rad_i,
-            rad_d,
-            asvf_arr.view(),
-            lv_arr.view(),
-            steradians_arr.view(),
-            delay.lup.view(),
-            lv_arr.view(),
-            shadow_f32.view(),
-            kup_e.view(),
-            kup_s.view(),
-            kup_w.view(),
-            kup_n.view(),
-            None, // voxel_table
-            None, // voxel_maps
-            Some(valid_v),
-        );
+        // Try GPU path first; fall back to CPU if unavailable.
+        let deg2rad = PI / 180.0;
+
+        #[cfg(feature = "gpu")]
+        let gpu_result = get_aniso_gpu_context().and_then(|ctx| {
+            // Pre-compute per-patch LUTs (normally internal to anisotropic_sky_pure)
+            let patch_altitude = lv_arr.column(0).to_owned();
+            let patch_azimuth = lv_arr.column(1).to_owned();
+
+            // Shortwave normalisation: lum_chi = luminance * rad_d / rad_tot
+            let lum_chi = if weather.sun_altitude > 0.0 {
+                let patch_luminance = lv_arr.column(2);
+                let mut rad_tot = 0.0f32;
+                for i in 0..n_patches {
+                    rad_tot += patch_luminance[i]
+                        * steradians_arr[i]
+                        * (patch_altitude[i] * deg2rad).sin();
+                }
+                patch_luminance.mapv(|lum| (lum * rad_d) / rad_tot)
+            } else {
+                Array1::<f32>::zeros(n_patches)
+            };
+
+            // Per-patch emissivity (Martin & Berdahl model)
+            let (_, esky_band) =
+                crate::emissivity_models::model2(&lv_arr, esky_a, weather.ta);
+
+            ctx.dispatch(
+                shmat_a,
+                vegshmat_a,
+                vbshmat_a,
+                asvf_arr.view(),
+                delay.lup.view(),
+                valid_v,
+                patch_altitude.view(),
+                patch_azimuth.view(),
+                steradians_arr.view(),
+                esky_band.view(),
+                lum_chi.view(),
+                weather.sun_altitude,
+                weather.sun_azimuth,
+                weather.ta,
+                cyl,
+                config.albedo_wall,
+                ground.tg_wall,
+                config.emis_wall,
+                rad_i,
+                rad_d,
+            )
+            .ok()
+        });
+
+        // Compute anisotropic sky: GPU path + CPU fallback
+        let mut used_gpu = false;
+        #[allow(unused_mut)]
+        let mut ani_ldown = Array2::<f32>::zeros(shape);
+        #[allow(unused_mut)]
+        let mut ani_lside = Array2::<f32>::zeros(shape);
+        #[allow(unused_mut)]
+        let mut ani_kside = Array2::<f32>::zeros(shape);
+        #[allow(unused_mut)]
+        let mut ani_keast = Array2::<f32>::zeros(shape);
+        #[allow(unused_mut)]
+        let mut ani_ksouth = Array2::<f32>::zeros(shape);
+        #[allow(unused_mut)]
+        let mut ani_kwest = Array2::<f32>::zeros(shape);
+        #[allow(unused_mut)]
+        let mut ani_knorth = Array2::<f32>::zeros(shape);
+
+        #[cfg(feature = "gpu")]
+        if let Some(gpu) = gpu_result {
+            // GPU path: derive kside and k-directional from GPU partial outputs
+            let kside_i = if cyl {
+                &shadow_f32 * rad_i * (weather.sun_altitude * deg2rad).cos()
+            } else {
+                Array2::<f32>::zeros(shape)
+            };
+            if weather.sun_altitude > 0.0 {
+                ani_kside = kside_i + &gpu.kside_partial;
+                ani_keast = &kup_e * 0.5;
+                ani_ksouth = &kup_s * 0.5;
+                ani_kwest = &kup_w * 0.5;
+                ani_knorth = &kup_n * 0.5;
+            }
+            ani_ldown = gpu.ldown;
+            ani_lside = gpu.lside;
+            used_gpu = true;
+        }
+
+        if !used_gpu {
+            let ani = anisotropic_sky_pure(
+                shmat_a,
+                vegshmat_a,
+                vbshmat_a,
+                weather.sun_altitude,
+                weather.sun_azimuth,
+                esky_a,
+                weather.ta,
+                cyl,
+                false, // wall_scheme
+                config.albedo_wall,
+                ground.tg_wall,
+                config.emis_wall,
+                rad_i,
+                rad_d,
+                asvf_arr.view(),
+                lv_arr.view(),
+                steradians_arr.view(),
+                delay.lup.view(),
+                lv_arr.view(),
+                shadow_f32.view(),
+                kup_e.view(),
+                kup_s.view(),
+                kup_w.view(),
+                kup_n.view(),
+                None, // voxel_table
+                None, // voxel_maps
+                Some(valid_v),
+            );
+            ani_ldown = ani.ldown;
+            ani_lside = ani.lside;
+            ani_kside = ani.kside;
+            ani_keast = ani.keast;
+            ani_ksouth = ani.ksouth;
+            ani_kwest = ani.kwest;
+            ani_knorth = ani.knorth;
+        }
 
         // Kdown (shared formula, but with anisotropic drad)
         let kdown = compute_kdown(
@@ -949,17 +1102,17 @@ pub fn compute_timestep(
         // From anisotropic: ldown from ani_sky, lside from lside_veg, kside from ani_sky
         (
             kdown,
-            ani.ldown,
-            ani.knorth,
-            ani.keast,
-            ani.ksouth,
-            ani.kwest,
+            ani_ldown,
+            ani_knorth,
+            ani_keast,
+            ani_ksouth,
+            ani_kwest,
             lside.lnorth,
             lside.least,
             lside.lsouth,
             lside.lwest,
-            ani.kside,
-            ani.lside,
+            ani_kside,
+            ani_lside,
         )
     } else {
         // === Isotropic sky ===
