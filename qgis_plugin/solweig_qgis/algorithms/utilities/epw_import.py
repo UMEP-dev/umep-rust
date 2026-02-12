@@ -21,6 +21,7 @@ from qgis.core import (
     QgsProcessingParameterNumber,
 )
 
+from ...utils.parameters import _canvas_center_latlon
 from ..base import SolweigAlgorithmBase
 
 
@@ -92,13 +93,16 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis."""
             )
         )
 
-        # Download parameters
+        # Download parameters — default to map canvas centre so users
+        # don't accidentally download weather for the wrong location.
+        canvas_lat, canvas_lon = _canvas_center_latlon()
+
         self.addParameter(
             QgsProcessingParameterNumber(
                 "LATITUDE",
                 self.tr("Latitude (for download)"),
                 type=QgsProcessingParameterNumber.Double,
-                defaultValue=57.7,
+                defaultValue=canvas_lat,
                 minValue=-90.0,
                 maxValue=90.0,
                 optional=True,
@@ -110,7 +114,7 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis."""
                 "LONGITUDE",
                 self.tr("Longitude (for download)"),
                 type=QgsProcessingParameterNumber.Double,
-                defaultValue=12.0,
+                defaultValue=canvas_lon,
                 minValue=-180.0,
                 maxValue=180.0,
                 optional=True,

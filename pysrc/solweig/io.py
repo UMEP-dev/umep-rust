@@ -1014,6 +1014,7 @@ def _read_epw_pure_python(path: Path) -> tuple:
     """Pure Python EPW parser without pandas dependency."""
     import csv
     from datetime import datetime as dt_class
+    from datetime import timedelta
 
     metadata = _parse_epw_metadata(path)
 
@@ -1059,11 +1060,9 @@ def _read_epw_pure_python(path: Path) -> tuple:
 
                 # EPW uses 1-24 hour format; hour 24 means midnight of next day
                 if hour == 24:
-                    hour = 0
-                    # We'd need to add a day, but for simplicity just use hour 0
-                    # This matches pandas behavior with errors="coerce"
-
-                timestamp = dt_class(year, month, day, hour, minute)
+                    timestamp = dt_class(year, month, day, 0, minute) + timedelta(days=1)
+                else:
+                    timestamp = dt_class(year, month, day, hour, minute)
                 timestamps.append(timestamp)
 
                 def parse_float(idx, row_data=line):

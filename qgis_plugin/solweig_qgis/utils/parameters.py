@@ -24,6 +24,29 @@ if TYPE_CHECKING:
     from qgis.core import QgsProcessingAlgorithm
 
 
+def _canvas_center_latlon() -> tuple[float, float]:
+    """Return (lat, lon) of the current map canvas centre in WGS 84.
+
+    Falls back to (0, 0) when the canvas is not available (e.g. headless).
+    """
+    try:
+        from qgis.core import QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsProject
+        from qgis.utils import iface
+
+        canvas = iface.mapCanvas()
+        center = canvas.center()
+        project_crs = canvas.mapSettings().destinationCrs()
+        wgs84 = QgsCoordinateReferenceSystem("EPSG:4326")
+
+        if project_crs != wgs84:
+            xform = QgsCoordinateTransform(project_crs, wgs84, QgsProject.instance())
+            center = xform.transform(center)
+
+        return round(center.y(), 4), round(center.x(), 4)
+    except Exception:
+        return 0.0, 0.0
+
+
 def add_surface_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     """
     Add standard surface data input parameters.
@@ -126,12 +149,14 @@ def add_location_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         )
     )
 
+    canvas_lat, canvas_lon = _canvas_center_latlon()
+
     algorithm.addParameter(
         QgsProcessingParameterNumber(
             "LATITUDE",
             algorithm.tr("Latitude (degrees)"),
             type=QgsProcessingParameterNumber.Double,
-            defaultValue=57.7,
+            defaultValue=canvas_lat,
             minValue=-90.0,
             maxValue=90.0,
             optional=True,
@@ -143,7 +168,7 @@ def add_location_parameters(algorithm: QgsProcessingAlgorithm) -> None:
             "LONGITUDE",
             algorithm.tr("Longitude (degrees)"),
             type=QgsProcessingParameterNumber.Double,
-            defaultValue=12.0,
+            defaultValue=canvas_lon,
             minValue=-180.0,
             maxValue=180.0,
             optional=True,

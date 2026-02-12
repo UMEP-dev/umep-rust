@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta22
+version=0.1.0-beta23
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,6 +42,9 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta23
+    - Fix EPW hour-24 timestamp bug: hour 24 now correctly maps to midnight of the next day instead of 00:00 of the same day
+    - Fix hardcoded Gothenburg lat/lon defaults: EPW download and SOLWEIG calculation now default to the map canvas centre (WGS 84)
     0.1.0-beta22
     - GPU pipelining: auto-split rasters >= 512px into at least 4 tiles (2x2) for sustained GPU utilisation
     - Previously, height-aware buffer could cause medium rasters to fit in a single tile, leaving the GPU idle during CPU-only pipeline steps
