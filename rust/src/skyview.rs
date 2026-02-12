@@ -773,17 +773,23 @@ fn calculate_svf_inner(
             });
     }
 
-    // Zero out bitpacked shadow matrices for NaN pixels in DSM
+    // When no vegetation, veg shadow matrices must indicate "no blocking":
+    //   veg_sh_matrix: all bits = 1 (sky visible through vegetation at every patch)
+    //   veg_blocks_bldg_sh_matrix: copy of bldg_sh_matrix (only buildings matter)
     let n_pack = pack_bytes(total_patches);
+    if !usevegdem {
+        inter.veg_sh_matrix.fill(0xFF);
+        inter.veg_blocks_bldg_sh_matrix.assign(&inter.bldg_sh_matrix);
+    }
+
+    // Zero out bitpacked shadow matrices for NaN pixels in DSM
     for row in 0..num_rows {
         for col in 0..num_cols {
             if dsm_f32[[row, col]].is_nan() {
                 for bi in 0..n_pack {
                     inter.bldg_sh_matrix[[row, col, bi]] = 0;
-                    if usevegdem {
-                        inter.veg_sh_matrix[[row, col, bi]] = 0;
-                        inter.veg_blocks_bldg_sh_matrix[[row, col, bi]] = 0;
-                    }
+                    inter.veg_sh_matrix[[row, col, bi]] = 0;
+                    inter.veg_blocks_bldg_sh_matrix[[row, col, bi]] = 0;
                 }
             }
         }

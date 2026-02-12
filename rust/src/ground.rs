@@ -1,4 +1,4 @@
-use ndarray::{Array2, ArrayView2};
+use ndarray::{Array2, ArrayView2, Zip};
 use numpy::{PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 use rayon::prelude::*;
@@ -169,60 +169,49 @@ pub(crate) fn ts_wave_delay_batch_pure(
 
     if timeadd >= threshold {
         let weight1 = (decay_constant * timeadd).exp();
-        let new_tgmap1 = &lup * (1.0 - weight1) + &tgmap1_arr * weight1;
-        let new_tgmap1_e = &lup_e * (1.0 - weight1) + &tgmap1_e_arr * weight1;
-        let new_tgmap1_s = &lup_s * (1.0 - weight1) + &tgmap1_s_arr * weight1;
-        let new_tgmap1_w = &lup_w * (1.0 - weight1) + &tgmap1_w_arr * weight1;
-        let new_tgmap1_n = &lup_n * (1.0 - weight1) + &tgmap1_n_arr * weight1;
-        let new_tgout1 = &tg_temp * (1.0 - weight1) + &tgout1_arr * weight1;
+        let new_timeadd = if timestepdec > threshold { timestepdec } else { 0.0 };
 
-        let new_timeadd = if timestepdec > threshold {
-            timestepdec
-        } else {
-            0.0
-        };
+        let m = lerp_par(lup, tgmap1_arr.view(), weight1);
+        let me = lerp_par(lup_e, tgmap1_e_arr.view(), weight1);
+        let ms = lerp_par(lup_s, tgmap1_s_arr.view(), weight1);
+        let mw = lerp_par(lup_w, tgmap1_w_arr.view(), weight1);
+        let mn = lerp_par(lup_n, tgmap1_n_arr.view(), weight1);
+        let mt = lerp_par(tg_temp, tgout1_arr.view(), weight1);
 
         TsWaveDelayBatchPureResult {
-            lup: new_tgmap1.clone(),
-            lup_e: new_tgmap1_e.clone(),
-            lup_s: new_tgmap1_s.clone(),
-            lup_w: new_tgmap1_w.clone(),
-            lup_n: new_tgmap1_n.clone(),
-            tg_out: new_tgout1.clone(),
+            lup: m.clone(), lup_e: me.clone(), lup_s: ms.clone(),
+            lup_w: mw.clone(), lup_n: mn.clone(), tg_out: mt.clone(),
             timeadd: new_timeadd,
-            tgmap1: new_tgmap1,
-            tgmap1_e: new_tgmap1_e,
-            tgmap1_s: new_tgmap1_s,
-            tgmap1_w: new_tgmap1_w,
-            tgmap1_n: new_tgmap1_n,
-            tgout1: new_tgout1,
+            tgmap1: m, tgmap1_e: me, tgmap1_s: ms,
+            tgmap1_w: mw, tgmap1_n: mn, tgout1: mt,
         }
     } else {
         let new_timeadd = timeadd + timestepdec;
         let weight1 = (decay_constant * new_timeadd).exp();
-        let out_lup = &lup * (1.0 - weight1) + &tgmap1_arr * weight1;
-        let out_lup_e = &lup_e * (1.0 - weight1) + &tgmap1_e_arr * weight1;
-        let out_lup_s = &lup_s * (1.0 - weight1) + &tgmap1_s_arr * weight1;
-        let out_lup_w = &lup_w * (1.0 - weight1) + &tgmap1_w_arr * weight1;
-        let out_lup_n = &lup_n * (1.0 - weight1) + &tgmap1_n_arr * weight1;
-        let out_tg = &tg_temp * (1.0 - weight1) + &tgout1_arr * weight1;
 
         TsWaveDelayBatchPureResult {
-            lup: out_lup,
-            lup_e: out_lup_e,
-            lup_s: out_lup_s,
-            lup_w: out_lup_w,
-            lup_n: out_lup_n,
-            tg_out: out_tg,
+            lup: lerp_par(lup, tgmap1_arr.view(), weight1),
+            lup_e: lerp_par(lup_e, tgmap1_e_arr.view(), weight1),
+            lup_s: lerp_par(lup_s, tgmap1_s_arr.view(), weight1),
+            lup_w: lerp_par(lup_w, tgmap1_w_arr.view(), weight1),
+            lup_n: lerp_par(lup_n, tgmap1_n_arr.view(), weight1),
+            tg_out: lerp_par(tg_temp, tgout1_arr.view(), weight1),
             timeadd: new_timeadd,
-            tgmap1: tgmap1_arr,
-            tgmap1_e: tgmap1_e_arr,
-            tgmap1_s: tgmap1_s_arr,
-            tgmap1_w: tgmap1_w_arr,
-            tgmap1_n: tgmap1_n_arr,
-            tgout1: tgout1_arr,
+            tgmap1: tgmap1_arr, tgmap1_e: tgmap1_e_arr,
+            tgmap1_s: tgmap1_s_arr, tgmap1_w: tgmap1_w_arr,
+            tgmap1_n: tgmap1_n_arr, tgout1: tgout1_arr,
         }
     }
+}
+
+/// Parallel weighted average: out[i] = curr[i] * (1-w) + prev[i] * w
+fn lerp_par(curr: ArrayView2<f32>, prev: ArrayView2<f32>, w: f32) -> Array2<f32> {
+    let w1 = 1.0 - w;
+    let mut out = Array2::zeros(curr.dim());
+    Zip::from(&mut out).and(&curr).and(&prev).par_for_each(|o, &c, &p| {
+        *o = c * w1 + p * w;
+    });
+    out
 }
 
 /// Calculate ground and wall temperature deviations from air temperature.

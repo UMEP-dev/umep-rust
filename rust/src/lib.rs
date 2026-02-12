@@ -14,6 +14,7 @@ mod sky;
 mod skyview;
 mod sun;
 mod sunlit_shaded_patches;
+mod perez;
 mod pipeline;
 mod tmrt;
 mod utci;
@@ -169,6 +170,8 @@ fn register_pipeline_module(py_module: &Bound<'_, PyModule>) -> PyResult<()> {
     submodule.add_class::<pipeline::PyGvfGeometryCache>()?;
     submodule.add_function(wrap_pyfunction!(pipeline::compute_timestep, &submodule)?)?;
     submodule.add_function(wrap_pyfunction!(pipeline::precompute_gvf_cache, &submodule)?)?;
+    submodule.add_function(wrap_pyfunction!(perez::perez_v3_py, &submodule)?)?;
+    submodule.add_function(wrap_pyfunction!(perez::compute_steradians_py, &submodule)?)?;
     py_module.add_submodule(&submodule)?;
     Ok(())
 }

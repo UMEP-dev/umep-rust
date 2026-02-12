@@ -5,9 +5,10 @@
 //!
 //! Supports both isotropic and anisotropic (Perez) sky models.
 
-use ndarray::{Array2, Array3, ArrayView2};
-use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadonlyArray3};
+use ndarray::{Array2, Array3, ArrayView2, Zip};
+use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2, PyReadonlyArray3};
 use pyo3::prelude::*;
+use rayon::prelude::*;
 
 use crate::ground::{
     compute_ground_temperature_pure, ts_wave_delay_batch_pure, GroundTempResult,
@@ -61,6 +62,10 @@ pub struct WeatherScalars {
     pub psi: f32,
     #[pyo3(get, set)]
     pub is_daytime: bool,
+    #[pyo3(get, set)]
+    pub jday: i32,
+    #[pyo3(get, set)]
+    pub patch_option: i32,
 }
 
 #[pymethods]
@@ -84,6 +89,8 @@ impl WeatherScalars {
         zen_deg: f32,
         psi: f32,
         is_daytime: bool,
+        jday: i32,
+        patch_option: i32,
     ) -> Self {
         Self {
             sun_azimuth,
@@ -102,6 +109,8 @@ impl WeatherScalars {
             zen_deg,
             psi,
             is_daytime,
+            jday,
+            patch_option,
         }
     }
 }
@@ -228,6 +237,40 @@ pub struct TimestepResult {
     pub tgout1: Py<PyArray2<f32>>,
 }
 
+/// Raw result struct with owned arrays (no Python types — Send-safe).
+struct TimestepResultRaw {
+    tmrt: Array2<f32>,
+    shadow: Array2<f32>,
+    kdown: Array2<f32>,
+    kup: Array2<f32>,
+    ldown: Array2<f32>,
+    lup: Array2<f32>,
+    timeadd: f32,
+    tgmap1: Array2<f32>,
+    tgmap1_e: Array2<f32>,
+    tgmap1_s: Array2<f32>,
+    tgmap1_w: Array2<f32>,
+    tgmap1_n: Array2<f32>,
+    tgout1: Array2<f32>,
+}
+
+/// Release the GIL for a closure whose captured state may not be `Send`.
+///
+/// # Safety
+/// Caller must guarantee that all borrowed data remains alive for the duration
+/// of the closure (i.e. the Python objects backing any `ArrayView` are not
+/// deallocated while the GIL is released).
+unsafe fn allow_threads_unchecked<T: Send, F: FnOnce() -> T>(py: Python, f: F) -> T {
+    // Move f to the heap and erase through usize so the auto-Send derivation
+    // for the closure sees only Send types (usize), not the non-Send F.
+    let raw = Box::into_raw(Box::new(f));
+    let addr = raw as usize;
+    py.allow_threads(move || unsafe {
+        let f = *Box::from_raw(addr as *mut F);
+        f()
+    })
+}
+
 // ── Radiation helpers (ported from Python physics) ─────────────────────────
 
 /// Compute sky emissivity (Jonsson et al. 2006).
@@ -266,38 +309,36 @@ fn compute_kup(
 ) -> (Array2<f32>, Array2<f32>, Array2<f32>, Array2<f32>, Array2<f32>) {
     let rad_i_sin_alt = rad_i * (altitude * PI / 180.0).sin();
 
-    // common_term = radD * svfbuveg + albedo_b * (1 - svfbuveg) * (radG * (1 - F_sh) + radD * F_sh)
     let shape = svfbuveg.dim();
-    let mut common_term = Array2::<f32>::zeros(shape);
     let mut kup = Array2::<f32>::zeros(shape);
     let mut kup_e = Array2::<f32>::zeros(shape);
     let mut kup_s = Array2::<f32>::zeros(shape);
     let mut kup_w = Array2::<f32>::zeros(shape);
     let mut kup_n = Array2::<f32>::zeros(shape);
 
-    // Compute in a single pass for cache efficiency
-    let ncols = shape.1;
-    for idx in 0..shape.0 * shape.1 {
-        let r = idx / ncols;
-        let c = idx % ncols;
-        if valid[[r, c]] == 0 {
-            kup[[r, c]] = f32::NAN;
-            kup_e[[r, c]] = f32::NAN;
-            kup_s[[r, c]] = f32::NAN;
-            kup_w[[r, c]] = f32::NAN;
-            kup_n[[r, c]] = f32::NAN;
-            continue;
-        }
-        let sv = svfbuveg[[r, c]];
-        let fsh = f_sh[[r, c]];
-        let ct = rad_d * sv + albedo_b * (1.0 - sv) * (rad_g * (1.0 - fsh) + rad_d * fsh);
-        common_term[[r, c]] = ct;
-        kup[[r, c]] = gvfalb[[r, c]] * rad_i_sin_alt + ct * gvfalbnosh[[r, c]];
-        kup_e[[r, c]] = gvfalb_e[[r, c]] * rad_i_sin_alt + ct * gvfalbnosh_e[[r, c]];
-        kup_s[[r, c]] = gvfalb_s[[r, c]] * rad_i_sin_alt + ct * gvfalbnosh_s[[r, c]];
-        kup_w[[r, c]] = gvfalb_w[[r, c]] * rad_i_sin_alt + ct * gvfalbnosh_w[[r, c]];
-        kup_n[[r, c]] = gvfalb_n[[r, c]] * rad_i_sin_alt + ct * gvfalbnosh_n[[r, c]];
-    }
+    Zip::indexed(&mut kup)
+        .and(&mut kup_e)
+        .and(&mut kup_s)
+        .and(&mut kup_w)
+        .and(&mut kup_n)
+        .par_for_each(|(r, c), k, ke, ks, kw, kn| {
+            if valid[[r, c]] == 0 {
+                *k = f32::NAN;
+                *ke = f32::NAN;
+                *ks = f32::NAN;
+                *kw = f32::NAN;
+                *kn = f32::NAN;
+                return;
+            }
+            let sv = svfbuveg[[r, c]];
+            let fsh = f_sh[[r, c]];
+            let ct = rad_d * sv + albedo_b * (1.0 - sv) * (rad_g * (1.0 - fsh) + rad_d * fsh);
+            *k = gvfalb[[r, c]] * rad_i_sin_alt + ct * gvfalbnosh[[r, c]];
+            *ke = gvfalb_e[[r, c]] * rad_i_sin_alt + ct * gvfalbnosh_e[[r, c]];
+            *ks = gvfalb_s[[r, c]] * rad_i_sin_alt + ct * gvfalbnosh_s[[r, c]];
+            *kw = gvfalb_w[[r, c]] * rad_i_sin_alt + ct * gvfalbnosh_w[[r, c]];
+            *kn = gvfalb_n[[r, c]] * rad_i_sin_alt + ct * gvfalbnosh_n[[r, c]];
+        });
 
     (kup, kup_e, kup_s, kup_w, kup_n)
 }
@@ -320,14 +361,11 @@ fn compute_ldown(
     let tg_wall_k4 = (ta + tg_wall + KELVIN_OFFSET).powi(4);
     let shape = svf.dim();
     let mut ldown = Array2::<f32>::zeros(shape);
-    let ncols = shape.1;
 
-    for idx in 0..shape.0 * shape.1 {
-        let r = idx / ncols;
-        let c = idx % ncols;
+    Zip::indexed(&mut ldown).par_for_each(|(r, c), ld| {
         if valid[[r, c]] == 0 {
-            ldown[[r, c]] = f32::NAN;
-            continue;
+            *ld = f32::NAN;
+            return;
         }
         let sv = svf[[r, c]];
         let sv_veg = svf_veg[[r, c]];
@@ -344,11 +382,11 @@ fn compute_ldown(
                 + (2.0 - sv_veg - sv_aveg) * emis_wall * SBC * ta_k4
                 + (sv_aveg - sv) * emis_wall * SBC * tg_wall_k4
                 + (2.0 - sv - sv_veg) * (1.0 - emis_wall) * SBC * ta_k4;
-            ldown[[r, c]] = val * (1.0 - c_cloud) + val_cloudy * c_cloud;
+            *ld = val * (1.0 - c_cloud) + val_cloudy * c_cloud;
         } else {
-            ldown[[r, c]] = val;
+            *ld = val;
         }
-    }
+    });
 
     ldown
 }
@@ -369,19 +407,16 @@ fn compute_kdown(
 ) -> Array2<f32> {
     let shape = shadow.dim();
     let mut kdown = Array2::<f32>::zeros(shape);
-    let ncols = shape.1;
 
-    for idx in 0..shape.0 * shape.1 {
-        let r = idx / ncols;
-        let c = idx % ncols;
+    Zip::indexed(&mut kdown).par_for_each(|(r, c), kd| {
         if valid[[r, c]] == 0 {
-            kdown[[r, c]] = f32::NAN;
-            continue;
+            *kd = f32::NAN;
+            return;
         }
-        kdown[[r, c]] = rad_i * shadow[[r, c]] * sin_alt
+        *kd = rad_i * shadow[[r, c]] * sin_alt
             + drad[[r, c]]
             + albedo_wall * (1.0 - svfbuveg[[r, c]]) * (rad_g * (1.0 - f_sh[[r, c]]) + rad_d * f_sh[[r, c]]);
-    }
+    });
 
     kdown
 }
@@ -491,11 +526,6 @@ pub fn compute_timestep(
     shmat: Option<PyReadonlyArray3<u8>>,
     vegshmat: Option<PyReadonlyArray3<u8>>,
     vbshmat: Option<PyReadonlyArray3<u8>>,
-    l_patches: Option<PyReadonlyArray2<f32>>,
-    steradians: Option<PyReadonlyArray1<f32>>,
-    lv: Option<PyReadonlyArray2<f32>>,
-    asvf: Option<PyReadonlyArray2<f32>>,
-    esky_aniso: Option<f32>,
     // Thermal state (mutable, updated each timestep)
     firstdaytime: i32,
     timeadd: f32,
@@ -552,10 +582,15 @@ pub fn compute_timestep(
     let shmat_v = shmat.as_ref().map(|a| a.as_array());
     let vegshmat_v = vegshmat.as_ref().map(|a| a.as_array());
     let vbshmat_v = vbshmat.as_ref().map(|a| a.as_array());
-    let l_patches_v = l_patches.as_ref().map(|a| a.as_array());
-    let steradians_v = steradians.as_ref().map(|a| a.as_array());
-    let lv_v = lv.as_ref().map(|a| a.as_array());
-    let asvf_v = asvf.as_ref().map(|a| a.as_array());
+
+    // Extract GVF cache reference (pure Rust data) before releasing the GIL
+    let gvf_cache_inner = gvf_cache.map(|c| &c.inner);
+
+    // SAFETY: All array views borrow from PyReadonlyArray parameters that are alive
+    // for the entire function call. Releasing the GIL only allows other Python
+    // threads to run — it does not invalidate our borrows or trigger GC of the
+    // backing numpy arrays.
+    let raw = unsafe { allow_threads_unchecked(py, || {
 
     let shape = dsm_v.dim();
 
@@ -588,7 +623,7 @@ pub fn compute_timestep(
     } else {
         bldg_sh.clone()
     };
-    let shadow_f32 = shadow.mapv(|v| v as f32);
+    let shadow_f32 = shadow;
 
     let wallsun = shadow_result
         .wall_sun
@@ -619,10 +654,10 @@ pub fn compute_timestep(
     let second = (human.height * 20.0).round();
 
     let gvf: GvfResultPure = if config.has_walls {
-        if let Some(cache) = gvf_cache {
+        if let Some(cache) = gvf_cache_inner {
             // Use cached geometry — thermal-only pass
             gvf_calc_with_cache(
-                &cache.inner,
+                cache,
                 wallsun.view(),
                 buildings_v,
                 shadow_f32.view(),
@@ -669,18 +704,15 @@ pub fn compute_timestep(
         let tg_with_shadow = &ground.tg * &shadow_f32;
         // Lup = emis × SBC × (Ta + Tg_shadow + 273.15)^4
         let lup_simple = {
-            let ncols = shape.1;
             let mut arr = Array2::<f32>::zeros(shape);
-            for idx in 0..shape.0 * shape.1 {
-                let r = idx / ncols;
-                let c = idx % ncols;
+            Zip::indexed(&mut arr).par_for_each(|(r, c), out| {
                 if valid_v[[r, c]] == 0 {
-                    arr[[r, c]] = f32::NAN;
-                    continue;
+                    *out = f32::NAN;
+                    return;
                 }
                 let t = weather.ta + tg_with_shadow[[r, c]] + KELVIN_OFFSET;
-                arr[[r, c]] = emis_grid_v[[r, c]] * SBC * t.powi(4);
-            }
+                *out = emis_grid_v[[r, c]] * SBC * t.powi(4);
+            });
             arr
         };
         let gvfalb_simple = &alb_grid_v * &gvf_simple;
@@ -707,7 +739,7 @@ pub fn compute_timestep(
     };
 
     // ── Step 4: Thermal Delay ────────────────────────────────────────────
-    let tg_temp = (&ground.tg * &shadow_f32 + weather.ta).mapv(|v| v as f32);
+    let tg_temp = &ground.tg * &shadow_f32 + weather.ta;
 
     let delay = ts_wave_delay_batch_pure(
         gvf.gvf_lup.view(),
@@ -763,12 +795,7 @@ pub fn compute_timestep(
     );
 
     // Branch: anisotropic vs isotropic
-    let use_aniso = config.use_anisotropic
-        && shmat_v.is_some()
-        && l_patches_v.is_some()
-        && steradians_v.is_some()
-        && lv_v.is_some()
-        && asvf_v.is_some();
+    let use_aniso = config.use_anisotropic && shmat_v.is_some();
 
     let (kdown, ldown, kside_knorth, kside_keast, kside_ksouth, kside_kwest,
          lside_lnorth, lside_least, lside_lsouth, lside_lwest,
@@ -777,29 +804,54 @@ pub fn compute_timestep(
         let shmat_a = shmat_v.unwrap();
         let vegshmat_a = vegshmat_v.unwrap();
         let vbshmat_a = vbshmat_v.unwrap();
-        let l_patches_a = l_patches_v.unwrap();
-        let steradians_a = steradians_v.unwrap();
-        let lv_a = lv_v.unwrap();
-        let asvf_a = asvf_v.unwrap();
-        let esky_a = esky_aniso.unwrap_or(esky);
+
+        // Perez sky luminance distribution (computed in Rust — no Python round-trip)
+        let lv_arr = crate::perez::perez_v3(
+            weather.zen_deg,
+            weather.sun_azimuth,
+            weather.diffuse_rad,
+            weather.direct_rad,
+            weather.jday,
+            weather.patch_option,
+        );
+        let steradians_arr = {
+            let (alts, _) = crate::perez::create_patches(weather.patch_option);
+            crate::perez::compute_steradians(&alts)
+        };
+
+        // ASVF from SVF (arccos(sqrt(clip(svf, 0, 1))))
+        let asvf_arr = svf_v.mapv(|v| v.clamp(0.0, 1.0).sqrt().acos());
+
+        // Esky anisotropic (Jonsson + CI correction)
+        let esky_a = {
+            let ci = weather.clearness_index;
+            if ci < 0.95 { ci * esky + (1.0 - ci) } else { esky }
+        };
 
         // drad via weighted_patch_sum on diffsh
-        // diffsh = shmat - (1 - vegshmat) * (1 - psi)  (u8 -> f32 inline)
-        let n_patches = shmat_a.shape()[2];
+        // Shadow matrices are bitpacked: 1 bit per patch, 8 patches per byte.
+        // diffsh = shmat_bit - (1 - vegshmat_bit) * (1 - psi)
+        let n_patches = lv_arr.shape()[0]; // actual patch count from Perez
         let mut diffsh = Array3::<f32>::zeros((shape.0, shape.1, n_patches));
-        for r in 0..shape.0 {
-            for c in 0..shape.1 {
+        let ncols_d = shape.1;
+        diffsh
+            .as_slice_mut()
+            .unwrap()
+            .par_chunks_mut(n_patches)
+            .enumerate()
+            .for_each(|(px, patch_slice)| {
+                let r = px / ncols_d;
+                let c = px % ncols_d;
                 if valid_v[[r, c]] == 0 {
-                    continue; // Leave as zeros — NaN set by downstream functions
+                    return; // Leave as zeros — NaN set by downstream functions
                 }
                 for i in 0..n_patches {
-                    let sh = shmat_a[[r, c, i]] as f32 / 255.0;
-                    let vsh = vegshmat_a[[r, c, i]] as f32 / 255.0;
-                    diffsh[[r, c, i]] = sh - (1.0 - vsh) * (1.0 - psi);
+                    let sh = ((shmat_a[[r, c, i >> 3]] >> (i & 7)) & 1) as f32;
+                    let vsh = ((vegshmat_a[[r, c, i >> 3]] >> (i & 7)) & 1) as f32;
+                    patch_slice[i] = sh - (1.0 - vsh) * (1.0 - psi);
                 }
-            }
-        }
-        let lv_col2 = lv_a.column(2);
+            });
+        let lv_col2 = lv_arr.column(2);
         let ani_lum = weighted_patch_sum_pure(diffsh.view(), lv_col2);
         let drad = ani_lum.mapv(|v| v * rad_d);
 
@@ -865,11 +917,11 @@ pub fn compute_timestep(
             config.emis_wall,
             rad_i,
             rad_d,
-            asvf_a,
-            l_patches_a,
-            steradians_a,
+            asvf_arr.view(),
+            lv_arr.view(),
+            steradians_arr.view(),
             delay.lup.view(),
-            lv_a,
+            lv_arr.view(),
             shadow_f32.view(),
             kup_e.view(),
             kup_s.view(),
@@ -1042,20 +1094,38 @@ pub fn compute_timestep(
         use_aniso,
     );
 
-    // ── Convert final outputs to PyArrays ────────────────────────────────
-    Ok(TimestepResult {
-        tmrt: tmrt.into_pyarray(py).unbind(),
-        shadow: shadow_f32.into_pyarray(py).unbind(),
-        kdown: kdown.into_pyarray(py).unbind(),
-        kup: kup.into_pyarray(py).unbind(),
-        ldown: ldown.into_pyarray(py).unbind(),
-        lup: delay.lup.into_pyarray(py).unbind(),
+    TimestepResultRaw {
+        tmrt,
+        shadow: shadow_f32,
+        kdown,
+        kup,
+        ldown,
+        lup: delay.lup,
         timeadd: delay.timeadd,
-        tgmap1: delay.tgmap1.into_pyarray(py).unbind(),
-        tgmap1_e: delay.tgmap1_e.into_pyarray(py).unbind(),
-        tgmap1_s: delay.tgmap1_s.into_pyarray(py).unbind(),
-        tgmap1_w: delay.tgmap1_w.into_pyarray(py).unbind(),
-        tgmap1_n: delay.tgmap1_n.into_pyarray(py).unbind(),
-        tgout1: delay.tgout1.into_pyarray(py).unbind(),
+        tgmap1: delay.tgmap1,
+        tgmap1_e: delay.tgmap1_e,
+        tgmap1_s: delay.tgmap1_s,
+        tgmap1_w: delay.tgmap1_w,
+        tgmap1_n: delay.tgmap1_n,
+        tgout1: delay.tgout1,
+    }
+
+    }) }; // end allow_threads_unchecked
+
+    // ── Convert final outputs to PyArrays (needs GIL) ────────────────────
+    Ok(TimestepResult {
+        tmrt: raw.tmrt.into_pyarray(py).unbind(),
+        shadow: raw.shadow.into_pyarray(py).unbind(),
+        kdown: raw.kdown.into_pyarray(py).unbind(),
+        kup: raw.kup.into_pyarray(py).unbind(),
+        ldown: raw.ldown.into_pyarray(py).unbind(),
+        lup: raw.lup.into_pyarray(py).unbind(),
+        timeadd: raw.timeadd,
+        tgmap1: raw.tgmap1.into_pyarray(py).unbind(),
+        tgmap1_e: raw.tgmap1_e.into_pyarray(py).unbind(),
+        tgmap1_s: raw.tgmap1_s.into_pyarray(py).unbind(),
+        tgmap1_w: raw.tgmap1_w.into_pyarray(py).unbind(),
+        tgmap1_n: raw.tgmap1_n.into_pyarray(py).unbind(),
+        tgout1: raw.tgout1.into_pyarray(py).unbind(),
     })
 }

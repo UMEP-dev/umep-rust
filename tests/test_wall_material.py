@@ -112,8 +112,8 @@ class TestWallMaterialInCalculate:
         from solweig import calculate
 
         surface, location, weather, human = simple_inputs
-        result_default = calculate(surface, location, weather, human=human)
-        result_none = calculate(surface, location, weather, human=human, wall_material=None)
+        result_default = calculate(surface, location, weather, human=human, use_anisotropic_sky=False)
+        result_none = calculate(surface, location, weather, human=human, wall_material=None, use_anisotropic_sky=False)
 
         np.testing.assert_array_equal(result_default.tmrt, result_none.tmrt)
 
@@ -122,11 +122,14 @@ class TestWallMaterialInCalculate:
         from solweig import calculate
 
         surface, location, weather, human = simple_inputs
-        result_default = calculate(surface, location, weather, human=human)
-        result_brick = calculate(surface, location, weather, human=human, wall_material="brick")
+        # Use isotropic sky — this flat surface has no explicit wall pixels,
+        # but wall material parameters still affect ground temperature through
+        # the isotropic radiation pathway (tgk_wall / tstart_wall scalars).
+        result_default = calculate(surface, location, weather, human=human, use_anisotropic_sky=False)
+        result_brick = calculate(
+            surface, location, weather, human=human, wall_material="brick", use_anisotropic_sky=False
+        )
 
-        # The Tmrt values should differ (brick has different TgK/Tstart)
-        # They won't be identical because wall temp affects longwave radiation
         assert not np.array_equal(result_default.tmrt, result_brick.tmrt), (
             "Brick wall material should produce different Tmrt than default"
         )

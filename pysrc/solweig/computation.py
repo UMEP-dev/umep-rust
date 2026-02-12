@@ -562,6 +562,8 @@ def calculate_core_fused(
         zen_deg=float(zen_deg),
         psi=float(psi),
         is_daytime=weather.sun_altitude > 0,
+        jday=int(weather.datetime.timetuple().tm_yday) if weather.datetime is not None else 180,
+        patch_option=0,  # Set below if anisotropic
     )
 
     hs = pipeline.HumanScalars(
@@ -610,21 +612,14 @@ def calculate_core_fused(
         )
         surface._gvf_geometry_cache = gvf_cache
 
-    # Anisotropic sky pre-computation (Perez stays in Python, <1ms)
+    # Anisotropic sky: Perez luminance, steradians, ASVF, and esky are now
+    # computed inside the Rust pipeline (no Python round-trip). We only need
+    # the shadow matrices and the patch_option.
     aniso_shmat = None
     aniso_vegshmat = None
     aniso_vbshmat = None
-    aniso_l_patches = None
-    aniso_steradians = None
-    aniso_lv = None
-    aniso_asvf = None
-    aniso_esky = None
 
     if use_anisotropic_sky:
-        from .physics.patch_radiation import patch_steradians
-        from .physics.Perez_v3 import Perez_v3
-
-        # Get shadow matrices
         shadow_mats = None
         if precomputed is not None and precomputed.shadow_matrices is not None:
             shadow_mats = precomputed.shadow_matrices
@@ -632,45 +627,10 @@ def calculate_core_fused(
             shadow_mats = surface.shadow_matrices
 
         if shadow_mats is not None:
-            patch_option = shadow_mats.patch_option
-            jday = weather.datetime.timetuple().tm_yday
-            rad_d = float(weather.diffuse_rad)
-            rad_i = float(weather.direct_rad)
-
-            # Perez luminance distribution
-            lv_arr, _, _ = Perez_v3(
-                weather.sun_zenith,
-                weather.sun_azimuth,
-                rad_d,
-                rad_i,
-                jday,
-                patchchoice=1,
-                patch_option=patch_option,
-            )
-
-            # Steradians
-            ster, _, _ = patch_steradians(lv_arr)
-
-            # ASVF from SVF
-            asvf_arr = np.arccos(np.sqrt(np.clip(svf_bundle.svf, 0.0, 1.0)))
-
-            # Esky (Jonsson et al. 2006) with CI correction for anisotropic
-            ta_k = weather.ta + 273.15
-            ea = 6.107 * 10 ** ((7.5 * weather.ta) / (237.3 + weather.ta)) * (weather.rh / 100.0)
-            msteg = 46.5 * (ea / ta_k)
-            esky_val = 1 - (1 + msteg) * np.exp(-np.sqrt(1.2 + 3.0 * msteg))
-            ci = weather.clearness_index
-            if ci < 0.95:
-                esky_val = ci * esky_val + (1 - ci) * 1.0
-
+            ws.patch_option = shadow_mats.patch_option
             aniso_shmat = np.ascontiguousarray(shadow_mats._shmat_u8)
             aniso_vegshmat = np.ascontiguousarray(shadow_mats._vegshmat_u8)
             aniso_vbshmat = np.ascontiguousarray(shadow_mats._vbshmat_u8)
-            aniso_l_patches = as_float32(lv_arr)
-            aniso_steradians = as_float32(ster)
-            aniso_lv = as_float32(lv_arr)
-            aniso_asvf = as_float32(asvf_arr)
-            aniso_esky = float(esky_val)
 
     # Thermal state (create initial if None)
     if state is None:
@@ -721,15 +681,10 @@ def calculate_core_fused(
         # Buildings mask + land cover
         as_float32(buildings),
         as_float32(lc_grid) if lc_grid is not None else None,
-        # Anisotropic sky inputs (None for isotropic)
+        # Anisotropic sky inputs (None for isotropic; Perez computed in Rust)
         aniso_shmat,
         aniso_vegshmat,
         aniso_vbshmat,
-        aniso_l_patches,
-        aniso_steradians,
-        aniso_lv,
-        aniso_asvf,
-        aniso_esky,
         # Thermal state
         firstdaytime_int,
         float(state.timeadd),
