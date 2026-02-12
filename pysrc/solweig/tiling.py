@@ -12,7 +12,6 @@ ensuring physically accurate ground temperature modeling with thermal inertia.
 
 from __future__ import annotations
 
-import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -575,16 +574,15 @@ def calculate_tiled(
         conifer: Treat vegetation as evergreen conifers. Default False.
         physics: Physics parameters. If None, uses bundled defaults.
         materials: Material properties. If None, uses bundled defaults.
-        max_shadow_distance_m: Maximum shadow reach / tile buffer in meters.
-            Default 500.0.
+        max_shadow_distance_m: Upper bound on shadow reach in meters (default 500.0).
+            The actual buffer is computed from the tallest DSM pixel via
+            calculate_buffer_distance(), capped at this value.
         progress_callback: Optional callback(tile_idx, total_tiles).
 
     Returns:
         SolweigResult with Tmrt grid. State is not returned for single-timestep
         tiled mode.
     """
-
-    logger = logging.getLogger(__name__)
 
     if human is None:
         human = HumanParams()
@@ -596,8 +594,11 @@ def calculate_tiled(
     rows, cols = surface.shape
     pixel_size = surface.pixel_size
 
-    # Tile overlap = max_shadow_distance_m (conservative worst case)
-    buffer_pixels = int(np.ceil(max_shadow_distance_m / pixel_size))
+    # Height-aware buffer: use actual max building height instead of worst-case
+    max_height = float(np.nanmax(surface.dsm)) if surface.dsm is not None else 0.0
+    buffer_m = calculate_buffer_distance(max_height, max_shadow_distance_m=max_shadow_distance_m)
+    buffer_pixels = int(np.ceil(buffer_m / pixel_size))
+    logger.info(f"Buffer: {buffer_m:.0f}m ({buffer_pixels}px) from max height {max_height:.1f}m")
 
     # Validate and adjust tile size
     adjusted_tile_size, warning = validate_tile_size(tile_size, buffer_pixels, pixel_size)
@@ -628,7 +629,7 @@ def calculate_tiled(
 
     logger.info(
         f"Tiled processing: {rows}x{cols} raster, {n_tiles} tiles, "
-        f"tile_size={adjusted_tile_size}, buffer={max_shadow_distance_m:.0f}m ({buffer_pixels}px)"
+        f"tile_size={adjusted_tile_size}, buffer={buffer_m:.0f}m ({buffer_pixels}px) from max height {max_height:.1f}m"
     )
 
     # Initialize output arrays
@@ -736,8 +737,9 @@ def calculate_timeseries_tiled(
         physics: Physics parameters. If None, uses config or bundled defaults.
         materials: Material properties. If None, uses config or bundled defaults.
         wall_material: Wall material type for temperature model.
-        max_shadow_distance_m: Maximum shadow reach / tile buffer in meters.
-            If None, uses config or default (500.0).
+        max_shadow_distance_m: Upper bound on shadow reach in meters.
+            If None, uses config or default (500.0). The actual buffer is
+            computed from the tallest DSM pixel via calculate_buffer_distance().
         output_dir: Directory to save results incrementally as GeoTIFF.
         outputs: Which outputs to save (e.g., ["tmrt", "shadow"]).
         progress_callback: Optional callback(current_step, total_steps).
@@ -794,8 +796,11 @@ def calculate_timeseries_tiled(
     rows, cols = surface.shape
     pixel_size = surface.pixel_size
 
-    # Tile overlap = max_shadow_distance_m (conservative worst case)
-    buffer_pixels = int(np.ceil(effective_max_shadow / pixel_size))
+    # Height-aware buffer: use actual max building height instead of worst-case
+    max_height = float(np.nanmax(surface.dsm)) if surface.dsm is not None else 0.0
+    buffer_m = calculate_buffer_distance(max_height, max_shadow_distance_m=effective_max_shadow)
+    buffer_pixels = int(np.ceil(buffer_m / pixel_size))
+    logger.info(f"Buffer: {buffer_m:.0f}m ({buffer_pixels}px) from max height {max_height:.1f}m")
 
     # Determine tile size
     tile_size = _calculate_auto_tile_size(rows, cols)
@@ -819,7 +824,9 @@ def calculate_timeseries_tiled(
     end_str = weather_series[-1].datetime.strftime("%Y-%m-%d %H:%M")
     logger.info(f"  Period: {start_str} -> {end_str}")
     logger.info(f"  Location: {location.latitude:.2f}N, {location.longitude:.2f}E")
-    logger.info(f"  Tiles: {n_tiles} (size={adjusted_tile_size}, buffer={effective_max_shadow:.0f}m)")
+    logger.info(
+        f"  Tiles: {n_tiles} (size={adjusted_tile_size}, buffer={buffer_m:.0f}m from max height {max_height:.1f}m)"
+    )
     logger.info("=" * 60)
 
     logger.info("Pre-computing sun positions and radiation splits...")

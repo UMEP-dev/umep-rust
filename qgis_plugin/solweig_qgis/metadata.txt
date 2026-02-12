@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta20
+version=0.1.0-beta21
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,6 +42,11 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta21
+    - Height-aware tile buffer: compute overlap from tallest DSM pixel via calculate_buffer_distance() instead of always using max_shadow_distance_m (500m default)
+    - Short buildings (e.g. 10m) now get ~191m buffer instead of 500m, reducing tile count and overlap waste
+    - Fix stale log line in calculate_tiled() that reported max_shadow_distance_m instead of actual buffer
+    - Remove shadowed logger in calculate_tiled()
     0.1.0-beta20
     - QGIS progress monitor now shows current timestamp and tile during timeseries runs
     - Auto-tile large rasters in QGIS timeseries path (was previously untiled, risking OOM)

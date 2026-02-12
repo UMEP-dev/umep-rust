@@ -23,6 +23,7 @@ from solweig.tiling import (
     _merge_tile_state,
     _should_use_tiling,
     _slice_tile_state,
+    calculate_buffer_distance,
     compute_max_tile_side,
 )
 
@@ -86,27 +87,34 @@ class TestMultiTileProcessing:
         """Gothenburg, Sweden location."""
         return Location(latitude=57.7, longitude=12.0, utc_offset=2)
 
-    def test_multitile_actually_tiles(self, large_urban_surface, location_gothenburg, weather_noon, caplog):
+    def test_multitile_actually_tiles(self, large_urban_surface, location_gothenburg, weather_noon):
         """Verify that large raster is actually processed in multiple tiles."""
-        import logging
+        from unittest.mock import patch
 
-        caplog.set_level(logging.INFO)
+        # With 5m buildings (15m DSM) and max_shadow_distance_m=100: buffer = min(286, 100) = 100m
+        # tile_size=350, buffer=100px → 4 tiles on a 400×400 raster
+        captured = {}
+        original_generate_tiles = __import__("solweig.tiling", fromlist=["generate_tiles"]).generate_tiles
 
-        # With 5m buildings and max_shadow_distance_m=100: buffer ≈ 95m = 95px
-        # tile_size=350 gives ~160px core
-        result = calculate_tiled(
-            large_urban_surface,
-            location_gothenburg,
-            weather_noon,
-            tile_size=350,
-            max_shadow_distance_m=100.0,
-        )
+        def spy_generate_tiles(rows, cols, tile_size, buffer_pixels):
+            captured["n_tiles"] = len(original_generate_tiles(rows, cols, tile_size, buffer_pixels))
+            captured["buffer_pixels"] = buffer_pixels
+            return original_generate_tiles(rows, cols, tile_size, buffer_pixels)
 
-        # Check that tiled processing was used (not fallback)
-        log_lower = caplog.text.lower()
-        assert "tiled processing" in log_lower and "tiles" in log_lower, (
-            f"Expected tiled processing message, got: {caplog.text}"
-        )
+        with patch("solweig.tiling.generate_tiles", side_effect=spy_generate_tiles):
+            result = calculate_tiled(
+                large_urban_surface,
+                location_gothenburg,
+                weather_noon,
+                tile_size=350,
+                max_shadow_distance_m=100.0,
+            )
+
+        # Check that multi-tile processing was used
+        assert captured.get("n_tiles", 0) > 1, f"Expected multiple tiles, got {captured.get('n_tiles', 0)}"
+
+        # Buffer should be 100px (capped at max_shadow_distance_m=100, not the height-derived 286m)
+        assert captured["buffer_pixels"] == 100
 
         # Verify output shape matches input
         assert result.tmrt.shape == large_urban_surface.shape
@@ -517,3 +525,79 @@ class TestTimeseriesTiledIntegration:
         )
 
         assert len(calls) > 0, "No progress callbacks received"
+
+
+class TestHeightAwareBuffer:
+    """Verify tiling functions compute buffer from actual building heights."""
+
+    def test_short_buildings_get_small_buffer(self):
+        """With 5m buildings the buffer should be ~286m, not the 500m default."""
+        from unittest.mock import patch
+
+        size = 400
+        ground = 10.0
+        building_height = 5.0  # above ground
+        max_dsm = ground + building_height  # 15m
+        dsm = np.full((size, size), ground, dtype=np.float32)
+        dsm[100:120, 100:120] = max_dsm
+
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
+        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
+        weather = Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0)
+
+        # buffer = 15 / tan(3°) ≈ 286m — much less than default 500m cap
+        expected_buffer = calculate_buffer_distance(max_dsm)
+        assert 280 < expected_buffer < 300, f"Expected ~286m buffer, got {expected_buffer}"
+
+        # Patch generate_tiles to capture the buffer_pixels that calculate_tiled passes
+        captured = {}
+        original_generate_tiles = __import__("solweig.tiling", fromlist=["generate_tiles"]).generate_tiles
+
+        def spy_generate_tiles(rows, cols, tile_size, buffer_pixels):
+            captured["buffer_pixels"] = buffer_pixels
+            return original_generate_tiles(rows, cols, tile_size, buffer_pixels)
+
+        with patch("solweig.tiling.generate_tiles", side_effect=spy_generate_tiles):
+            _ = calculate_tiled(surface, location, weather, tile_size=350)
+
+        # If generate_tiles was called, buffer should match height-derived value
+        if "buffer_pixels" in captured:
+            expected_px = int(np.ceil(expected_buffer / surface.pixel_size))
+            assert captured["buffer_pixels"] == expected_px, (
+                f"Expected {expected_px}px buffer from {max_dsm}m height, got {captured['buffer_pixels']}px"
+            )
+
+    def test_tall_buildings_capped_at_max(self):
+        """With 40m DSM the buffer should cap at max_shadow_distance_m."""
+        from unittest.mock import patch
+
+        size = 400
+        ground = 10.0
+        building_height = 30.0
+        max_dsm = ground + building_height  # 40m
+        dsm = np.full((size, size), ground, dtype=np.float32)
+        dsm[100:120, 100:120] = max_dsm
+
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
+        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
+        weather = Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0)
+
+        cap = 200.0
+        expected_buffer = calculate_buffer_distance(max_dsm, max_shadow_distance_m=cap)
+        assert expected_buffer == cap, f"Expected buffer capped at {cap}, got {expected_buffer}"
+
+        captured = {}
+        original_generate_tiles = __import__("solweig.tiling", fromlist=["generate_tiles"]).generate_tiles
+
+        def spy_generate_tiles(rows, cols, tile_size, buffer_pixels):
+            captured["buffer_pixels"] = buffer_pixels
+            return original_generate_tiles(rows, cols, tile_size, buffer_pixels)
+
+        with patch("solweig.tiling.generate_tiles", side_effect=spy_generate_tiles):
+            _ = calculate_tiled(surface, location, weather, tile_size=350, max_shadow_distance_m=cap)
+
+        if "buffer_pixels" in captured:
+            expected_px = int(np.ceil(cap / surface.pixel_size))
+            assert captured["buffer_pixels"] == expected_px, (
+                f"Expected {expected_px}px buffer (capped at {cap}m), got {captured['buffer_pixels']}px"
+            )

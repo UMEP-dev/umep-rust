@@ -748,6 +748,7 @@ GeoTIFF files organised into subfolders of the output directory:
             _slice_tile_precomputed,
             _slice_tile_state,
             _write_tile_result,
+            calculate_buffer_distance,
             generate_tiles,
             validate_tile_size,
         )
@@ -757,8 +758,10 @@ GeoTIFF files organised into subfolders of the output directory:
         rows, cols = surface.shape
         pixel_size = surface.pixel_size
 
-        # Generate tiles
-        buffer_pixels = int(np.ceil(max_shadow_distance_m / pixel_size))
+        # Height-aware buffer: use actual max building height instead of worst-case
+        max_height = float(np.nanmax(surface.dsm)) if surface.dsm is not None else 0.0
+        buffer_m = calculate_buffer_distance(max_height, max_shadow_distance_m=max_shadow_distance_m)
+        buffer_pixels = int(np.ceil(buffer_m / pixel_size))
         tile_size = _calculate_auto_tile_size(rows, cols)
         adjusted_tile_size, warning = validate_tile_size(tile_size, buffer_pixels, pixel_size)
         if warning:
@@ -772,7 +775,7 @@ GeoTIFF files organised into subfolders of the output directory:
         feedback.setProgress(25)
         feedback.pushInfo(
             f"Large raster ({cols}\u00d7{rows}) \u2014 using {n_tiles} tiles "
-            f"(size={adjusted_tile_size}, buffer={max_shadow_distance_m:.0f}m)"
+            f"(size={adjusted_tile_size}, buffer={buffer_m:.0f}m from max height {max_height:.1f}m)"
         )
 
         # Pre-compute sun positions and radiation splits

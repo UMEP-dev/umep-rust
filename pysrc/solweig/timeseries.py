@@ -121,9 +121,11 @@ def calculate_timeseries(
     Maintains thermal state across timesteps for accurate surface temperature
     modeling with thermal inertia (TsWaveDelay_2015a).
 
-    Large rasters (>2500x2500 pixels) are automatically processed using
-    overlapping tiles to manage memory. Shadow buffer distance is set to
-    max_shadow_distance_m, ensuring accurate results at tile boundaries.
+    Large rasters are automatically processed using overlapping tiles to
+    manage memory. The tile size and buffer distance are computed dynamically
+    from available GPU/RAM resources and the maximum building height in the DSM,
+    ensuring accurate shadows at tile boundaries without wasting overlap on
+    short buildings.
 
     This is a convenience function that manages state automatically. For custom
     control over state, use calculate() directly with the state parameter.
