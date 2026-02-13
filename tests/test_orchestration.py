@@ -21,6 +21,8 @@ from solweig.models.state import ThermalState, TileSpec
 from solweig.tiling import (
     MAX_BUFFER_M,
     MIN_TILE_SIZE,
+    _resolve_inflight_limit,
+    _resolve_tile_workers,
     calculate_buffer_distance,
     compute_max_tile_side,
     generate_tiles,
@@ -812,3 +814,34 @@ class TestGenerateTiles:
         """Raster exactly matching tile size creates exactly 1 tile."""
         tiles = generate_tiles(256, 256, tile_size=256, overlap=50)
         assert len(tiles) == 1
+
+
+# ---------------------------------------------------------------------------
+# Tiling runtime controls
+# ---------------------------------------------------------------------------
+
+
+class TestTilingRuntimeControls:
+    """Tests for worker and queue-depth resolution helpers."""
+
+    def test_resolve_tile_workers_clamps_to_tile_count(self):
+        assert _resolve_tile_workers(tile_workers=16, n_tiles=3) == 3
+
+    def test_resolve_tile_workers_zero_raises(self):
+        with pytest.raises(ValueError, match="tile_workers must be >= 1"):
+            _resolve_tile_workers(tile_workers=0, n_tiles=8)
+
+    def test_resolve_inflight_limit_with_prefetch_default(self):
+        # queue_depth=None + prefetch=True => queue_depth = n_workers
+        assert _resolve_inflight_limit(4, n_tiles=20, tile_queue_depth=None, prefetch_tiles=True) == 8
+
+    def test_resolve_inflight_limit_no_prefetch(self):
+        # queue_depth=None + prefetch=False => no queued tasks
+        assert _resolve_inflight_limit(4, n_tiles=20, tile_queue_depth=None, prefetch_tiles=False) == 4
+
+    def test_resolve_inflight_limit_clamped_to_n_tiles(self):
+        assert _resolve_inflight_limit(4, n_tiles=5, tile_queue_depth=8, prefetch_tiles=True) == 5
+
+    def test_resolve_inflight_limit_negative_queue_depth_raises(self):
+        with pytest.raises(ValueError, match="tile_queue_depth must be >= 0"):
+            _resolve_inflight_limit(2, n_tiles=8, tile_queue_depth=-1, prefetch_tiles=True)

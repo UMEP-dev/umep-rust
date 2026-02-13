@@ -32,6 +32,12 @@ class ModelConfig:
             Caps shadow ray computation distance and serves as tile overlap buffer
             for automatic tiled processing of large rasters. At low sun angles (3°),
             a 26m building casts a 500m shadow — taller buildings are capped.
+        tile_workers: Number of workers for tiled orchestration. If None,
+            picks an adaptive default based on CPU count.
+        tile_queue_depth: Extra queued tile tasks beyond active workers. If None,
+            defaults to one queue slot per worker when prefetching is enabled.
+        prefetch_tiles: Whether to prefetch tile tasks beyond active workers.
+            If None, runtime chooses automatically based on memory pressure.
 
     Note:
         UTCI and PET are now computed via post-processing functions (compute_utci, compute_pet)
@@ -62,6 +68,9 @@ class ModelConfig:
     physics: SimpleNamespace | None = None
     materials: SimpleNamespace | None = None
     max_shadow_distance_m: float = 500.0
+    tile_workers: int | None = None
+    tile_queue_depth: int | None = None
+    prefetch_tiles: bool | None = None
 
     def __post_init__(self):
         """Initialize default HumanParams if not provided."""
@@ -142,6 +151,9 @@ class ModelConfig:
         data = {
             "use_anisotropic_sky": self.use_anisotropic_sky,
             "max_shadow_distance_m": self.max_shadow_distance_m,
+            "tile_workers": self.tile_workers,
+            "tile_queue_depth": self.tile_queue_depth,
+            "prefetch_tiles": self.prefetch_tiles,
             "outputs": self.outputs,
             "human": {
                 "posture": self.human.posture,
@@ -191,6 +203,9 @@ class ModelConfig:
         return cls(
             use_anisotropic_sky=data.get("use_anisotropic_sky", False),
             max_shadow_distance_m=data.get("max_shadow_distance_m", 500.0),
+            tile_workers=data.get("tile_workers"),
+            tile_queue_depth=data.get("tile_queue_depth"),
+            prefetch_tiles=data.get("prefetch_tiles"),
             human=human,
             outputs=data.get("outputs", ["tmrt"]),
         )

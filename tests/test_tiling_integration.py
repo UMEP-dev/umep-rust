@@ -519,6 +519,144 @@ class TestTimeseriesTiledIntegration:
 
         assert len(calls) > 0, "No progress callbacks received"
 
+    def test_timeseries_tiled_worker_parity(self, small_surface, location, weather_pair):
+        """Worker count should not materially change tiled timeseries outputs."""
+        from solweig import calculate_timeseries_tiled
+
+        one_worker = calculate_timeseries_tiled(
+            surface=small_surface,
+            weather_series=weather_pair,
+            location=location,
+            tile_workers=1,
+            tile_queue_depth=0,
+            prefetch_tiles=False,
+        )
+        multi_worker = calculate_timeseries_tiled(
+            surface=small_surface,
+            weather_series=weather_pair,
+            location=location,
+            tile_workers=2,
+            tile_queue_depth=2,
+            prefetch_tiles=True,
+        )
+
+        assert len(one_worker) == len(multi_worker)
+        for ref, got in zip(one_worker, multi_worker):
+            both_valid = np.isfinite(ref.tmrt) & np.isfinite(got.tmrt)
+            if both_valid.sum() > 0:
+                diff = np.abs(ref.tmrt[both_valid] - got.tmrt[both_valid])
+                assert diff.mean() < 0.01
+                assert diff.max() < 0.1
+
+    def test_invalid_tile_workers_raises(self, small_surface, location, weather_pair):
+        """Invalid tile_workers should raise clear ValueError."""
+        from solweig import calculate_timeseries_tiled
+
+        with pytest.raises(ValueError, match="tile_workers must be >= 1"):
+            calculate_timeseries_tiled(
+                surface=small_surface,
+                weather_series=weather_pair,
+                location=location,
+                tile_workers=0,
+            )
+
+    def test_invalid_tile_queue_depth_raises(self, small_surface, location, weather_pair):
+        """Invalid tile_queue_depth should raise clear ValueError."""
+        from solweig import calculate_timeseries_tiled
+
+        with pytest.raises(ValueError, match="tile_queue_depth must be >= 0"):
+            calculate_timeseries_tiled(
+                surface=small_surface,
+                weather_series=weather_pair,
+                location=location,
+                tile_queue_depth=-1,
+            )
+
+
+class TestTiledAnisotropicParity:
+    """Verify anisotropic sky produces matching results in tiled vs non-tiled mode.
+
+    Shadow matrices are spatially sliced per tile, so anisotropic diffuse
+    radiation must agree between tiled and non-tiled paths.
+
+    Uses a flat surface (no buildings → max_height=0 → zero buffer) so
+    tile boundaries introduce no shadow truncation artifacts, giving a
+    clean comparison of shadow matrix slicing.
+    """
+
+    @pytest.fixture(scope="class")
+    def aniso_surface(self):
+        """530x530 flat surface with synthetic shadow matrices (all visible).
+
+        530x530 at tile_size=256 → ceil(530/256)=3 → 9 tiles, ensuring
+        multi-tile processing is exercised. Flat terrain (max_height=0)
+        means zero overlap buffer so results should match exactly.
+        """
+        from solweig.models.precomputed import ShadowArrays
+
+        size = 530
+        n_patches = 153
+        n_pack = (n_patches + 7) // 8
+
+        dsm = np.ones((size, size), dtype=np.float32) * 2.0
+
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
+
+        # All-visible shadow matrices (0xFF = every patch visible)
+        shmat = np.full((size, size, n_pack), 0xFF, dtype=np.uint8)
+        vegshmat = np.full((size, size, n_pack), 0xFF, dtype=np.uint8)
+        vbshmat = np.full((size, size, n_pack), 0xFF, dtype=np.uint8)
+
+        surface.shadow_matrices = ShadowArrays(
+            _shmat_u8=shmat,
+            _vegshmat_u8=vegshmat,
+            _vbshmat_u8=vbshmat,
+            _n_patches=n_patches,
+        )
+        return surface
+
+    @pytest.fixture(scope="class")
+    def aniso_location(self):
+        return Location(latitude=57.7, longitude=12.0, utc_offset=2)
+
+    @pytest.fixture(scope="class")
+    def aniso_weather(self):
+        return Weather(
+            datetime=datetime(2024, 7, 15, 12, 0),
+            ta=25.0,
+            rh=50.0,
+            global_rad=800.0,
+        )
+
+    def test_anisotropic_tiled_vs_nontiled(self, aniso_surface, aniso_location, aniso_weather):
+        """Tiled anisotropic sky matches non-tiled within numerical precision."""
+        # Non-tiled reference
+        result_ref = calculate(
+            aniso_surface,
+            aniso_location,
+            aniso_weather,
+            use_anisotropic_sky=True,
+        )
+
+        # Tiled: tile_size=256 on 530×530 → 9 tiles (3×3)
+        result_tiled = calculate_tiled(
+            aniso_surface,
+            aniso_location,
+            aniso_weather,
+            tile_size=256,
+            use_anisotropic_sky=True,
+        )
+
+        both_valid = np.isfinite(result_ref.tmrt) & np.isfinite(result_tiled.tmrt)
+        assert both_valid.sum() > 0, "Expected valid Tmrt pixels"
+
+        diff = np.abs(result_tiled.tmrt[both_valid] - result_ref.tmrt[both_valid])
+        mean_diff = diff.mean()
+        max_diff = diff.max()
+
+        assert mean_diff < 0.01, f"Mean Tmrt diff {mean_diff:.4f}°C too large (tiled vs non-tiled anisotropic)"
+        assert max_diff < 0.1, f"Max Tmrt diff {max_diff:.4f}°C too large (possible shadow matrix slicing issue)"
+
 
 class TestHeightAwareBuffer:
     """Verify tiling functions compute buffer from actual building heights."""

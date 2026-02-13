@@ -111,6 +111,9 @@ def calculate_timeseries(
     materials: SimpleNamespace | None = None,
     wall_material: str | None = None,
     max_shadow_distance_m: float | None = None,
+    tile_workers: int | None = None,
+    tile_queue_depth: int | None = None,
+    prefetch_tiles: bool | None = None,
     output_dir: str | Path | None = None,
     outputs: list[str] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
@@ -156,6 +159,12 @@ def calculate_timeseries(
             Caps shadow ray computation distance and serves as the tile overlap
             buffer for automatic tiled processing of large rasters. If None,
             uses config.max_shadow_distance_m or 500.0.
+        tile_workers: Number of workers for tiled orchestration. If None, uses
+            config.tile_workers or adaptive default.
+        tile_queue_depth: Extra queued tile tasks beyond active workers. If None,
+            uses config.tile_queue_depth or a runtime default.
+        prefetch_tiles: Whether to prefetch extra tile tasks beyond active workers.
+            If None, uses config.prefetch_tiles or runtime auto-selection.
         output_dir: Directory to save results. If provided, results are saved
             incrementally as GeoTIFF files during calculation (recommended for
             long timeseries to avoid memory issues).
@@ -207,6 +216,9 @@ def calculate_timeseries(
     effective_materials = materials
     effective_outputs = outputs
     effective_max_shadow = max_shadow_distance_m
+    effective_tile_workers = tile_workers
+    effective_tile_queue_depth = tile_queue_depth
+    effective_prefetch_tiles = prefetch_tiles
 
     if config is not None:
         # Use config values as fallback for None parameters
@@ -222,6 +234,12 @@ def calculate_timeseries(
             effective_outputs = config.outputs
         if effective_max_shadow is None:
             effective_max_shadow = config.max_shadow_distance_m
+        if effective_tile_workers is None:
+            effective_tile_workers = config.tile_workers
+        if effective_tile_queue_depth is None:
+            effective_tile_queue_depth = config.tile_queue_depth
+        if effective_prefetch_tiles is None:
+            effective_prefetch_tiles = config.prefetch_tiles
 
         # Debug log when explicit params override config
         overrides = []
@@ -237,6 +255,12 @@ def calculate_timeseries(
             overrides.append("outputs")
         if max_shadow_distance_m is not None and max_shadow_distance_m != config.max_shadow_distance_m:
             overrides.append(f"max_shadow_distance_m={max_shadow_distance_m}")
+        if tile_workers is not None and config.tile_workers is not None:
+            overrides.append(f"tile_workers={tile_workers}")
+        if tile_queue_depth is not None and config.tile_queue_depth is not None:
+            overrides.append(f"tile_queue_depth={tile_queue_depth}")
+        if prefetch_tiles is not None and prefetch_tiles != config.prefetch_tiles:
+            overrides.append(f"prefetch_tiles={prefetch_tiles}")
         if overrides:
             logger.debug(f"Explicit params override config: {', '.join(overrides)}")
 
@@ -255,6 +279,9 @@ def calculate_timeseries(
     physics = effective_physics
     materials = effective_materials
     outputs = effective_outputs
+    tile_workers = effective_tile_workers
+    tile_queue_depth = effective_tile_queue_depth
+    prefetch_tiles = effective_prefetch_tiles
 
     # Fill NaN in surface layers (idempotent — skipped if already done)
     surface.fill_nan()
@@ -281,6 +308,9 @@ def calculate_timeseries(
             materials=materials,
             wall_material=wall_material,
             max_shadow_distance_m=effective_max_shadow,
+            tile_workers=tile_workers,
+            tile_queue_depth=tile_queue_depth,
+            prefetch_tiles=prefetch_tiles,
             output_dir=output_dir,
             outputs=outputs,
             progress_callback=progress_callback,

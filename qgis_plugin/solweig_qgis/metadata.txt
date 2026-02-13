@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta27
+version=0.1.0-beta29
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,6 +42,18 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta29
+    - Configurable tile orchestration: tile_workers, tile_queue_depth, prefetch_tiles params on calculate_tiled, calculate_timeseries_tiled, and calculate_timeseries (with ModelConfig integration)
+    - Backpressure-controlled tile dispatch: bounded inflight limit prevents memory spikes from unbounded task submission
+    - Memory-aware prefetch auto-selection: _resolve_prefetch_default enables prefetch only when estimated inflight bytes fit within 50% of usable RAM
+    - Adaptive worker count: defaults to max(2, min(6, cpu_count // 2)), capped at tile count, with validation (tile_workers < 1 raises ValueError)
+    - Telemetry instrumentation: mean tile turnaround time and max queue depth logged per dispatch cycle
+    - Config serialization: tile_workers, tile_queue_depth, prefetch_tiles round-trip through ModelConfig save/load
+    0.1.0-beta28
+    - Optimize tiled timeseries: pre-create tile surfaces before timestep loop (eliminates N_timesteps × N_tiles redundant copies, preserves GVF cache + buffer pool across timesteps)
+    - Parallel tile execution via ThreadPoolExecutor (Rust releases GIL during compute_timestep, allowing Python prep to overlap with Rust compute)
+    - Add clarifying comments to GPU resource model explaining dual-constraint design (GPU staging vs RAM working memory)
+    - Add tiled+anisotropic parity test verifying shadow matrix slicing produces matching results
     0.1.0-beta27
     - Fix 4 tiling bugs: remove forced pipelining split, fix tile-size semantics, enable anisotropic sky in tiled mode, fix overlap buffer elevation
     - Remove MIN_PIPELINING_SIDE (512px) threshold that forced 4-tile splitting on medium rasters — tiling now only triggers when resource limits require it
