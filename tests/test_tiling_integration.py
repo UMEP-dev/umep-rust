@@ -11,6 +11,7 @@ import pytest
 from conftest import make_mock_svf
 from solweig import (
     Location,
+    PrecomputedData,
     SurfaceData,
     Weather,
     calculate,
@@ -326,6 +327,40 @@ class TestTilingHelpers:
         assert tile_surface.svf is not None
         assert tile_surface.svf.svf.shape == (50, 50)
 
+    def test_extract_tile_surface_uses_precomputed_svf_without_recompute(self):
+        """When surface.svf is missing, precomputed.svf should be sliced and reused."""
+        from unittest.mock import patch
+
+        size = 50
+        dsm = np.ones((size, size), dtype=np.float32) * 5.0
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        precomputed = PrecomputedData(svf=make_mock_svf((size, size)))
+
+        tile = TileSpec(
+            row_start=10,
+            row_end=40,
+            col_start=10,
+            col_end=40,
+            row_start_full=0,
+            row_end_full=50,
+            col_start_full=0,
+            col_end_full=50,
+            overlap_top=10,
+            overlap_bottom=10,
+            overlap_left=10,
+            overlap_right=10,
+        )
+
+        with patch.object(SurfaceData, "compute_svf", side_effect=AssertionError("compute_svf should not be called")):
+            tile_surface = _extract_tile_surface(surface, tile, pixel_size=1.0, precomputed=precomputed)
+
+        assert tile_surface.svf is not None
+        assert tile_surface.svf.svf.shape == (50, 50)
+        np.testing.assert_array_equal(
+            tile_surface.svf.svf,
+            precomputed.svf.svf[0:50, 0:50],
+        )
+
 
 class TestSliceMergeState:
     """Tests for _slice_tile_state and _merge_tile_state."""
@@ -518,6 +553,42 @@ class TestTimeseriesTiledIntegration:
         )
 
         assert len(calls) > 0, "No progress callbacks received"
+
+    def test_timeseries_tiled_precreates_tile_surfaces_once(self, small_surface, location, weather_pair):
+        """Tile surfaces should be extracted once per tile, not once per timestep."""
+        from unittest.mock import patch
+
+        from solweig import calculate_timeseries_tiled
+        from solweig import tiling as tiling_module
+
+        extract_calls = 0
+        original_extract = tiling_module._extract_tile_surface
+
+        def spy_extract(*args, **kwargs):
+            nonlocal extract_calls
+            extract_calls += 1
+            return original_extract(*args, **kwargs)
+
+        rows, cols = small_surface.shape
+        pixel_size = small_surface.pixel_size
+        max_height = small_surface.max_height
+        buffer_m = calculate_buffer_distance(max_height)
+        buffer_pixels = int(np.ceil(buffer_m / pixel_size))
+        tile_size = tiling_module._calculate_auto_tile_size(rows, cols)
+        adjusted_tile_size, _warning = tiling_module.validate_tile_size(tile_size, buffer_pixels, pixel_size)
+        expected_tiles = len(tiling_module.generate_tiles(rows, cols, adjusted_tile_size, buffer_pixels))
+
+        with patch("solweig.tiling._extract_tile_surface", side_effect=spy_extract):
+            calculate_timeseries_tiled(
+                surface=small_surface,
+                weather_series=weather_pair,
+                location=location,
+            )
+
+        assert extract_calls == expected_tiles, (
+            f"Expected {expected_tiles} tile surface extractions, got {extract_calls} "
+            "(possible per-timestep recomputation regression)"
+        )
 
     def test_timeseries_tiled_worker_parity(self, small_surface, location, weather_pair):
         """Worker count should not materially change tiled timeseries outputs."""

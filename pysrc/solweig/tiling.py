@@ -278,6 +278,7 @@ def _extract_tile_surface(
     surface: SurfaceData,
     tile: TileSpec,
     pixel_size: float,
+    precomputed: PrecomputedData | None = None,
 ) -> SurfaceData:
     """
     Extract tile slice from full surface, reusing precomputed SVF when available.
@@ -285,12 +286,15 @@ def _extract_tile_surface(
     Creates a new SurfaceData with sliced arrays (DSM, CDSM, etc.).
     If the global surface has precomputed SVF (via prepare() or compute_svf()),
     the SVF is sliced to the tile bounds — avoiding expensive per-tile
-    recomputation.  When no global SVF exists, compute_svf() computes it fresh.
+    recomputation. If surface.svf is absent but precomputed.svf is provided,
+    that precomputed SVF is sliced instead. When neither source exists,
+    compute_svf() computes it fresh.
 
     Args:
         surface: Full raster surface data.
         tile: Tile specification with slice bounds.
         pixel_size: Pixel size in meters.
+        precomputed: Optional precomputed data containing SVF.
 
     Returns:
         SurfaceData for this tile with SVF available.
@@ -309,6 +313,13 @@ def _extract_tile_surface(
     tile_svf = None
     if surface.svf is not None:
         tile_svf = surface.svf.crop(
+            tile.row_start_full,
+            tile.row_end_full,
+            tile.col_start_full,
+            tile.col_end_full,
+        )
+    elif precomputed is not None and precomputed.svf is not None:
+        tile_svf = precomputed.svf.crop(
             tile.row_start_full,
             tile.row_end_full,
             tile.col_start_full,
@@ -337,7 +348,9 @@ def _extract_tile_surface(
         svf=tile_svf,
         shadow_matrices=tile_shadow_matrices,
     )
-    tile_surface.compute_svf()  # No-op when tile_svf is set
+    # Compute only when no precomputed/cached SVF source was available.
+    if tile_svf is None:
+        tile_surface.compute_svf()
 
     return tile_surface
 
@@ -764,7 +777,7 @@ def calculate_tiled(
         turnaround_sum = 0.0
 
         def _submit_tile(tile_idx: int, tile: TileSpec) -> None:
-            tile_surface = _extract_tile_surface(surface, tile, pixel_size)
+            tile_surface = _extract_tile_surface(surface, tile, pixel_size, precomputed=precomputed)
             tile_precomputed = _slice_tile_precomputed(precomputed, tile)
 
             future = executor.submit(
@@ -1036,7 +1049,7 @@ def calculate_timeseries_tiled(
     # Pre-create tile data once — surfaces and precomputed data don't change
     # between timesteps. This eliminates N_timesteps × N_tiles redundant copies
     # and allows GVF geometry cache + buffer pool to persist across timesteps.
-    tile_surfaces = [_extract_tile_surface(surface, tile, pixel_size) for tile in tiles]
+    tile_surfaces = [_extract_tile_surface(surface, tile, pixel_size, precomputed=precomputed) for tile in tiles]
     tile_precomputeds = [_slice_tile_precomputed(precomputed, tile) for tile in tiles]
 
     from concurrent.futures import ThreadPoolExecutor

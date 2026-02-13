@@ -813,6 +813,12 @@ GeoTIFF files organised into subfolders of the output directory:
 
         from solweig.computation import _nighttime_result
 
+        # Pre-create tile data once; geometry/SVF inputs are static across timesteps.
+        # This avoids N_timesteps × N_tiles repeated slicing and prevents accidental
+        # SVF recomputation when precomputed SVF is available.
+        tile_surfaces = [_extract_tile_surface(surface, tile, pixel_size, precomputed=precomputed) for tile in tiles]
+        tile_precomputeds = [_slice_tile_precomputed(precomputed, tile) for tile in tiles]
+
         for t_idx, weather in enumerate(weather_series):
             if feedback.isCanceled():
                 break
@@ -880,8 +886,8 @@ GeoTIFF files organised into subfolders of the output directory:
                     f"Timestep {t_idx + 1}/{n_steps} ({timestamp_str}) \u2014 Tile {tile_idx + 1}/{n_tiles}"
                 )
 
-                tile_surface = _extract_tile_surface(surface, tile, pixel_size)
-                tile_precomputed = _slice_tile_precomputed(precomputed, tile)
+                tile_surface = tile_surfaces[tile_idx]
+                tile_precomputed = tile_precomputeds[tile_idx]
                 tile_state = _slice_tile_state(state, tile)
 
                 try:
