@@ -235,6 +235,99 @@ class TestCalculateTimeseries:
         output_files = list(tmp_path.iterdir())
         assert len(output_files) > 0
 
+    def test_tiling_runtime_controls_forwarded_from_config(self, flat_surface, location, monkeypatch):
+        """ModelConfig tile runtime settings are forwarded to tiled runner."""
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
+        config = ModelConfig(tile_workers=3, tile_queue_depth=5, prefetch_tiles=False)
+
+        captured: dict[str, object] = {}
+
+        def _fake_tiled(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
+        monkeypatch.setattr("solweig.tiling.calculate_timeseries_tiled", _fake_tiled)
+
+        results = calculate_timeseries(flat_surface, weather_series, location=location, config=config)
+        assert results == []
+        assert captured["tile_workers"] == 3
+        assert captured["tile_queue_depth"] == 5
+        assert captured["prefetch_tiles"] is False
+
+    def test_explicit_tiling_runtime_controls_override_config(self, flat_surface, location, monkeypatch):
+        """Explicit tile runtime args override ModelConfig values."""
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
+        config = ModelConfig(tile_workers=2, tile_queue_depth=1, prefetch_tiles=False)
+
+        captured: dict[str, object] = {}
+
+        def _fake_tiled(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
+        monkeypatch.setattr("solweig.tiling.calculate_timeseries_tiled", _fake_tiled)
+
+        results = calculate_timeseries(
+            flat_surface,
+            weather_series,
+            location=location,
+            config=config,
+            tile_workers=6,
+            tile_queue_depth=9,
+            prefetch_tiles=True,
+        )
+        assert results == []
+        assert captured["tile_workers"] == 6
+        assert captured["tile_queue_depth"] == 9
+        assert captured["prefetch_tiles"] is True
+
+    def test_invalid_tile_workers_raises_from_api(self, flat_surface, location, monkeypatch):
+        """calculate_timeseries surfaces invalid tile_workers when tiled path is used."""
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
+        monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
+
+        with pytest.raises(ValueError, match="tile_workers must be >= 1"):
+            calculate_timeseries(
+                flat_surface,
+                weather_series,
+                location=location,
+                tile_workers=0,
+            )
+
+    def test_invalid_tile_queue_depth_raises_from_api(self, flat_surface, location, monkeypatch):
+        """calculate_timeseries surfaces invalid tile_queue_depth when tiled path is used."""
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
+        monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
+
+        with pytest.raises(ValueError, match="tile_queue_depth must be >= 0"):
+            calculate_timeseries(
+                flat_surface,
+                weather_series,
+                location=location,
+                tile_queue_depth=-1,
+            )
+
+
+class TestModelConfigTilingRuntimeSerialization:
+    """Tests for tile runtime fields in ModelConfig save/load."""
+
+    def test_model_config_save_load_tiling_runtime_fields(self, tmp_path):
+        config = ModelConfig(
+            use_anisotropic_sky=True,
+            tile_workers=4,
+            tile_queue_depth=7,
+            prefetch_tiles=False,
+        )
+        config_path = tmp_path / "config.json"
+        config.save(config_path)
+
+        loaded = ModelConfig.load(config_path)
+        assert loaded.tile_workers == 4
+        assert loaded.tile_queue_depth == 7
+        assert loaded.prefetch_tiles is False
+
 
 # ===========================================================================
 # validate_inputs() tests

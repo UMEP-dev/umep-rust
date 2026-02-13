@@ -54,6 +54,7 @@ _RAM_FRACTION = 0.50  # Use at most 50% of total physical RAM for tile arrays
 _SVF_BYTES_PER_PIXEL = 32  # GPU staging bytes per pixel for SVF computation
 _SOLWEIG_BYTES_PER_PIXEL = 400  # Peak Python-side bytes per pixel (benchmarked ~370)
 _GPU_HEADROOM = 0.80  # Use 80% of GPU max buffer to leave headroom
+_MAX_AUTO_TILE_WORKERS = 6  # Hard cap to avoid bandwidth/cache thrash on many-core CPUs
 
 # Cache for computed tile limits (populated once per context on first call)
 _cached_max_tile_side: dict[str, int] = {}
@@ -122,14 +123,20 @@ def compute_max_tile_pixels(*, context: str = "solweig") -> int:
 
     bytes_per_pixel = _SVF_BYTES_PER_PIXEL if context == "svf" else _SOLWEIG_BYTES_PER_PIXEL
 
-    # GPU constraint: largest single buffer must fit the tile's staging data
+    # GPU constraint: largest single buffer must fit the tile's staging data.
+    # Always uses _SVF_BYTES_PER_PIXEL (~32) because the GPU staging buffer
+    # holds shadow + SVF arrays regardless of context. The heavier Python-side
+    # working memory (~400 bytes/pixel for "solweig") is captured by the RAM
+    # constraint below, which uses the context-appropriate bytes_per_pixel.
     gpu_max_pixels = None
     limits = get_gpu_limits()
     if limits is not None:
         max_buf = limits["max_buffer_size"]
         gpu_max_pixels = int(max_buf * _GPU_HEADROOM) // _SVF_BYTES_PER_PIXEL
 
-    # RAM constraint: total physical RAM × fraction / bytes per pixel
+    # RAM constraint: total physical RAM × fraction / bytes per pixel.
+    # Uses context-dependent bytes_per_pixel: ~32 for "svf" (GPU staging only),
+    # ~400 for "solweig" (full timestep with radiation grids, state arrays, etc).
     ram_max_pixels = None
     total_ram = _get_total_ram_bytes()
     if total_ram is not None:
@@ -201,6 +208,70 @@ def _calculate_auto_tile_size(rows: int, cols: int) -> int:
         Core tile size in pixels.
     """
     return compute_max_tile_side(context="solweig")
+
+
+def _resolve_tile_workers(tile_workers: int | None, n_tiles: int) -> int:
+    """Resolve worker count for tiled orchestration."""
+    if n_tiles <= 0:
+        return 1
+    if tile_workers is not None and tile_workers < 1:
+        raise ValueError(f"tile_workers must be >= 1, got {tile_workers}")
+    if tile_workers is None:
+        cpu_count = os.cpu_count() or 2
+        tile_workers = max(2, min(_MAX_AUTO_TILE_WORKERS, cpu_count // 2))
+    return max(1, min(tile_workers, n_tiles))
+
+
+def _resolve_inflight_limit(
+    n_workers: int,
+    n_tiles: int,
+    tile_queue_depth: int | None,
+    prefetch_tiles: bool,
+) -> int:
+    """
+    Resolve max number of in-flight tile tasks.
+
+    ``tile_queue_depth`` controls queued tasks beyond active workers.
+    Effective in-flight task limit is ``n_workers + queue_depth``.
+    """
+    if tile_queue_depth is not None and tile_queue_depth < 0:
+        raise ValueError(f"tile_queue_depth must be >= 0, got {tile_queue_depth}")
+
+    queue_depth = (n_workers if prefetch_tiles else 0) if tile_queue_depth is None else tile_queue_depth
+
+    return max(1, min(n_tiles, n_workers + queue_depth))
+
+
+def _resolve_prefetch_default(
+    n_workers: int,
+    n_tiles: int,
+    core_tile_size: int,
+    buffer_pixels: int,
+) -> bool:
+    """
+    Decide default prefetch behavior based on estimated in-flight memory pressure.
+
+    Uses a conservative estimate of per-tile Python-side working memory.
+    Prefetch is enabled only when estimated in-flight bytes are comfortably
+    below the usable RAM budget.
+    """
+    if n_tiles <= 0:
+        return False
+
+    total_ram = _get_total_ram_bytes()
+    if total_ram is None:
+        return True
+
+    full_side = core_tile_size + 2 * buffer_pixels
+    tile_pixels = max(MIN_TILE_SIZE**2, full_side * full_side)
+    estimated_tile_bytes = tile_pixels * _SOLWEIG_BYTES_PER_PIXEL
+
+    # Default prefetch queues up to n_workers extra tasks.
+    estimated_inflight_tiles = min(n_tiles, n_workers * 2)
+    estimated_inflight_bytes = estimated_inflight_tiles * estimated_tile_bytes
+
+    usable_ram = int(total_ram * _RAM_FRACTION)
+    return estimated_inflight_bytes <= int(usable_ram * 0.5)
 
 
 def _extract_tile_surface(
@@ -572,6 +643,9 @@ def calculate_tiled(
     physics: SimpleNamespace | None = None,
     materials: SimpleNamespace | None = None,
     max_shadow_distance_m: float = MAX_BUFFER_M,
+    tile_workers: int | None = None,
+    tile_queue_depth: int | None = None,
+    prefetch_tiles: bool | None = None,
     progress_callback: Callable[..., Any] | None = None,
 ) -> SolweigResult:
     """
@@ -594,6 +668,12 @@ def calculate_tiled(
         max_shadow_distance_m: Upper bound on shadow reach in meters (default 500.0).
             The actual buffer is computed from the tallest DSM pixel via
             calculate_buffer_distance(), capped at this value.
+        tile_workers: Number of worker threads for tile execution. If None,
+            uses adaptive default based on CPU count.
+        tile_queue_depth: Extra queued tile tasks beyond active workers.
+            If None, defaults to one queue slot per worker when prefetching.
+        prefetch_tiles: Whether to prefetch queued tile tasks. If None,
+            chooses automatically based on estimated memory pressure.
         progress_callback: Optional callback(tile_idx, total_tiles).
 
     Returns:
@@ -664,44 +744,78 @@ def calculate_tiled(
 
     _progress = None if progress_callback is not None else ProgressReporter(total=n_tiles, desc="SOLWEIG tiled")
 
-    # Process each tile
-    for tile_idx, tile in enumerate(tiles):
-        # Update progress description
-        desc = f"Tile {tile_idx + 1}/{n_tiles}"
-        if _progress is not None:
-            _progress.set_description(desc)
-            _progress.set_text(f"Tile {tile_idx + 1}/{n_tiles}")
+    # Submit tiles in parallel — Rust releases the GIL during compute_timestep.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        if progress_callback:
-            progress_callback(tile_idx, n_tiles)
+    n_workers = _resolve_tile_workers(tile_workers, n_tiles)
+    effective_prefetch = (
+        prefetch_tiles
+        if prefetch_tiles is not None
+        else _resolve_prefetch_default(n_workers, n_tiles, adjusted_tile_size, buffer_pixels)
+    )
+    inflight_limit = _resolve_inflight_limit(n_workers, n_tiles, tile_queue_depth, effective_prefetch)
+    logger.info(f"Tiled runtime: workers={n_workers}, inflight_limit={inflight_limit}, prefetch={effective_prefetch}")
+    completed = 0
 
-        tile_surface = _extract_tile_surface(surface, tile, pixel_size)
-        tile_precomputed = _slice_tile_precomputed(precomputed, tile)
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        futures: dict[Any, tuple[int, TileSpec]] = {}
+        submit_times: dict[Any, float] = {}
+        max_queue = 0
+        turnaround_sum = 0.0
 
-        tile_result = calculate(
-            surface=tile_surface,
-            location=location,
-            weather=weather,
-            human=human,
-            precomputed=tile_precomputed,
-            use_anisotropic_sky=use_anisotropic_sky,
-            conifer=conifer,
-            state=None,
-            physics=physics,
-            materials=materials,
-            max_shadow_distance_m=max_shadow_distance_m,
-        )
+        def _submit_tile(tile_idx: int, tile: TileSpec) -> None:
+            tile_surface = _extract_tile_surface(surface, tile, pixel_size)
+            tile_precomputed = _slice_tile_precomputed(precomputed, tile)
 
-        _write_tile_result(tile_result, tile, tmrt_out, shadow_out, kdown_out, kup_out, ldown_out, lup_out)
+            future = executor.submit(
+                calculate,
+                surface=tile_surface,
+                location=location,
+                weather=weather,
+                human=human,
+                precomputed=tile_precomputed,
+                use_anisotropic_sky=use_anisotropic_sky,
+                conifer=conifer,
+                state=None,
+                physics=physics,
+                materials=materials,
+                max_shadow_distance_m=max_shadow_distance_m,
+            )
+            futures[future] = (tile_idx, tile)
+            submit_times[future] = time.perf_counter()
 
-        if _progress is not None:
-            _progress.update(1)
+        next_tile = 0
+        while next_tile < n_tiles and len(futures) < inflight_limit:
+            tile = tiles[next_tile]
+            _submit_tile(next_tile, tile)
+            next_tile += 1
 
-    if progress_callback:
-        progress_callback(n_tiles, n_tiles)
+        while futures:
+            future = next(as_completed(futures))
+            tile_idx, tile = futures.pop(future)
+            submit_t = submit_times.pop(future)
+            tile_result = future.result()
+            _write_tile_result(tile_result, tile, tmrt_out, shadow_out, kdown_out, kup_out, ldown_out, lup_out)
+
+            turnaround_sum += time.perf_counter() - submit_t
+            completed += 1
+            if _progress is not None:
+                _progress.set_text(f"Tile {completed}/{n_tiles}")
+                _progress.update(1)
+            if progress_callback:
+                progress_callback(completed, n_tiles)
+
+            while next_tile < n_tiles and len(futures) < inflight_limit:
+                tile = tiles[next_tile]
+                _submit_tile(next_tile, tile)
+                next_tile += 1
+            max_queue = max(max_queue, max(0, len(futures) - n_workers))
 
     if _progress is not None:
         _progress.close()
+    if completed > 0:
+        mean_turnaround_ms = (turnaround_sum / completed) * 1000.0
+        logger.info(f"Tiled telemetry: mean_turnaround={mean_turnaround_ms:.1f}ms, max_queue={max_queue}")
 
     return SolweigResult(
         tmrt=tmrt_out,
@@ -729,6 +843,9 @@ def calculate_timeseries_tiled(
     materials: SimpleNamespace | None = None,
     wall_material: str | None = None,
     max_shadow_distance_m: float | None = None,
+    tile_workers: int | None = None,
+    tile_queue_depth: int | None = None,
+    prefetch_tiles: bool | None = None,
     output_dir: str | Path | None = None,
     outputs: list[str] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
@@ -759,6 +876,12 @@ def calculate_timeseries_tiled(
         max_shadow_distance_m: Upper bound on shadow reach in meters.
             If None, uses config or default (500.0). The actual buffer is
             computed from the tallest DSM pixel via calculate_buffer_distance().
+        tile_workers: Number of worker threads for tile execution. If None,
+            uses config.tile_workers or adaptive default.
+        tile_queue_depth: Extra queued tile tasks beyond active workers.
+            If None, uses config.tile_queue_depth or runtime default.
+        prefetch_tiles: Whether to prefetch queued tile tasks. If None,
+            uses config.prefetch_tiles or defaults to True.
         output_dir: Directory to save results incrementally as GeoTIFF.
         outputs: Which outputs to save (e.g., ["tmrt", "shadow"]).
         progress_callback: Optional callback(current_step, total_steps).
@@ -776,6 +899,9 @@ def calculate_timeseries_tiled(
     effective_materials = materials
     effective_outputs = outputs
     effective_max_shadow = max_shadow_distance_m
+    effective_tile_workers = tile_workers
+    effective_tile_queue_depth = tile_queue_depth
+    effective_prefetch_tiles = prefetch_tiles
 
     if config is not None:
         if effective_aniso is None:
@@ -790,6 +916,12 @@ def calculate_timeseries_tiled(
             effective_outputs = config.outputs
         if effective_max_shadow is None:
             effective_max_shadow = config.max_shadow_distance_m
+        if effective_tile_workers is None:
+            effective_tile_workers = config.tile_workers
+        if effective_tile_queue_depth is None:
+            effective_tile_queue_depth = config.tile_queue_depth
+        if effective_prefetch_tiles is None:
+            effective_prefetch_tiles = config.prefetch_tiles
 
     if effective_aniso is None:
         effective_aniso = False
@@ -862,6 +994,19 @@ def calculate_timeseries_tiled(
     # Import calculate
     from .api import calculate
 
+    n_workers = _resolve_tile_workers(effective_tile_workers, n_tiles)
+    if effective_prefetch_tiles is None:
+        effective_prefetch_tiles = _resolve_prefetch_default(n_workers, n_tiles, adjusted_tile_size, buffer_pixels)
+    inflight_limit = _resolve_inflight_limit(
+        n_workers,
+        n_tiles,
+        effective_tile_queue_depth,
+        effective_prefetch_tiles,
+    )
+    logger.info(
+        f"Tiled runtime: workers={n_workers}, inflight_limit={inflight_limit}, prefetch={effective_prefetch_tiles}"
+    )
+
     # Initialize global state
     state = ThermalState.initial(surface.shape)
     if len(weather_series) >= 2:
@@ -888,25 +1033,174 @@ def calculate_timeseries_tiled(
 
     from .computation import _nighttime_result
 
-    for t_idx, weather in enumerate(weather_series):
-        # Nighttime shortcut: skip tiling entirely when sun is below horizon
-        if weather.sun_altitude <= 0:
-            night_result = _nighttime_result(surface, weather, state, effective_materials)
-            if night_result.state is not None:
-                state = night_result.state
+    # Pre-create tile data once — surfaces and precomputed data don't change
+    # between timesteps. This eliminates N_timesteps × N_tiles redundant copies
+    # and allows GVF geometry cache + buffer pool to persist across timesteps.
+    tile_surfaces = [_extract_tile_surface(surface, tile, pixel_size) for tile in tiles]
+    tile_precomputeds = [_slice_tile_precomputed(precomputed, tile) for tile in tiles]
 
-            result = SolweigResult(
-                tmrt=night_result.tmrt,
-                shadow=night_result.shadow,
-                kdown=night_result.kdown,
-                kup=night_result.kup,
-                ldown=night_result.ldown,
-                lup=night_result.lup,
-                utci=None,
-                pet=None,
-                state=None,
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        for t_idx, weather in enumerate(weather_series):
+            # Nighttime shortcut: skip tiling entirely when sun is below horizon
+            if weather.sun_altitude <= 0:
+                night_result = _nighttime_result(surface, weather, state, effective_materials)
+                if night_result.state is not None:
+                    state = night_result.state
+
+                result = SolweigResult(
+                    tmrt=night_result.tmrt,
+                    shadow=night_result.shadow,
+                    kdown=night_result.kdown,
+                    kup=night_result.kup,
+                    ldown=night_result.ldown,
+                    lup=night_result.lup,
+                    utci=None,
+                    pet=None,
+                    state=None,
+                )
+
+                _valid = result.tmrt[np.isfinite(result.tmrt)]
+                if _valid.size > 0:
+                    _tmrt_sum += _valid.sum()
+                    _tmrt_count += _valid.size
+                    _tmrt_max = max(_tmrt_max, float(_valid.max()))
+                    _tmrt_min = min(_tmrt_min, float(_valid.min()))
+
+                if output_dir is not None:
+                    result.to_geotiff(
+                        output_dir=output_dir,
+                        timestamp=weather.datetime,
+                        outputs=effective_outputs,
+                        surface=surface,
+                    )
+                    # Free large arrays — data is on disk
+                    result.tmrt = None  # type: ignore[assignment]
+                    result.shadow = None
+                    result.kdown = None
+                    result.kup = None
+                    result.ldown = None
+                    result.lup = None
+
+                results.append(result)
+
+                # Advance progress by all tiles for this timestep
+                step = (t_idx + 1) * n_tiles
+                if progress_callback is not None:
+                    progress_callback(step, total_work)
+                elif _progress is not None:
+                    _progress.update(n_tiles)
+
+                elapsed = time.time() - start_time
+                rate = (t_idx + 1) / elapsed if elapsed > 0 else 0
+                logger.info(f"  Timestep {t_idx + 1}/{n_steps} nighttime ({rate:.2f} steps/s)")
+                continue
+
+            # Initialize output arrays for this timestep
+            tmrt_out = np.full((rows, cols), np.nan, dtype=np.float32)
+            shadow_out = np.full((rows, cols), np.nan, dtype=np.float32)
+            kdown_out = np.full((rows, cols), np.nan, dtype=np.float32)
+            kup_out = np.full((rows, cols), np.nan, dtype=np.float32)
+            ldown_out = np.full((rows, cols), np.nan, dtype=np.float32)
+            lup_out = np.full((rows, cols), np.nan, dtype=np.float32)
+
+            # Pre-slice all tile states before parallel dispatch
+            tile_states = [_slice_tile_state(state, tile) for tile in tiles]
+
+            # Submit all tiles in parallel — Rust releases the GIL during
+            # compute_timestep, so threads overlap Python prep with Rust compute.
+            futures: dict[int, Any] = {}
+            submit_times: dict[int, float] = {}
+            next_submit = 0
+            max_queue = 0
+            turnaround_sum = 0.0
+
+            # Collect in tile order (state merge requires ordered writes), while
+            # keeping only a bounded number of tile tasks in flight.
+            for tile_idx in range(n_tiles):
+                while next_submit < n_tiles and len(futures) < inflight_limit:
+                    futures[next_submit] = executor.submit(
+                        calculate,
+                        surface=tile_surfaces[next_submit],
+                        location=location,
+                        weather=weather,
+                        human=effective_human,
+                        precomputed=tile_precomputeds[next_submit],
+                        use_anisotropic_sky=effective_aniso,
+                        conifer=conifer,
+                        state=tile_states[next_submit],
+                        physics=effective_physics,
+                        materials=effective_materials,
+                        wall_material=wall_material,
+                        max_shadow_distance_m=effective_max_shadow,
+                    )
+                    submit_times[next_submit] = time.perf_counter()
+                    next_submit += 1
+                max_queue = max(max_queue, max(0, len(futures) - n_workers))
+
+                future = futures.pop(tile_idx)
+                tile = tiles[tile_idx]
+                submit_t = submit_times.pop(tile_idx)
+
+                if _TIMING_ENABLED:
+                    _t0 = time.perf_counter()
+
+                tile_result = future.result()
+                turnaround_sum += time.perf_counter() - submit_t
+
+                if _TIMING_ENABLED:
+                    _t_ffi = time.perf_counter() - _t0
+                    _t1 = time.perf_counter()
+
+                # Write core results to global arrays (non-overlapping write_slice)
+                _write_tile_result(tile_result, tile, tmrt_out, shadow_out, kdown_out, kup_out, ldown_out, lup_out)
+
+                # Merge tile state back to global state (non-overlapping write_slice)
+                if tile_result.state is not None:
+                    _merge_tile_state(tile_result.state, tile, state)
+
+                if _TIMING_ENABLED:
+                    _t_merge = time.perf_counter() - _t1
+                    print(
+                        f"[TIMING] tile {tile_idx + 1}/{n_tiles} "
+                        f"ffi={_t_ffi * 1000:.1f}ms "
+                        f"merge={_t_merge * 1000:.1f}ms",
+                        file=sys.stderr,
+                    )
+
+                # Report progress
+                step = t_idx * n_tiles + tile_idx + 1
+                if progress_callback is not None:
+                    progress_callback(step, total_work)
+                elif _progress is not None:
+                    _progress.update(1)
+
+            mean_turnaround_ms = (turnaround_sum / n_tiles) * 1000.0 if n_tiles > 0 else 0.0
+            logger.debug(
+                f"Tiled timestep telemetry: step={t_idx + 1}/{n_steps}, "
+                f"mean_turnaround={mean_turnaround_ms:.1f}ms, max_queue={max_queue}"
             )
 
+            # Log timestep completion
+            elapsed = time.time() - start_time
+            rate = (t_idx + 1) / elapsed if elapsed > 0 else 0
+            logger.info(f"  Timestep {t_idx + 1}/{n_steps} complete ({rate:.2f} steps/s)")
+
+            # Create result for this timestep
+            result = SolweigResult(
+                tmrt=tmrt_out,
+                shadow=shadow_out,
+                kdown=kdown_out,
+                kup=kup_out,
+                ldown=ldown_out,
+                lup=lup_out,
+                utci=None,
+                pet=None,
+                state=None,  # State managed externally
+            )
+
+            # Update incremental stats (before potential array release)
             _valid = result.tmrt[np.isfinite(result.tmrt)]
             if _valid.size > 0:
                 _tmrt_sum += _valid.sum()
@@ -914,6 +1208,7 @@ def calculate_timeseries_tiled(
                 _tmrt_max = max(_tmrt_max, float(_valid.max()))
                 _tmrt_min = min(_tmrt_min, float(_valid.min()))
 
+            # Save incrementally if output_dir provided
             if output_dir is not None:
                 result.to_geotiff(
                     output_dir=output_dir,
@@ -930,134 +1225,6 @@ def calculate_timeseries_tiled(
                 result.lup = None
 
             results.append(result)
-
-            # Advance progress by all tiles for this timestep
-            step = (t_idx + 1) * n_tiles
-            if progress_callback is not None:
-                progress_callback(step, total_work)
-            elif _progress is not None:
-                _progress.update(n_tiles)
-
-            elapsed = time.time() - start_time
-            rate = (t_idx + 1) / elapsed if elapsed > 0 else 0
-            logger.info(f"  Timestep {t_idx + 1}/{n_steps} nighttime ({rate:.2f} steps/s)")
-            continue
-
-        # Initialize output arrays for this timestep
-        tmrt_out = np.full((rows, cols), np.nan, dtype=np.float32)
-        shadow_out = np.full((rows, cols), np.nan, dtype=np.float32)
-        kdown_out = np.full((rows, cols), np.nan, dtype=np.float32)
-        kup_out = np.full((rows, cols), np.nan, dtype=np.float32)
-        ldown_out = np.full((rows, cols), np.nan, dtype=np.float32)
-        lup_out = np.full((rows, cols), np.nan, dtype=np.float32)
-
-        for tile_idx, tile in enumerate(tiles):
-            # Update progress description before computing this tile
-            desc = f"Step {t_idx + 1}/{n_steps} | Tile {tile_idx + 1}/{n_tiles}"
-            if _progress is not None:
-                _progress.set_description(desc)
-                _progress.set_text(f"Timestep {t_idx + 1}/{n_steps} \u2014 Tile {tile_idx + 1}/{n_tiles}")
-
-            # Extract tile surface
-            if _TIMING_ENABLED:
-                _t0 = time.perf_counter()
-
-            tile_surface = _extract_tile_surface(surface, tile, pixel_size)
-            tile_precomputed = _slice_tile_precomputed(precomputed, tile)
-            tile_state = _slice_tile_state(state, tile)
-
-            if _TIMING_ENABLED:
-                _t_extract = time.perf_counter() - _t0
-                _t1 = time.perf_counter()
-
-            # Compute tile
-            tile_result = calculate(
-                surface=tile_surface,
-                location=location,
-                weather=weather,
-                human=effective_human,
-                precomputed=tile_precomputed,
-                use_anisotropic_sky=effective_aniso,
-                conifer=conifer,
-                state=tile_state,
-                physics=effective_physics,
-                materials=effective_materials,
-                wall_material=wall_material,
-                max_shadow_distance_m=effective_max_shadow,
-            )
-
-            if _TIMING_ENABLED:
-                _t_ffi = time.perf_counter() - _t1
-                _t2 = time.perf_counter()
-
-            # Write core results to global arrays
-            _write_tile_result(tile_result, tile, tmrt_out, shadow_out, kdown_out, kup_out, ldown_out, lup_out)
-
-            # Merge tile state back to global state
-            if tile_result.state is not None:
-                _merge_tile_state(tile_result.state, tile, state)
-
-            if _TIMING_ENABLED:
-                _t_merge = time.perf_counter() - _t2
-                print(
-                    f"[TIMING] tile {tile_idx + 1}/{n_tiles} "
-                    f"extract={_t_extract * 1000:.1f}ms "
-                    f"ffi={_t_ffi * 1000:.1f}ms "
-                    f"merge={_t_merge * 1000:.1f}ms "
-                    f"total={(_t_extract + _t_ffi + _t_merge) * 1000:.1f}ms",
-                    file=sys.stderr,
-                )
-
-            # Report progress
-            step = t_idx * n_tiles + tile_idx + 1
-            if progress_callback is not None:
-                progress_callback(step, total_work)
-            elif _progress is not None:
-                _progress.update(1)
-
-        # Log timestep completion
-        elapsed = time.time() - start_time
-        rate = (t_idx + 1) / elapsed if elapsed > 0 else 0
-        logger.info(f"  Timestep {t_idx + 1}/{n_steps} complete ({rate:.2f} steps/s)")
-
-        # Create result for this timestep
-        result = SolweigResult(
-            tmrt=tmrt_out,
-            shadow=shadow_out,
-            kdown=kdown_out,
-            kup=kup_out,
-            ldown=ldown_out,
-            lup=lup_out,
-            utci=None,
-            pet=None,
-            state=None,  # State managed externally
-        )
-
-        # Update incremental stats (before potential array release)
-        _valid = result.tmrt[np.isfinite(result.tmrt)]
-        if _valid.size > 0:
-            _tmrt_sum += _valid.sum()
-            _tmrt_count += _valid.size
-            _tmrt_max = max(_tmrt_max, float(_valid.max()))
-            _tmrt_min = min(_tmrt_min, float(_valid.min()))
-
-        # Save incrementally if output_dir provided
-        if output_dir is not None:
-            result.to_geotiff(
-                output_dir=output_dir,
-                timestamp=weather.datetime,
-                outputs=effective_outputs,
-                surface=surface,
-            )
-            # Free large arrays — data is on disk
-            result.tmrt = None  # type: ignore[assignment]
-            result.shadow = None
-            result.kdown = None
-            result.kup = None
-            result.ldown = None
-            result.lup = None
-
-        results.append(result)
 
     # Close progress bar
     if _progress is not None:
