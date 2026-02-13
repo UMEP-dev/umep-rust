@@ -42,7 +42,6 @@ if TYPE_CHECKING:
 # =============================================================================
 
 MIN_TILE_SIZE = 256  # Minimum tile size in pixels
-MIN_PIPELINING_SIDE = 512  # Minimum raster side to trigger 4-tile GPU pipelining
 _FALLBACK_MAX_TILE_SIZE = 2500  # Used when GPU + RAM detection both fail
 MIN_SUN_ELEVATION_DEG = 3.0  # Minimum sun elevation for shadow calculations
 MAX_BUFFER_M = 500.0  # Default maximum buffer / shadow distance in meters
@@ -185,41 +184,23 @@ def compute_max_tile_side(*, context: str = "solweig") -> int:
 
 
 def _should_use_tiling(rows: int, cols: int) -> bool:
-    """Check if raster size requires or benefits from tiling."""
+    """Check if raster size exceeds resource limits and requires tiling."""
     max_side = compute_max_tile_side(context="solweig")
-    if rows > max_side or cols > max_side:
-        return True
-    # Medium rasters benefit from GPU pipelining (≥4 tiles keeps GPU busy)
-    return max(rows, cols) >= MIN_PIPELINING_SIDE
+    return rows > max_side or cols > max_side
 
 
 def _calculate_auto_tile_size(rows: int, cols: int) -> int:
     """
-    Calculate optimal tile size based on raster dimensions and real resources.
+    Calculate optimal core tile size based on raster dimensions and resources.
 
-    For large rasters that exceed GPU/RAM limits, returns the resource-derived
-    maximum. For rasters that fit in a single tile but are large enough to
-    benefit from GPU pipelining (≥ ``MIN_PIPELINING_SIDE``), halves the tile
-    size to produce a 2×2 grid (~4 tiles) for better GPU utilisation.
-    Small rasters below the threshold are processed as a single tile.
+    Returns the resource-derived maximum tile side as the core size.
+    ``validate_tile_size()`` will further adjust to ensure the full tile
+    (core + 2 × overlap) fits within resource limits.
 
     Returns:
-        Tile size in pixels.
+        Core tile size in pixels.
     """
-    max_side = compute_max_tile_side(context="solweig")
-    raster_side = max(rows, cols)
-
-    # Case 1: raster exceeds resource limits — must tile
-    if rows > max_side or cols > max_side:
-        return max_side
-
-    # Case 2: raster fits in 1 tile but is large enough for GPU pipelining
-    if raster_side >= MIN_PIPELINING_SIDE:
-        half = (raster_side + 1) // 2
-        return max(MIN_TILE_SIZE, min(half, max_side))
-
-    # Case 3: genuinely small raster — single tile
-    return raster_side
+    return compute_max_tile_side(context="solweig")
 
 
 def _extract_tile_surface(
@@ -263,6 +244,16 @@ def _extract_tile_surface(
             tile.col_end_full,
         )
 
+    # Slice shadow matrices if available (required for anisotropic sky in tiled mode)
+    tile_shadow_matrices = None
+    if surface.shadow_matrices is not None:
+        tile_shadow_matrices = surface.shadow_matrices.crop(
+            tile.row_start_full,
+            tile.row_end_full,
+            tile.col_start_full,
+            tile.col_end_full,
+        )
+
     tile_surface = SurfaceData(
         dsm=tile_dsm,
         cdsm=tile_cdsm,
@@ -273,6 +264,7 @@ def _extract_tile_surface(
         emissivity=tile_emis,
         pixel_size=pixel_size,
         svf=tile_svf,
+        shadow_matrices=tile_shadow_matrices,
     )
     tile_surface.compute_svf()  # No-op when tile_svf is set
 
@@ -284,17 +276,18 @@ def _slice_tile_precomputed(
     tile: TileSpec,
 ) -> PrecomputedData | None:
     """
-    Slice walls from precomputed data for a tile.
+    Slice walls and shadow matrices from precomputed data for a tile.
 
     SVF is handled via surface.svf (sliced in _extract_tile_surface).
-    Shadow matrices are not supported in tiled mode.
+    Shadow matrices are spatially cropped to the tile bounds for
+    anisotropic sky support in tiled mode.
 
     Args:
         precomputed: Full raster precomputed data (or None).
         tile: Tile specification with slice bounds.
 
     Returns:
-        PrecomputedData with sliced walls, or None.
+        PrecomputedData with sliced walls and shadow matrices, or None.
     """
     if precomputed is None:
         return None
@@ -303,20 +296,28 @@ def _slice_tile_precomputed(
 
     tile_wall_ht = None
     tile_wall_asp = None
+    tile_shadow_matrices = None
 
     if precomputed.wall_height is not None:
         tile_wall_ht = precomputed.wall_height[read_slice].copy()
     if precomputed.wall_aspect is not None:
         tile_wall_asp = precomputed.wall_aspect[read_slice].copy()
+    if precomputed.shadow_matrices is not None:
+        tile_shadow_matrices = precomputed.shadow_matrices.crop(
+            tile.row_start_full,
+            tile.row_end_full,
+            tile.col_start_full,
+            tile.col_end_full,
+        )
 
-    if tile_wall_ht is None and tile_wall_asp is None:
+    if tile_wall_ht is None and tile_wall_asp is None and tile_shadow_matrices is None:
         return None
 
     return PrecomputedData(
         wall_height=tile_wall_ht,
         wall_aspect=tile_wall_asp,
         svf=None,
-        shadow_matrices=None,
+        shadow_matrices=tile_shadow_matrices,
     )
 
 
@@ -458,47 +459,43 @@ def validate_tile_size(
     pixel_size: float,
 ) -> tuple[int, str | None]:
     """
-    Validate and adjust tile size for tiled processing.
+    Validate and adjust core tile size for tiled processing.
 
-    Ensures the tile size is within bounds and leaves meaningful core area
-    after accounting for buffer overlap. The maximum is determined
-    dynamically from available GPU and system resources.
+    ``tile_size`` is the **core** tile side (the region whose results are
+    kept). The actual tile in memory is ``core + 2 × buffer_pixels``.
+    This function ensures the full tile fits within resource-derived limits.
 
     Args:
-        tile_size: Requested tile size in pixels.
-        buffer_pixels: Buffer size in pixels.
+        tile_size: Requested core tile size in pixels.
+        buffer_pixels: Overlap buffer size in pixels.
         pixel_size: Pixel size in meters.
 
     Returns:
-        Tuple of (adjusted_tile_size, warning_message or None).
+        Tuple of (adjusted_core_size, warning_message or None).
 
     Constraints:
-        - tile_size >= MIN_TILE_SIZE (256)
-        - tile_size <= resource-derived maximum
-        - Core area (tile_size - 2*buffer) >= 128 pixels
+        - core >= MIN_TILE_SIZE (256)
+        - core + 2 * buffer_pixels <= resource-derived maximum
     """
-    max_tile = compute_max_tile_side(context="solweig")
+    max_full = compute_max_tile_side(context="solweig")
     warning = None
-    adjusted = tile_size
+    core = tile_size
 
-    # Enforce minimum
-    if adjusted < MIN_TILE_SIZE:
-        warning = f"Tile size {tile_size} below minimum, using {MIN_TILE_SIZE}"
-        adjusted = MIN_TILE_SIZE
+    # Enforce minimum core size
+    if core < MIN_TILE_SIZE:
+        warning = f"Tile core size {tile_size} below minimum, using {MIN_TILE_SIZE}"
+        core = MIN_TILE_SIZE
 
-    # Enforce maximum
-    if adjusted > max_tile:
-        warning = f"Tile size {tile_size} above maximum, using {max_tile}"
-        adjusted = max_tile
+    # Enforce maximum: full tile (core + 2*buffer) must fit resource limit
+    max_core = max_full - 2 * buffer_pixels
+    if core > max_core:
+        core = max(MIN_TILE_SIZE, max_core)
+        warning = (
+            f"Tile core {tile_size} + 2x{buffer_pixels}px buffer exceeds resource limit "
+            f"({max_full}px). Using core={core}"
+        )
 
-    # Ensure meaningful core area (at least 128 pixels after buffer)
-    min_for_buffer = 2 * buffer_pixels + 128
-    if adjusted < min_for_buffer:
-        adjusted = min(min_for_buffer, max_tile)
-        buffer_m = buffer_pixels * pixel_size
-        warning = f"Tile size increased to {adjusted} to ensure meaningful core area with {buffer_m:.0f}m buffer"
-
-    return adjusted, warning
+    return core, warning
 
 
 def generate_tiles(
@@ -614,8 +611,8 @@ def calculate_tiled(
     rows, cols = surface.shape
     pixel_size = surface.pixel_size
 
-    # Height-aware buffer: use actual max building height instead of worst-case
-    max_height = float(np.nanmax(surface.dsm)) if surface.dsm is not None else 0.0
+    # Height-aware buffer: use relative max building height (not absolute elevation)
+    max_height = surface.max_height
     buffer_m = calculate_buffer_distance(max_height, max_shadow_distance_m=max_shadow_distance_m)
     buffer_pixels = int(np.ceil(buffer_m / pixel_size))
     logger.info(f"Buffer: {buffer_m:.0f}m ({buffer_pixels}px) from max height {max_height:.1f}m")
@@ -753,8 +750,8 @@ def calculate_timeseries_tiled(
         config: Model configuration (provides defaults for None params).
         human: Human body parameters. If None, uses config or defaults.
         precomputed: Pre-computed walls (SVF computed per-tile).
-        use_anisotropic_sky: Use anisotropic sky model.
-            Not supported in tiled mode — raises NotImplementedError.
+        use_anisotropic_sky: Use anisotropic sky model. Default False.
+            Shadow matrices are spatially sliced per tile.
         conifer: Treat vegetation as evergreen conifers. Default False.
         physics: Physics parameters. If None, uses config or bundled defaults.
         materials: Material properties. If None, uses config or bundled defaults.
@@ -818,8 +815,8 @@ def calculate_timeseries_tiled(
     rows, cols = surface.shape
     pixel_size = surface.pixel_size
 
-    # Height-aware buffer: use actual max building height instead of worst-case
-    max_height = float(np.nanmax(surface.dsm)) if surface.dsm is not None else 0.0
+    # Height-aware buffer: use relative max building height (not absolute elevation)
+    max_height = surface.max_height
     buffer_m = calculate_buffer_distance(max_height, max_shadow_distance_m=effective_max_shadow)
     buffer_pixels = int(np.ceil(buffer_m / pixel_size))
     logger.info(f"Buffer: {buffer_m:.0f}m ({buffer_pixels}px) from max height {max_height:.1f}m")
@@ -910,6 +907,13 @@ def calculate_timeseries_tiled(
                 state=None,
             )
 
+            _valid = result.tmrt[np.isfinite(result.tmrt)]
+            if _valid.size > 0:
+                _tmrt_sum += _valid.sum()
+                _tmrt_count += _valid.size
+                _tmrt_max = max(_tmrt_max, float(_valid.max()))
+                _tmrt_min = min(_tmrt_min, float(_valid.min()))
+
             if output_dir is not None:
                 result.to_geotiff(
                     output_dir=output_dir,
@@ -917,15 +921,15 @@ def calculate_timeseries_tiled(
                     outputs=effective_outputs,
                     surface=surface,
                 )
+                # Free large arrays — data is on disk
+                result.tmrt = None  # type: ignore[assignment]
+                result.shadow = None
+                result.kdown = None
+                result.kup = None
+                result.ldown = None
+                result.lup = None
 
             results.append(result)
-
-            _valid = result.tmrt[np.isfinite(result.tmrt)]
-            if _valid.size > 0:
-                _tmrt_sum += _valid.sum()
-                _tmrt_count += _valid.size
-                _tmrt_max = max(_tmrt_max, float(_valid.max()))
-                _tmrt_min = min(_tmrt_min, float(_valid.min()))
 
             # Advance progress by all tiles for this timestep
             step = (t_idx + 1) * n_tiles
@@ -1029,6 +1033,14 @@ def calculate_timeseries_tiled(
             state=None,  # State managed externally
         )
 
+        # Update incremental stats (before potential array release)
+        _valid = result.tmrt[np.isfinite(result.tmrt)]
+        if _valid.size > 0:
+            _tmrt_sum += _valid.sum()
+            _tmrt_count += _valid.size
+            _tmrt_max = max(_tmrt_max, float(_valid.max()))
+            _tmrt_min = min(_tmrt_min, float(_valid.min()))
+
         # Save incrementally if output_dir provided
         if output_dir is not None:
             result.to_geotiff(
@@ -1037,16 +1049,15 @@ def calculate_timeseries_tiled(
                 outputs=effective_outputs,
                 surface=surface,
             )
+            # Free large arrays — data is on disk
+            result.tmrt = None  # type: ignore[assignment]
+            result.shadow = None
+            result.kdown = None
+            result.kup = None
+            result.ldown = None
+            result.lup = None
 
         results.append(result)
-
-        # Update incremental stats
-        _valid = result.tmrt[np.isfinite(result.tmrt)]
-        if _valid.size > 0:
-            _tmrt_sum += _valid.sum()
-            _tmrt_count += _valid.size
-            _tmrt_max = max(_tmrt_max, float(_valid.max()))
-            _tmrt_min = min(_tmrt_min, float(_valid.min()))
 
     # Close progress bar
     if _progress is not None:

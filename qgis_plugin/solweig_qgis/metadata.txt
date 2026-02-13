@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta26
+version=0.1.0-beta27
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,6 +42,13 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta27
+    - Fix 4 tiling bugs: remove forced pipelining split, fix tile-size semantics, enable anisotropic sky in tiled mode, fix overlap buffer elevation
+    - Remove MIN_PIPELINING_SIDE (512px) threshold that forced 4-tile splitting on medium rasters — tiling now only triggers when resource limits require it
+    - Fix tile-size semantics: validate_tile_size now correctly checks core + 2*overlap against resource limit (previously checked core only, so actual tiles could exceed GPU/RAM)
+    - Enable anisotropic sky in tiled mode: shadow matrices are now spatially sliced per tile (previously silently dropped, falling back to isotropic)
+    - Fix overlap buffer using absolute DSM elevation instead of relative building height (e.g. 10m ground + 5m building used 15m instead of 5m)
+    - Free result arrays after writing to disk in timeseries mode (previously retained all timestep arrays in memory even with output_dir set)
     0.1.0-beta26
     - Apply vegetation transmissivity (psi) to isotropic diffuse SVF: drad, Kup, and Kdown now account for light passing through canopy (previously treated as fully opaque)
     - Add configurable leaf-off transmissivity to physics defaults (was hardcoded to 0.5)

@@ -376,6 +376,14 @@ def calculate_timeseries(
             state = result.state
             result.state = None  # Free state arrays (~23 MB); state managed externally
 
+        # Update incremental stats (before potential array release)
+        _valid = result.tmrt[np.isfinite(result.tmrt)]
+        if _valid.size > 0:
+            _tmrt_sum += _valid.sum()
+            _tmrt_count += _valid.size
+            _tmrt_max = max(_tmrt_max, float(_valid.max()))
+            _tmrt_min = min(_tmrt_min, float(_valid.min()))
+
         # Save incrementally if output_dir provided
         if output_dir is not None:
             result.to_geotiff(
@@ -384,16 +392,15 @@ def calculate_timeseries(
                 outputs=outputs,
                 surface=surface,
             )
+            # Free large arrays — data is on disk
+            result.tmrt = None  # type: ignore[assignment]
+            result.shadow = None
+            result.kdown = None
+            result.kup = None
+            result.ldown = None
+            result.lup = None
 
         results.append(result)
-
-        # Update incremental stats
-        _valid = result.tmrt[np.isfinite(result.tmrt)]
-        if _valid.size > 0:
-            _tmrt_sum += _valid.sum()
-            _tmrt_count += _valid.size
-            _tmrt_max = max(_tmrt_max, float(_valid.max()))
-            _tmrt_min = min(_tmrt_min, float(_valid.min()))
 
         # Report progress
         if progress_callback is not None:

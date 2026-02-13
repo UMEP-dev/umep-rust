@@ -91,8 +91,9 @@ class TestMultiTileProcessing:
         """Verify that large raster is actually processed in multiple tiles."""
         from unittest.mock import patch
 
-        # With 5m buildings (15m DSM) and max_shadow_distance_m=100: buffer = min(286, 100) = 100m
-        # tile_size=350, buffer=100px → 4 tiles on a 400×400 raster
+        # 5m buildings (relative height = 15m DSM - 10m ground = 5m)
+        # buffer = 5 / tan(3°) = 95.4m → 96px (below cap of 100m)
+        # tile_size=350, buffer=96px → 4 tiles on a 400×400 raster
         captured = {}
         original_generate_tiles = __import__("solweig.tiling", fromlist=["generate_tiles"]).generate_tiles
 
@@ -113,8 +114,8 @@ class TestMultiTileProcessing:
         # Check that multi-tile processing was used
         assert captured.get("n_tiles", 0) > 1, f"Expected multiple tiles, got {captured.get('n_tiles', 0)}"
 
-        # Buffer should be 100px (capped at max_shadow_distance_m=100, not the height-derived 286m)
-        assert captured["buffer_pixels"] == 100
+        # Buffer from 5m relative height: ceil(95.4 / 1.0) = 96px
+        assert captured["buffer_pixels"] == 96
 
         # Verify output shape matches input
         assert result.tmrt.shape == large_urban_surface.shape
@@ -243,17 +244,9 @@ class TestTilingHelpers:
     """Tests for tiling helper functions."""
 
     def test_should_use_tiling_below_threshold(self):
-        """Rasters below pipelining threshold should not trigger tiling."""
+        """Rasters below resource limit should not trigger tiling."""
         assert not _should_use_tiling(100, 100)
         assert not _should_use_tiling(400, 400)
-
-    def test_should_use_tiling_pipelining(self):
-        """Rasters >= MIN_PIPELINING_SIDE should trigger tiling for GPU pipelining."""
-        from solweig.tiling import MIN_PIPELINING_SIDE
-
-        assert _should_use_tiling(MIN_PIPELINING_SIDE, MIN_PIPELINING_SIDE)
-        assert _should_use_tiling(2500, 1000)
-        assert not _should_use_tiling(MIN_PIPELINING_SIDE - 1, MIN_PIPELINING_SIDE - 1)
 
     def test_should_use_tiling_above_threshold(self):
         """Rasters exceeding resource-derived max should trigger tiling."""
@@ -261,22 +254,14 @@ class TestTilingHelpers:
         assert _should_use_tiling(max_side + 1, max_side + 1)
         assert _should_use_tiling(max_side + 1, 100)
         assert _should_use_tiling(100, max_side + 1)
+        # Below resource limit — no tiling needed
+        assert not _should_use_tiling(max_side, max_side)
 
-    def test_auto_tile_size_large(self):
-        """Rasters exceeding max tile side should return the max tile side."""
+    def test_auto_tile_size_returns_resource_max(self):
+        """Auto tile size returns resource-derived maximum."""
         max_side = compute_max_tile_side(context="solweig")
         assert _calculate_auto_tile_size(max_side + 1000, max_side + 1000) == max_side
-
-    def test_auto_tile_size_medium_pipelining(self):
-        """Rasters within max tile side are halved for GPU pipelining."""
-        result = _calculate_auto_tile_size(3000, 3000)
-        # Should halve for pipelining: (3000+1)//2 = 1500
-        assert result == 1500
-
-    def test_auto_tile_size_small(self):
-        """Genuinely small rasters return full size (no pipelining split)."""
-        result = _calculate_auto_tile_size(400, 400)
-        assert result == 400
+        assert _calculate_auto_tile_size(100, 100) == max_side
 
     def test_extract_tile_surface_reuses_svf(self):
         """When surface has precomputed SVF, tile surface should get sliced SVF."""
@@ -539,13 +524,13 @@ class TestHeightAwareBuffer:
     """Verify tiling functions compute buffer from actual building heights."""
 
     def test_short_buildings_get_small_buffer(self):
-        """With 5m buildings the buffer should be ~286m, not the 500m default."""
+        """With 5m relative height the buffer should be ~95m, not the 500m default."""
         from unittest.mock import patch
 
         size = 400
         ground = 10.0
         building_height = 5.0  # above ground
-        max_dsm = ground + building_height  # 15m
+        max_dsm = ground + building_height  # 15m absolute, 5m relative
         dsm = np.full((size, size), ground, dtype=np.float32)
         dsm[100:120, 100:120] = max_dsm
 
@@ -553,9 +538,10 @@ class TestHeightAwareBuffer:
         location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
         weather = Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0)
 
-        # buffer = 15 / tan(3°) ≈ 286m — much less than default 500m cap
-        expected_buffer = calculate_buffer_distance(max_dsm)
-        assert 280 < expected_buffer < 300, f"Expected ~286m buffer, got {expected_buffer}"
+        # Buffer uses relative height (5m), not absolute elevation (15m)
+        # buffer = 5 / tan(3°) ≈ 95.4m — much less than default 500m cap
+        expected_buffer = calculate_buffer_distance(building_height)
+        assert 90 < expected_buffer < 100, f"Expected ~95m buffer, got {expected_buffer}"
 
         # Patch generate_tiles to capture the buffer_pixels that calculate_tiled passes
         captured = {}
@@ -568,21 +554,22 @@ class TestHeightAwareBuffer:
         with patch("solweig.tiling.generate_tiles", side_effect=spy_generate_tiles):
             _ = calculate_tiled(surface, location, weather, tile_size=350)
 
-        # If generate_tiles was called, buffer should match height-derived value
+        # If generate_tiles was called, buffer should match relative-height-derived value
         if "buffer_pixels" in captured:
             expected_px = int(np.ceil(expected_buffer / surface.pixel_size))
             assert captured["buffer_pixels"] == expected_px, (
-                f"Expected {expected_px}px buffer from {max_dsm}m height, got {captured['buffer_pixels']}px"
+                f"Expected {expected_px}px buffer from {building_height}m relative height, "
+                f"got {captured['buffer_pixels']}px"
             )
 
     def test_tall_buildings_capped_at_max(self):
-        """With 40m DSM the buffer should cap at max_shadow_distance_m."""
+        """With 30m relative height the buffer should cap at max_shadow_distance_m."""
         from unittest.mock import patch
 
         size = 400
         ground = 10.0
         building_height = 30.0
-        max_dsm = ground + building_height  # 40m
+        max_dsm = ground + building_height  # 40m absolute, 30m relative
         dsm = np.full((size, size), ground, dtype=np.float32)
         dsm[100:120, 100:120] = max_dsm
 
@@ -591,7 +578,8 @@ class TestHeightAwareBuffer:
         weather = Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0)
 
         cap = 200.0
-        expected_buffer = calculate_buffer_distance(max_dsm, max_shadow_distance_m=cap)
+        # 30m relative height: 30/tan(3°) ≈ 573m → capped at 200m
+        expected_buffer = calculate_buffer_distance(building_height, max_shadow_distance_m=cap)
         assert expected_buffer == cap, f"Expected buffer capped at {cap}, got {expected_buffer}"
 
         captured = {}
