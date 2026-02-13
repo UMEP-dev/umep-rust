@@ -561,6 +561,7 @@ def validate_tile_size(
     tile_size: int,
     buffer_pixels: int,
     pixel_size: float,
+    context: str = "solweig",
 ) -> tuple[int, str | None]:
     """
     Validate and adjust core tile size for tiled processing.
@@ -573,6 +574,8 @@ def validate_tile_size(
         tile_size: Requested core tile size in pixels.
         buffer_pixels: Overlap buffer size in pixels.
         pixel_size: Pixel size in meters.
+        context: Resource context for limit detection. Use ``"svf"`` for
+            SVF preprocessing tiles and ``"solweig"`` for timestep tiles.
 
     Returns:
         Tuple of (adjusted_core_size, warning_message or None).
@@ -581,7 +584,7 @@ def validate_tile_size(
         - core >= MIN_TILE_SIZE (256)
         - core + 2 * buffer_pixels <= resource-derived maximum
     """
-    max_full = compute_max_tile_side(context="solweig")
+    max_full = compute_max_tile_side(context=context)
     warning = None
     core = tile_size
 

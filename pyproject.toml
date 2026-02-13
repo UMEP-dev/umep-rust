@@ -1,6 +1,6 @@
 [project]
 name = "solweig"
-version = "0.1.0b33"
+version = "0.1.0b34"
 description = "High-performance SOLWEIG urban microclimate model (Rust + Python)"
 readme = "README.md"
 requires-python = ">=3.9, <3.14"
@@ -127,6 +127,7 @@ lint = { shell = "ruff format && ruff check --fix" }
 typecheck = { shell = "ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/" }
 test_quick = { shell = "pytest tests/ -m 'not slow' -x -q" }
 test_full = { shell = "pytest tests/ -x -q" }
+test_benchmarks = { shell = "pytest tests/benchmarks/ -x -q" }
 docs = { shell = "mkdocs serve" }
 docs_build = { shell = "mkdocs build --strict" }
 

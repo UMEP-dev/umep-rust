@@ -92,6 +92,33 @@ def _save_shadow_matrices(svf_result, svf_cache_dir: Path, patch_count: int = 15
     logger.info(f"  ✓ Shadow matrices saved as {shadow_path}")
 
 
+def _max_shadow_height(dsm: np.ndarray, cdsm: np.ndarray | None = None, use_veg: bool = False) -> float:
+    """
+    Estimate maximum casting height above local ground for shadow reach logic.
+
+    Uses local relief (max - min) instead of absolute elevation so tiled buffer
+    sizing and SVF ray reach do not explode on high-elevation terrain.
+
+    Vegetation is only considered when ``use_veg=True``. This differs from
+    ``SurfaceData.max_height``, which is intentionally conservative for buffer
+    sizing and always considers CDSM when present.
+    """
+    if dsm.size == 0 or not np.isfinite(dsm).any():
+        return 0.0
+
+    dsm_max = float(np.nanmax(dsm))
+    dsm_min = float(np.nanmin(dsm))
+    max_elevation = dsm_max
+    if use_veg and cdsm is not None and cdsm.size > 0 and np.isfinite(cdsm).any():
+        cdsm_max = float(np.nanmax(cdsm))
+        if np.isfinite(cdsm_max):
+            max_elevation = max(max_elevation, cdsm_max)
+    height = max_elevation - dsm_min
+    if not np.isfinite(height) or height <= 0:
+        return 0.0
+    return height
+
+
 @dataclass
 class SurfaceData:
     """
@@ -1089,11 +1116,8 @@ class SurfaceData:
             cdsm_for_svf = np.zeros_like(dsm_arr, dtype=np.float32)
             tdsm_for_svf = np.zeros_like(dsm_arr, dtype=np.float32)
 
-        # Compute max height for SVF calculation
-        max_height = float(np.nanmax(dsm_arr))
-        if use_veg and cdsm_arr is not None:
-            veg_max = float(np.nanmax(cdsm_arr))
-            max_height = max(max_height, veg_max)
+        # Height for shadow reach/buffer should be local relief, not absolute elevation.
+        max_height = _max_shadow_height(dsm_arr, cdsm_arr, use_veg=use_veg)
 
         # Auto-detect whether tiling is needed based on real GPU/RAM limits.
         from ..tiling import compute_max_tile_pixels
@@ -1299,7 +1323,7 @@ class SurfaceData:
         max_full_side = compute_max_tile_side(context="svf")
         tile_size = max(MIN_TILE_SIZE, max_full_side - 2 * buffer_pixels)
 
-        adjusted_tile_size, warning = validate_tile_size(tile_size, buffer_pixels, pixel_size)
+        adjusted_tile_size, warning = validate_tile_size(tile_size, buffer_pixels, pixel_size, context="svf")
         if warning:
             logger.warning(warning)
 
@@ -1378,9 +1402,7 @@ class SurfaceData:
             td = dsm_f32[rs].copy()
             tc = cdsm_f32[rs].copy()
             tt = tdsm_f32[rs].copy()
-            mh = float(np.nanmax(td))
-            if use_veg:
-                mh = max(mh, float(np.nanmax(tc)))
+            mh = _max_shadow_height(td, tc, use_veg=use_veg)
             box = [None, None]  # [result, error]
 
             def _run():
@@ -1586,10 +1608,7 @@ class SurfaceData:
             cdsm_f32 = np.zeros_like(dsm_f32)
             tdsm_f32 = np.zeros_like(dsm_f32)
 
-        max_height = float(np.nanmax(dsm_f32))
-        if use_veg:
-            veg_max = float(np.nanmax(cdsm_f32))
-            max_height = max(max_height, veg_max)
+        max_height = _max_shadow_height(dsm_f32, cdsm_f32 if use_veg else None, use_veg=use_veg)
 
         logger.info("Computing Sky View Factor...")
         svf_result = skyview.calculate_svf(
@@ -1640,12 +1659,19 @@ class SurfaceData:
 
         Considers both DSM (buildings) and CDSM (vegetation) since both cast shadows.
         Returns max elevation minus ground level.
+
+        This property is conservative by design for shadow buffer sizing:
+        CDSM is included whenever present, independent of current per-call
+        vegetation switches.
         """
+        if self.dsm.size == 0 or not np.isfinite(self.dsm).any():
+            return 0.0
+
         dsm_max = float(np.nanmax(self.dsm))
         ground_min = float(np.nanmin(self.dsm))
 
         # Also consider vegetation if present (CDSM may be taller than buildings)
-        if self.cdsm is not None:
+        if self.cdsm is not None and self.cdsm.size > 0 and np.isfinite(self.cdsm).any():
             cdsm_max = float(np.nanmax(self.cdsm))
             # After preprocessing, CDSM contains absolute elevations
             # Use the higher of DSM or CDSM
@@ -1653,7 +1679,10 @@ class SurfaceData:
         else:
             max_elevation = dsm_max
 
-        return max_elevation - ground_min
+        height = max_elevation - ground_min
+        if not np.isfinite(height) or height <= 0:
+            return 0.0
+        return height
 
     @property
     def shape(self) -> tuple[int, int]:

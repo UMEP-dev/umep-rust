@@ -118,7 +118,19 @@ uv run python -c "from tests.rustalgos.test_rustalgos import test_shadowing; tes
 
 # Run everything
 uv run pytest tests/ -v
+
+# Run performance regression benchmarks
+uv run pytest tests/benchmarks/ -v
+
+# If CI is slower, scale runtime budgets (example: +50% headroom)
+SOLWEIG_PERF_BUDGET_SCALE=1.5 uv run pytest tests/benchmarks/ -v
 ```
+
+Performance benchmarks are intended for local/reproducible environments and are not run in CI.
+Each run appends logs to:
+- `tests/benchmarks/logs/performance_matrix_history.csv` (long-form records)
+- `tests/benchmarks/logs/performance_matrix_history.md` (matrix snapshot per run)
+Logged metadata includes hardware context (CPU counts, RAM total/available, GPU availability/backend/max buffer size).
 
 ## Adding New Tests
 

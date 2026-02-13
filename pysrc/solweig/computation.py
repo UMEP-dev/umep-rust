@@ -284,8 +284,9 @@ def calculate_core(
     wall_ht = surface.wall_height if has_walls else None
     wall_asp = surface.wall_aspect if has_walls else None
 
-    # Maximum building height for shadow/SVF computation
-    max_height = float(np.nanmax(surface.dsm)) if surface.dsm.size > 0 else 50.0
+    # Maximum casting height above local ground for shadow/SVF computation.
+    # Use SurfaceData.max_height for consistency with tiled/SVF paths.
+    max_height = surface.max_height
 
     # Cap shadow reach if max_shadow_distance_m is set
     if max_shadow_distance_m is not None:
@@ -538,7 +539,8 @@ def calculate_core_fused(
     wall_ht = surface.wall_height if has_walls else None
     wall_asp = surface.wall_aspect if has_walls else None
 
-    max_height = float(np.nanmax(surface.dsm)) if surface.dsm.size > 0 else 50.0
+    # Keep height semantics aligned with daytime path and tiled/SVF flows.
+    max_height = surface.max_height
 
     # Cap shadow reach if max_shadow_distance_m is set
     if max_shadow_distance_m is not None:

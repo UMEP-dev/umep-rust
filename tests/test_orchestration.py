@@ -728,6 +728,27 @@ class TestValidateTileSize:
         assert adjusted == max_core
         assert warning is None
 
+    def test_context_uses_context_specific_limits(self, monkeypatch):
+        """SVF context should not be constrained by SOLWEIG tile limits."""
+
+        def _fake_max_side(*, context: str = "solweig"):
+            return 4000 if context == "svf" else 1000
+
+        # Patch directly on the function's globals dict.  QGIS mock imports can
+        # cause a double-load of solweig.tiling so the module object in
+        # sys.modules may differ from the one validate_tile_size was defined in.
+        monkeypatch.setitem(
+            validate_tile_size.__globals__,
+            "compute_max_tile_side",
+            _fake_max_side,
+        )
+
+        svf_adjusted, _ = validate_tile_size(950, buffer_pixels=50, pixel_size=1.0, context="svf")
+        solweig_adjusted, _ = validate_tile_size(950, buffer_pixels=50, pixel_size=1.0, context="solweig")
+
+        assert svf_adjusted == 950
+        assert solweig_adjusted == 900
+
 
 # ---------------------------------------------------------------------------
 # generate_tiles

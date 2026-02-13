@@ -22,6 +22,7 @@ from solweig.api import (
     calculate_tiled,
     generate_tiles,
 )
+from solweig.models.surface import _max_shadow_height
 
 
 class TestSurfaceData:
@@ -77,12 +78,39 @@ class TestSurfaceData:
         # max_height = 150 - 50 = 100
         assert surface.max_height == 100.0
 
+    def test_max_height_all_nan_returns_zero(self):
+        """All-NaN DSM should safely report zero casting height."""
+        dsm = np.full((5, 5), np.nan, dtype=np.float32)
+        surface = SurfaceData(dsm=dsm)
+        assert surface.max_height == 0.0
+
+    def test_max_height_conservatively_includes_cdsm(self):
+        """Buffer-oriented max_height includes CDSM whenever present."""
+        dsm = np.ones((5, 5), dtype=np.float32) * 100.0
+        cdsm = np.ones((5, 5), dtype=np.float32) * 130.0
+        surface = SurfaceData(dsm=dsm, cdsm=cdsm, cdsm_relative=False)
+        assert surface.max_height == 30.0
+
     def test_shape_property(self):
         """shape property returns DSM dimensions."""
         dsm = np.ones((100, 200))
         surface = SurfaceData(dsm=dsm)
 
         assert surface.shape == (100, 200)
+
+
+class TestMaxShadowHeightHelper:
+    """Tests for internal max shadow height helper semantics."""
+
+    def test_all_nan_returns_zero(self):
+        dsm = np.full((5, 5), np.nan, dtype=np.float32)
+        assert _max_shadow_height(dsm) == 0.0
+
+    def test_respects_use_veg_flag(self):
+        dsm = np.ones((5, 5), dtype=np.float32) * 100.0
+        cdsm = np.ones((5, 5), dtype=np.float32) * 130.0
+        assert _max_shadow_height(dsm, cdsm, use_veg=False) == 0.0
+        assert _max_shadow_height(dsm, cdsm, use_veg=True) == 30.0
 
 
 class TestLocation:
