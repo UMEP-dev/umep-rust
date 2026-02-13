@@ -263,7 +263,9 @@ pub(crate) fn kside_veg_isotropic_pure(
     for r in 0..rows {
         for c in 0..cols {
             if let Some(ref v) = valid {
-                if v[[r, c]] == 0 { continue; }
+                if v[[r, c]] == 0 {
+                    continue;
+                }
             }
             let (vveg, vwall) = kvikt_veg(svfE[(r, c)], svfEveg[(r, c)], vikttot);
             svfviktbuvegE[(r, c)] = vwall + vveg * (1.0 - psi);
@@ -288,19 +290,27 @@ pub(crate) fn kside_veg_isotropic_pure(
             for c in 0..cols {
                 let sh_val = shadow[(r, c)];
                 if azimuth > (360.0 - t) || azimuth <= (180.0 - t) {
-                    Keast[(r, c)] = radI * sh_val * (altitude * deg2rad).cos()
+                    Keast[(r, c)] = radI
+                        * sh_val
+                        * (altitude * deg2rad).cos()
                         * ((azimuth + t) * deg2rad).sin();
                 }
                 if azimuth > (90.0 - t) && azimuth <= (270.0 - t) {
-                    Ksouth[(r, c)] = radI * sh_val * (altitude * deg2rad).cos()
+                    Ksouth[(r, c)] = radI
+                        * sh_val
+                        * (altitude * deg2rad).cos()
                         * ((azimuth - 90.0 + t) * deg2rad).sin();
                 }
                 if azimuth > (180.0 - t) && azimuth <= (360.0 - t) {
-                    Kwest[(r, c)] = radI * sh_val * (altitude * deg2rad).cos()
+                    Kwest[(r, c)] = radI
+                        * sh_val
+                        * (altitude * deg2rad).cos()
                         * ((azimuth - 180.0 + t) * deg2rad).sin();
                 }
                 if azimuth <= (90.0 - t) || azimuth > (270.0 - t) {
-                    Knorth[(r, c)] = radI * sh_val * (altitude * deg2rad).cos()
+                    Knorth[(r, c)] = radI
+                        * sh_val
+                        * (altitude * deg2rad).cos()
                         * ((azimuth - 270.0 + t) * deg2rad).sin();
                 }
             }

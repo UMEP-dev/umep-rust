@@ -116,19 +116,22 @@ pub(crate) fn compute_tmrt_pure(
 
             // Compute absorbed radiation
             let k_absorbed = if use_anisotropic_sky {
-                abs_k * (kside_total_val * f_cyl
-                    + (kdown_val + kup_val) * f_up
-                    + (kside_n_val + kside_e_val + kside_s_val + kside_w_val) * f_side)
+                abs_k
+                    * (kside_total_val * f_cyl
+                        + (kdown_val + kup_val) * f_up
+                        + (kside_n_val + kside_e_val + kside_s_val + kside_w_val) * f_side)
             } else {
-                abs_k * (kside_total_val * f_cyl
-                    + (kdown_val + kup_val) * f_up
-                    + (kside_n_val + kside_e_val + kside_s_val + kside_w_val) * f_side)
+                abs_k
+                    * (kside_total_val * f_cyl
+                        + (kdown_val + kup_val) * f_up
+                        + (kside_n_val + kside_e_val + kside_s_val + kside_w_val) * f_side)
             };
 
             let l_absorbed = if use_anisotropic_sky {
-                abs_l * ((ldown_val + lup_val) * f_up
-                    + lside_total_val * f_cyl
-                    + (lside_n_val + lside_e_val + lside_s_val + lside_w_val) * f_side)
+                abs_l
+                    * ((ldown_val + lup_val) * f_up
+                        + lside_total_val * f_cyl
+                        + (lside_n_val + lside_e_val + lside_s_val + lside_w_val) * f_side)
             } else {
                 abs_l
                     * ((ldown_val + lup_val) * f_up

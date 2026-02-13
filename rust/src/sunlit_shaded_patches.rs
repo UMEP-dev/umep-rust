@@ -4,7 +4,6 @@
 
 // Vectorized function removed as it was unused.
 
-
 /// Calculates whether a single patch is sunlit or shaded.
 /// This is a scalar version for use inside pixel-parallel loops.
 #[allow(dead_code)]

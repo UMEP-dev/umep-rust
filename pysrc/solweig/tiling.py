@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from .models import HumanParams, PrecomputedData, SolweigResult, SurfaceData, ThermalState, TileSpec
+from .output_async import AsyncGeoTiffWriter, async_output_enabled, collect_output_arrays
 from .solweig_logging import get_logger
 
 logger = get_logger(__name__)
@@ -409,26 +410,26 @@ def _write_tile_result(
     tile_result: SolweigResult,
     tile: TileSpec,
     tmrt_out: np.ndarray,
-    shadow_out: np.ndarray,
-    kdown_out: np.ndarray,
-    kup_out: np.ndarray,
-    ldown_out: np.ndarray,
-    lup_out: np.ndarray,
+    shadow_out: np.ndarray | None,
+    kdown_out: np.ndarray | None,
+    kup_out: np.ndarray | None,
+    ldown_out: np.ndarray | None,
+    lup_out: np.ndarray | None,
 ) -> None:
     """Write core region of tile result to global output arrays."""
     core_slice = tile.core_slice
     write_slice = tile.write_slice
 
     tmrt_out[write_slice] = tile_result.tmrt[core_slice]
-    if tile_result.shadow is not None:
+    if shadow_out is not None and tile_result.shadow is not None:
         shadow_out[write_slice] = tile_result.shadow[core_slice]
-    if tile_result.kdown is not None:
+    if kdown_out is not None and tile_result.kdown is not None:
         kdown_out[write_slice] = tile_result.kdown[core_slice]
-    if tile_result.kup is not None:
+    if kup_out is not None and tile_result.kup is not None:
         kup_out[write_slice] = tile_result.kup[core_slice]
-    if tile_result.ldown is not None:
+    if ldown_out is not None and tile_result.ldown is not None:
         ldown_out[write_slice] = tile_result.ldown[core_slice]
-    if tile_result.lup is not None:
+    if lup_out is not None and tile_result.lup is not None:
         lup_out[write_slice] = tile_result.lup[core_slice]
 
 
@@ -459,6 +460,25 @@ def _slice_tile_state(state: ThermalState, tile: TileSpec) -> ThermalState:
         timeadd=state.timeadd,
         timestep_dec=state.timestep_dec,
     )
+
+
+def _refresh_tile_state(tile_state: ThermalState, global_state: ThermalState, tile: TileSpec) -> None:
+    """
+    Refresh a preallocated tile state from the global state in-place.
+
+    This avoids reallocating ThermalState objects/arrays each timestep while
+    still ensuring overlap regions are synchronized from the latest global state.
+    """
+    read_slice = tile.read_slice
+    np.copyto(tile_state.tgmap1, global_state.tgmap1[read_slice])
+    np.copyto(tile_state.tgmap1_e, global_state.tgmap1_e[read_slice])
+    np.copyto(tile_state.tgmap1_s, global_state.tgmap1_s[read_slice])
+    np.copyto(tile_state.tgmap1_w, global_state.tgmap1_w[read_slice])
+    np.copyto(tile_state.tgmap1_n, global_state.tgmap1_n[read_slice])
+    np.copyto(tile_state.tgout1, global_state.tgout1[read_slice])
+    tile_state.firstdaytime = global_state.firstdaytime
+    tile_state.timeadd = global_state.timeadd
+    tile_state.timestep_dec = global_state.timestep_dec
 
 
 def _merge_tile_state(
@@ -793,6 +813,7 @@ def calculate_tiled(
                 physics=physics,
                 materials=materials,
                 max_shadow_distance_m=max_shadow_distance_m,
+                return_state_copy=False,
             )
             futures[future] = (tile_idx, tile)
             submit_times[future] = time.perf_counter()
@@ -861,6 +882,7 @@ def calculate_timeseries_tiled(
     prefetch_tiles: bool | None = None,
     output_dir: str | Path | None = None,
     outputs: list[str] | None = None,
+    return_results: bool = True,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[SolweigResult]:
     """
@@ -897,6 +919,8 @@ def calculate_timeseries_tiled(
             uses config.prefetch_tiles or defaults to True.
         output_dir: Directory to save results incrementally as GeoTIFF.
         outputs: Which outputs to save (e.g., ["tmrt", "shadow"]).
+        return_results: Whether to keep timestep results in memory and return them.
+            Set False for long runs to stream computation and reduce memory usage.
         progress_callback: Optional callback(current_step, total_steps).
 
     Returns:
@@ -953,6 +977,15 @@ def calculate_timeseries_tiled(
 
     if output_dir is not None and effective_outputs is None:
         effective_outputs = ["tmrt"]
+    requested_outputs = None
+    if output_dir is not None:
+        requested_outputs = set(effective_outputs or ["tmrt"])
+        requested_outputs.add("tmrt")
+    need_shadow = output_dir is None or requested_outputs is None or "shadow" in requested_outputs
+    need_kdown = output_dir is None or requested_outputs is None or "kdown" in requested_outputs
+    need_kup = output_dir is None or requested_outputs is None or "kup" in requested_outputs
+    need_ldown = output_dir is None or requested_outputs is None or "ldown" in requested_outputs
+    need_lup = output_dir is None or requested_outputs is None or "lup" in requested_outputs
 
     # Fill NaN in surface layers
     surface.fill_nan()
@@ -999,10 +1032,17 @@ def calculate_timeseries_tiled(
     precompute_time = time.time() - precompute_start
     logger.info(f"  Pre-computed {n_steps} timesteps in {precompute_time:.1f}s")
 
+    output_path: Path | None = None
     # Create output directory if needed
     if output_dir is not None:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
+    use_async_output = output_dir is not None and async_output_enabled()
+    _writer = (
+        AsyncGeoTiffWriter(output_dir=output_path, surface=surface)
+        if use_async_output and output_path is not None
+        else None
+    )
 
     # Import calculate
     from .api import calculate
@@ -1028,6 +1068,7 @@ def calculate_timeseries_tiled(
         state.timestep_dec = (dt1 - dt0).total_seconds() / 86400.0
 
     results = []
+    processed_steps = 0
     total_work = n_steps * n_tiles
     start_time = time.time()
 
@@ -1051,29 +1092,191 @@ def calculate_timeseries_tiled(
     # and allows GVF geometry cache + buffer pool to persist across timesteps.
     tile_surfaces = [_extract_tile_surface(surface, tile, pixel_size, precomputed=precomputed) for tile in tiles]
     tile_precomputeds = [_slice_tile_precomputed(precomputed, tile) for tile in tiles]
+    tile_states = [_slice_tile_state(state, tile) for tile in tiles]
 
     from concurrent.futures import ThreadPoolExecutor
 
-    with ThreadPoolExecutor(max_workers=n_workers) as executor:
-        for t_idx, weather in enumerate(weather_series):
-            # Nighttime shortcut: skip tiling entirely when sun is below horizon
-            if weather.sun_altitude <= 0:
-                night_result = _nighttime_result(surface, weather, state, effective_materials)
-                if night_result.state is not None:
-                    state = night_result.state
+    try:
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            for t_idx, weather in enumerate(weather_series):
+                # Nighttime shortcut: skip tiling entirely when sun is below horizon
+                if weather.sun_altitude <= 0:
+                    night_result = _nighttime_result(surface, weather, state, effective_materials, copy_state=False)
+                    if night_result.state is not None:
+                        state = night_result.state
 
-                result = SolweigResult(
-                    tmrt=night_result.tmrt,
-                    shadow=night_result.shadow,
-                    kdown=night_result.kdown,
-                    kup=night_result.kup,
-                    ldown=night_result.ldown,
-                    lup=night_result.lup,
-                    utci=None,
-                    pet=None,
-                    state=None,
+                    result = SolweigResult(
+                        tmrt=night_result.tmrt,
+                        shadow=night_result.shadow,
+                        kdown=night_result.kdown,
+                        kup=night_result.kup,
+                        ldown=night_result.ldown,
+                        lup=night_result.lup,
+                        utci=None,
+                        pet=None,
+                        state=None,
+                    )
+
+                    _valid = result.tmrt[np.isfinite(result.tmrt)]
+                    if _valid.size > 0:
+                        _tmrt_sum += _valid.sum()
+                        _tmrt_count += _valid.size
+                        _tmrt_max = max(_tmrt_max, float(_valid.max()))
+                        _tmrt_min = min(_tmrt_min, float(_valid.min()))
+
+                    if _writer is not None:
+                        _writer.submit(
+                            timestamp=weather.datetime,
+                            arrays=collect_output_arrays(result, effective_outputs or ["tmrt"]),
+                        )
+                    elif output_dir is not None:
+                        result.to_geotiff(
+                            output_dir=output_dir,
+                            timestamp=weather.datetime,
+                            outputs=effective_outputs,
+                            surface=surface,
+                        )
+
+                    if output_dir is not None or not return_results:
+                        # Free large arrays once data is persisted or caller requested streaming mode.
+                        result.tmrt = None  # type: ignore[assignment]
+                        result.shadow = None
+                        result.kdown = None
+                        result.kup = None
+                        result.ldown = None
+                        result.lup = None
+                    if return_results:
+                        results.append(result)
+                    processed_steps += 1
+
+                    # Advance progress by all tiles for this timestep
+                    step = (t_idx + 1) * n_tiles
+                    if progress_callback is not None:
+                        progress_callback(step, total_work)
+                    elif _progress is not None:
+                        _progress.update(n_tiles)
+
+                    elapsed = time.time() - start_time
+                    rate = (t_idx + 1) / elapsed if elapsed > 0 else 0
+                    logger.info(f"  Timestep {t_idx + 1}/{n_steps} nighttime ({rate:.2f} steps/s)")
+                    continue
+
+                # Initialize output arrays for this timestep
+                tmrt_out = np.full((rows, cols), np.nan, dtype=np.float32)
+                shadow_out = np.full((rows, cols), np.nan, dtype=np.float32) if need_shadow else None
+                kdown_out = np.full((rows, cols), np.nan, dtype=np.float32) if need_kdown else None
+                kup_out = np.full((rows, cols), np.nan, dtype=np.float32) if need_kup else None
+                ldown_out = np.full((rows, cols), np.nan, dtype=np.float32) if need_ldown else None
+                lup_out = np.full((rows, cols), np.nan, dtype=np.float32) if need_lup else None
+
+                # Refresh preallocated tile states from the current global state.
+                for tile_idx, tile in enumerate(tiles):
+                    _refresh_tile_state(tile_states[tile_idx], state, tile)
+
+                # Submit all tiles in parallel — Rust releases the GIL during
+                # compute_timestep, so threads overlap Python prep with Rust compute.
+                futures: dict[int, Any] = {}
+                submit_times: dict[int, float] = {}
+                next_submit = 0
+                max_queue = 0
+                turnaround_sum = 0.0
+
+                # Collect in tile order (state merge requires ordered writes), while
+                # keeping only a bounded number of tile tasks in flight.
+                for tile_idx in range(n_tiles):
+                    while next_submit < n_tiles and len(futures) < inflight_limit:
+                        futures[next_submit] = executor.submit(
+                            calculate,
+                            surface=tile_surfaces[next_submit],
+                            location=location,
+                            weather=weather,
+                            human=effective_human,
+                            precomputed=tile_precomputeds[next_submit],
+                            use_anisotropic_sky=effective_aniso,
+                            conifer=conifer,
+                            state=tile_states[next_submit],
+                            physics=effective_physics,
+                            materials=effective_materials,
+                            wall_material=wall_material,
+                            max_shadow_distance_m=effective_max_shadow,
+                            return_state_copy=False,
+                            _requested_outputs=requested_outputs,
+                        )
+                        submit_times[next_submit] = time.perf_counter()
+                        next_submit += 1
+                    max_queue = max(max_queue, max(0, len(futures) - n_workers))
+
+                    future = futures.pop(tile_idx)
+                    tile = tiles[tile_idx]
+                    submit_t = submit_times.pop(tile_idx)
+
+                    if _TIMING_ENABLED:
+                        _t0 = time.perf_counter()
+
+                    tile_result = future.result()
+                    turnaround_sum += time.perf_counter() - submit_t
+
+                    if _TIMING_ENABLED:
+                        _t_ffi = time.perf_counter() - _t0
+                        _t1 = time.perf_counter()
+
+                    # Write core results to global arrays (non-overlapping write_slice)
+                    _write_tile_result(
+                        tile_result,
+                        tile,
+                        tmrt_out,
+                        shadow_out,
+                        kdown_out,
+                        kup_out,
+                        ldown_out,
+                        lup_out,
+                    )
+
+                    # Merge tile state back to global state (non-overlapping write_slice)
+                    if tile_result.state is not None:
+                        _merge_tile_state(tile_result.state, tile, state)
+
+                    if _TIMING_ENABLED:
+                        _t_merge = time.perf_counter() - _t1
+                        print(
+                            f"[TIMING] tile {tile_idx + 1}/{n_tiles} "
+                            f"ffi={_t_ffi * 1000:.1f}ms "
+                            f"merge={_t_merge * 1000:.1f}ms",
+                            file=sys.stderr,
+                        )
+
+                    # Report progress
+                    step = t_idx * n_tiles + tile_idx + 1
+                    if progress_callback is not None:
+                        progress_callback(step, total_work)
+                    elif _progress is not None:
+                        _progress.update(1)
+
+                mean_turnaround_ms = (turnaround_sum / n_tiles) * 1000.0 if n_tiles > 0 else 0.0
+                logger.debug(
+                    f"Tiled timestep telemetry: step={t_idx + 1}/{n_steps}, "
+                    f"mean_turnaround={mean_turnaround_ms:.1f}ms, max_queue={max_queue}"
                 )
 
+                # Log timestep completion
+                elapsed = time.time() - start_time
+                rate = (t_idx + 1) / elapsed if elapsed > 0 else 0
+                logger.info(f"  Timestep {t_idx + 1}/{n_steps} complete ({rate:.2f} steps/s)")
+
+                # Create result for this timestep
+                result = SolweigResult(
+                    tmrt=tmrt_out,
+                    shadow=shadow_out,
+                    kdown=kdown_out,
+                    kup=kup_out,
+                    ldown=ldown_out,
+                    lup=lup_out,
+                    utci=None,
+                    pet=None,
+                    state=None,  # State managed externally
+                )
+
+                # Update incremental stats (before potential array release)
                 _valid = result.tmrt[np.isfinite(result.tmrt)]
                 if _valid.size > 0:
                     _tmrt_sum += _valid.sum()
@@ -1081,181 +1284,50 @@ def calculate_timeseries_tiled(
                     _tmrt_max = max(_tmrt_max, float(_valid.max()))
                     _tmrt_min = min(_tmrt_min, float(_valid.min()))
 
-                if output_dir is not None:
+                # Save incrementally if output_dir provided
+                if _writer is not None:
+                    _writer.submit(
+                        timestamp=weather.datetime,
+                        arrays=collect_output_arrays(result, effective_outputs or ["tmrt"]),
+                    )
+                elif output_dir is not None:
                     result.to_geotiff(
                         output_dir=output_dir,
                         timestamp=weather.datetime,
                         outputs=effective_outputs,
                         surface=surface,
                     )
-                    # Free large arrays — data is on disk
+
+                if output_dir is not None or not return_results:
+                    # Free large arrays once data is persisted or caller requested streaming mode.
                     result.tmrt = None  # type: ignore[assignment]
                     result.shadow = None
                     result.kdown = None
                     result.kup = None
                     result.ldown = None
                     result.lup = None
-
-                results.append(result)
-
-                # Advance progress by all tiles for this timestep
-                step = (t_idx + 1) * n_tiles
-                if progress_callback is not None:
-                    progress_callback(step, total_work)
-                elif _progress is not None:
-                    _progress.update(n_tiles)
-
-                elapsed = time.time() - start_time
-                rate = (t_idx + 1) / elapsed if elapsed > 0 else 0
-                logger.info(f"  Timestep {t_idx + 1}/{n_steps} nighttime ({rate:.2f} steps/s)")
-                continue
-
-            # Initialize output arrays for this timestep
-            tmrt_out = np.full((rows, cols), np.nan, dtype=np.float32)
-            shadow_out = np.full((rows, cols), np.nan, dtype=np.float32)
-            kdown_out = np.full((rows, cols), np.nan, dtype=np.float32)
-            kup_out = np.full((rows, cols), np.nan, dtype=np.float32)
-            ldown_out = np.full((rows, cols), np.nan, dtype=np.float32)
-            lup_out = np.full((rows, cols), np.nan, dtype=np.float32)
-
-            # Pre-slice all tile states before parallel dispatch
-            tile_states = [_slice_tile_state(state, tile) for tile in tiles]
-
-            # Submit all tiles in parallel — Rust releases the GIL during
-            # compute_timestep, so threads overlap Python prep with Rust compute.
-            futures: dict[int, Any] = {}
-            submit_times: dict[int, float] = {}
-            next_submit = 0
-            max_queue = 0
-            turnaround_sum = 0.0
-
-            # Collect in tile order (state merge requires ordered writes), while
-            # keeping only a bounded number of tile tasks in flight.
-            for tile_idx in range(n_tiles):
-                while next_submit < n_tiles and len(futures) < inflight_limit:
-                    futures[next_submit] = executor.submit(
-                        calculate,
-                        surface=tile_surfaces[next_submit],
-                        location=location,
-                        weather=weather,
-                        human=effective_human,
-                        precomputed=tile_precomputeds[next_submit],
-                        use_anisotropic_sky=effective_aniso,
-                        conifer=conifer,
-                        state=tile_states[next_submit],
-                        physics=effective_physics,
-                        materials=effective_materials,
-                        wall_material=wall_material,
-                        max_shadow_distance_m=effective_max_shadow,
-                    )
-                    submit_times[next_submit] = time.perf_counter()
-                    next_submit += 1
-                max_queue = max(max_queue, max(0, len(futures) - n_workers))
-
-                future = futures.pop(tile_idx)
-                tile = tiles[tile_idx]
-                submit_t = submit_times.pop(tile_idx)
-
-                if _TIMING_ENABLED:
-                    _t0 = time.perf_counter()
-
-                tile_result = future.result()
-                turnaround_sum += time.perf_counter() - submit_t
-
-                if _TIMING_ENABLED:
-                    _t_ffi = time.perf_counter() - _t0
-                    _t1 = time.perf_counter()
-
-                # Write core results to global arrays (non-overlapping write_slice)
-                _write_tile_result(tile_result, tile, tmrt_out, shadow_out, kdown_out, kup_out, ldown_out, lup_out)
-
-                # Merge tile state back to global state (non-overlapping write_slice)
-                if tile_result.state is not None:
-                    _merge_tile_state(tile_result.state, tile, state)
-
-                if _TIMING_ENABLED:
-                    _t_merge = time.perf_counter() - _t1
-                    print(
-                        f"[TIMING] tile {tile_idx + 1}/{n_tiles} "
-                        f"ffi={_t_ffi * 1000:.1f}ms "
-                        f"merge={_t_merge * 1000:.1f}ms",
-                        file=sys.stderr,
-                    )
-
-                # Report progress
-                step = t_idx * n_tiles + tile_idx + 1
-                if progress_callback is not None:
-                    progress_callback(step, total_work)
-                elif _progress is not None:
-                    _progress.update(1)
-
-            mean_turnaround_ms = (turnaround_sum / n_tiles) * 1000.0 if n_tiles > 0 else 0.0
-            logger.debug(
-                f"Tiled timestep telemetry: step={t_idx + 1}/{n_steps}, "
-                f"mean_turnaround={mean_turnaround_ms:.1f}ms, max_queue={max_queue}"
-            )
-
-            # Log timestep completion
-            elapsed = time.time() - start_time
-            rate = (t_idx + 1) / elapsed if elapsed > 0 else 0
-            logger.info(f"  Timestep {t_idx + 1}/{n_steps} complete ({rate:.2f} steps/s)")
-
-            # Create result for this timestep
-            result = SolweigResult(
-                tmrt=tmrt_out,
-                shadow=shadow_out,
-                kdown=kdown_out,
-                kup=kup_out,
-                ldown=ldown_out,
-                lup=lup_out,
-                utci=None,
-                pet=None,
-                state=None,  # State managed externally
-            )
-
-            # Update incremental stats (before potential array release)
-            _valid = result.tmrt[np.isfinite(result.tmrt)]
-            if _valid.size > 0:
-                _tmrt_sum += _valid.sum()
-                _tmrt_count += _valid.size
-                _tmrt_max = max(_tmrt_max, float(_valid.max()))
-                _tmrt_min = min(_tmrt_min, float(_valid.min()))
-
-            # Save incrementally if output_dir provided
-            if output_dir is not None:
-                result.to_geotiff(
-                    output_dir=output_dir,
-                    timestamp=weather.datetime,
-                    outputs=effective_outputs,
-                    surface=surface,
-                )
-                # Free large arrays — data is on disk
-                result.tmrt = None  # type: ignore[assignment]
-                result.shadow = None
-                result.kdown = None
-                result.kup = None
-                result.ldown = None
-                result.lup = None
-
-            results.append(result)
-
-    # Close progress bar
-    if _progress is not None:
-        _progress.close()
+                if return_results:
+                    results.append(result)
+                processed_steps += 1
+    finally:
+        if _progress is not None:
+            _progress.close()
+        if _writer is not None:
+            _writer.close()
 
     # Log summary
     total_time = time.time() - start_time
-    overall_rate = len(results) / total_time if total_time > 0 else 0
+    overall_rate = processed_steps / total_time if total_time > 0 else 0
 
     logger.info("=" * 60)
-    logger.info(f"Calculation complete: {len(results)} timesteps processed (tiled)")
+    logger.info(f"Calculation complete: {processed_steps} timesteps processed (tiled)")
     logger.info(f"  Total time: {total_time:.1f}s ({overall_rate:.2f} steps/s)")
     if _tmrt_count > 0:
         mean_tmrt = _tmrt_sum / _tmrt_count
         logger.info(f"  Tmrt range: {_tmrt_min:.1f}C - {_tmrt_max:.1f}C (mean: {mean_tmrt:.1f}C)")
 
     if output_dir is not None and effective_outputs is not None:
-        file_count = len(results) * len(effective_outputs)
+        file_count = processed_steps * len(effective_outputs)
         logger.info(f"  Files saved: {file_count} GeoTIFFs in {output_dir}")
     logger.info("=" * 60)
 

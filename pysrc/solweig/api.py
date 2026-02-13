@@ -255,6 +255,8 @@ def calculate(
     materials: SimpleNamespace | None = None,
     wall_material: str | None = None,
     max_shadow_distance_m: float | None = None,
+    return_state_copy: bool = True,
+    _requested_outputs: set[str] | None = None,
 ) -> SolweigResult:
     """
     Calculate mean radiant temperature (Tmrt).
@@ -295,6 +297,8 @@ def calculate(
         wall_material: Wall material type for temperature model.
             One of "brick", "concrete", "wood", "cobblestone" (case-insensitive).
             If None (default), uses generic wall params from materials JSON.
+        return_state_copy: If True (default), return a deep-copied thermal state.
+            Set False in internal time-series loops to avoid per-step state copies.
 
     Returns:
         SolweigResult with Tmrt and optionally UTCI/PET grids.
@@ -418,6 +422,8 @@ def calculate(
         wall_material=wall_material,
         use_anisotropic_sky=use_anisotropic_sky,
         max_shadow_distance_m=effective_max_shadow,
+        return_state_copy=return_state_copy,
+        requested_outputs=_requested_outputs,
     )
 
 

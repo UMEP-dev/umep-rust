@@ -11,6 +11,8 @@ const PI: f32 = std::f32::consts::PI;
 
 /// Per-azimuth precomputed geometry.
 pub(crate) struct AzimuthGeometry {
+    /// Azimuth angle in degrees for this geometry snapshot.
+    pub azimuth_deg: f32,
     /// Step at which each pixel gets blocked (f→0). `second` if never blocked.
     pub blocking_distance: Array2<u16>,
     /// (dx, dy) shift offsets per step.
@@ -180,8 +182,7 @@ fn precompute_azimuth_geometry(
     let _first_threshold = (first as f32 * pixel_scale).round().max(1.);
 
     for (n, &(dx, dy)) in shifts.iter().enumerate() {
-        let ((xc1, xc2, yc1, yc2), (xp1, xp2, yp1, yp2)) =
-            compute_slices(dx, dy, sizex, sizey);
+        let ((xc1, xc2, yc1, yc2), (xp1, xp2, yp1, yp2)) = compute_slices(dx, dy, sizex, sizey);
         let x_c_slice = s![xc1..xc2, yc1..yc2];
         let x_p_slice = s![xp1..xp2, yp1..yp2];
 
@@ -236,6 +237,7 @@ fn precompute_azimuth_geometry(
     let facesh = compute_facesh(azimuth_rad, wall_aspect, wall_ht);
 
     AzimuthGeometry {
+        azimuth_deg,
         blocking_distance,
         shifts,
         facesh,
@@ -306,18 +308,15 @@ pub(crate) fn precompute_gvf_geometry(
         let azimuth = azimuth_a[i];
 
         // Per-azimuth gvfalbnosh (matches sun_on_surface post-loop logic)
-        let gvfalbnosh1 = (&geom.wallnosh_accum_first + &geom.albnosh_accum_first)
-            / (first + 1.)
+        let gvfalbnosh1 = (&geom.wallnosh_accum_first + &geom.albnosh_accum_first) / (first + 1.)
             * &geom.wall_influence_first
-            + &geom.albnosh_accum_first / first
-                * geom.wall_influence_first.mapv(|x| 1. - x);
+            + &geom.albnosh_accum_first / first * geom.wall_influence_first.mapv(|x| 1. - x);
         let gvfalbnosh2 = (&geom.wallnosh_accum + &geom.albnosh_accum) / second
             * &geom.wall_influence
             + &geom.albnosh_accum / second * geom.wall_influence.mapv(|x| 1. - x);
 
-        let gvfalbnosh_az =
-            (&gvfalbnosh1 * 0.5 + &gvfalbnosh2 * 0.4) / 0.9 * &buildings
-                + &alb_grid * &buildings_inv;
+        let gvfalbnosh_az = (&gvfalbnosh1 * 0.5 + &gvfalbnosh2 * 0.4) / 0.9 * &buildings
+            + &alb_grid * &buildings_inv;
 
         albnosh_center += &gvfalbnosh_az;
 

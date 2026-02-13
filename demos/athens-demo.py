@@ -94,7 +94,12 @@ results = solweig.calculate_timeseries(
 )
 
 print(f"\n✓ Simplified API complete! Processed {len(results)} timesteps.")
-print(f"  Mean Tmrt: {results[0].tmrt.mean():.1f}°C")
+
+# When output_dir is provided, arrays are freed after saving to disk to conserve memory.
+# Load a saved GeoTIFF to inspect results:
+sample_tif = next(output_dir.glob("tmrt/tmrt_*.tif"))
+sample_arr, *_ = solweig.io.load_raster(str(sample_tif))
+print(f"  Mean Tmrt (first timestep): {sample_arr[sample_arr > -9999].mean():.1f}°C")
 print(f"\nNote: Preprocessing cached in {output_folder_path / 'working'}")
 print("      Use force_recompute=True to regenerate walls/SVF.")
 print(f"      Run metadata saved to {output_dir / 'run_metadata.json'}")

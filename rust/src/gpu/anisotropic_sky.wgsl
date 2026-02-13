@@ -8,10 +8,11 @@
 //   Pass 1 — sky, vegetation, and building longwave + diffuse shortwave
 //   Pass 2 — reflected longwave (depends on ldown_sky from pass 1)
 //
-// Outputs 3 accumulated arrays consumed by pipeline.rs:
+// Outputs 4 accumulated arrays consumed by pipeline.rs:
 //   out_ldown        — total downwelling longwave  (sky+veg+bldg+ref)
 //   out_lside        — total side longwave          (sky+veg+bldg+ref)
 //   out_kside_partial — diffuse shortwave + reflected shortwave (kside_d+kref)
+//   out_drad         — anisotropic diffuse shortwave for Kdown
 //
 // The pipeline adds kside_i = shadow * rad_i * cos(alt) on the CPU.
 
@@ -36,6 +37,8 @@ struct Params {
     ewall:        f32,        // wall emissivity
     rad_i:        f32,        // direct radiation  (W m⁻²)
     rad_d:        f32,        // diffuse radiation (W m⁻²)
+    psi:          f32,        // vegetation transmissivity factor for diffsh
+    rad_tot:      f32,        // ∑(lv * steradians * sin(alt)) for drad recovery
 };
 
 @group(0) @binding(0)  var<uniform> params: Params;
@@ -67,6 +70,7 @@ struct Params {
 @group(0) @binding(12) var<storage, read_write> out_ldown:         array<f32>;
 @group(0) @binding(13) var<storage, read_write> out_lside:         array<f32>;
 @group(0) @binding(14) var<storage, read_write> out_kside_partial: array<f32>;
+@group(0) @binding(15) var<storage, read_write> out_drad:          array<f32>;
 
 // ── Bit extraction ───────────────────────────────────────────────────────
 //
@@ -127,6 +131,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         out_ldown[idx]         = bitcast<f32>(NAN_BITS);
         out_lside[idx]         = bitcast<f32>(NAN_BITS);
         out_kside_partial[idx] = bitcast<f32>(NAN_BITS);
+        out_drad[idx]          = bitcast<f32>(NAN_BITS);
         return;
     }
 
@@ -135,6 +140,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         out_ldown[idx]         = 0.0;
         out_lside[idx]         = 0.0;
         out_kside_partial[idx] = 0.0;
+        out_drad[idx]          = 0.0;
         return;
     }
 
@@ -175,12 +181,15 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     var lside_sh: f32 = 0.0;
     var kside_d_acc: f32 = 0.0;
     var kref_acc: f32 = 0.0;   // combined kref_sun + kref_sh + kref_veg
+    var drad_norm_acc: f32 = 0.0; // Σ(diffsh * lum_chi); multiply by rad_tot at end
 
     // ── Pass 1: Main patch loop ─────────────────────────────────────────
     for (var i: u32 = 0u; i < params.n_patches; i++) {
         let sh: bool  = sh_bit(idx, i);
         let vsh: bool = veg_bit(idx, i);
         let vbsh: bool = vb_bit(idx, i);
+        let sh_f: f32 = select(0.0, 1.0, sh);
+        let vsh_f: f32 = select(0.0, 1.0, vsh);
 
         // Classification (matches sky.rs)
         let temp_sky: bool   = sh && vsh;
@@ -193,6 +202,13 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         let alt_rad: f32  = p_alt * DEG2RAD;
         let aoi: f32      = cos(alt_rad);   // angle of incidence (vertical surface)
         let aoi_h: f32    = sin(alt_rad);   // horizontal surface projection
+
+        // Diffuse shadow term used by Kdown:
+        // diffsh = sh - (1 - vegsh) * (1 - psi)
+        let diffsh: f32 = sh_f - (1.0 - vsh_f) * (1.0 - params.psi);
+        if (sun_above && params.rad_tot > 0.0) {
+            drad_norm_acc += diffsh * lum_chi_buf[i];
+        }
 
         // ── Sky longwave ────────────────────────────────────────────
         if (temp_sky) {
@@ -284,4 +300,5 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     out_ldown[idx] = ldown_sky + ldown_veg + ldown_sh + ldown_sun + ldown_ref;
     out_lside[idx] = lside_sky + lside_veg + lside_sh + lside_sun + lside_ref;
     out_kside_partial[idx] = kside_d_acc + kref_acc;
+    out_drad[idx] = drad_norm_acc * params.rad_tot;
 }

@@ -235,6 +235,51 @@ class TestCalculateTimeseries:
         output_files = list(tmp_path.iterdir())
         assert len(output_files) > 0
 
+    def test_return_results_false_returns_empty_list(self, flat_surface, location):
+        """Streaming mode should avoid retaining per-timestep results."""
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=2)
+
+        results = calculate_timeseries(
+            flat_surface,
+            weather_series,
+            location,
+            return_results=False,
+        )
+
+        assert results == []
+
+    def test_return_results_false_requests_tmrt_only(self, flat_surface, location, monkeypatch):
+        """Streaming mode should request only Tmrt from fused Rust path."""
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=2)
+        captured: list[set[str] | None] = []
+
+        def _fake_calculate(**kwargs):
+            captured.append(kwargs.get("_requested_outputs"))
+            shape = kwargs["surface"].dsm.shape
+            return SolweigResult(
+                tmrt=np.zeros(shape, dtype=np.float32),
+                shadow=None,
+                kdown=None,
+                kup=None,
+                ldown=None,
+                lup=None,
+                utci=None,
+                pet=None,
+                state=None,
+            )
+
+        monkeypatch.setattr("solweig.api.calculate", _fake_calculate)
+
+        results = calculate_timeseries(
+            flat_surface,
+            weather_series,
+            location,
+            return_results=False,
+        )
+
+        assert results == []
+        assert captured and all(req == {"tmrt"} for req in captured)
+
     def test_tiling_runtime_controls_forwarded_from_config(self, flat_surface, location, monkeypatch):
         """ModelConfig tile runtime settings are forwarded to tiled runner."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
@@ -254,6 +299,7 @@ class TestCalculateTimeseries:
         assert captured["tile_workers"] == 3
         assert captured["tile_queue_depth"] == 5
         assert captured["prefetch_tiles"] is False
+        assert captured["return_results"] is True
 
     def test_explicit_tiling_runtime_controls_override_config(self, flat_surface, location, monkeypatch):
         """Explicit tile runtime args override ModelConfig values."""
@@ -282,6 +328,27 @@ class TestCalculateTimeseries:
         assert captured["tile_workers"] == 6
         assert captured["tile_queue_depth"] == 9
         assert captured["prefetch_tiles"] is True
+
+    def test_return_results_forwarded_to_tiled_runner(self, flat_surface, location, monkeypatch):
+        """return_results should be forwarded when auto-tiling is selected."""
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
+        captured: dict[str, object] = {}
+
+        def _fake_tiled(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
+        monkeypatch.setattr("solweig.tiling.calculate_timeseries_tiled", _fake_tiled)
+
+        results = calculate_timeseries(
+            flat_surface,
+            weather_series,
+            location=location,
+            return_results=False,
+        )
+        assert results == []
+        assert captured["return_results"] is False
 
     def test_invalid_tile_workers_raises_from_api(self, flat_surface, location, monkeypatch):
         """calculate_timeseries surfaces invalid tile_workers when tiled path is used."""

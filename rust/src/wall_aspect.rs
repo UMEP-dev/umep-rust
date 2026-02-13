@@ -214,8 +214,8 @@ pub(crate) fn compute_wall_aspect_pure(
                 let mut wallscut_sum = 0.0f32;
                 for di in 0..filtersize {
                     for dj in 0..filtersize {
-                        wallscut_sum += walls_ref[[i - half_floor + di, j - half_floor + dj]]
-                            * fm[[di, dj]];
+                        wallscut_sum +=
+                            walls_ref[[i - half_floor + di, j - half_floor + dj]] * fm[[di, dj]];
                     }
                 }
 
@@ -227,8 +227,7 @@ pub(crate) fn compute_wall_aspect_pure(
                     let mut sum_side2 = 0.0f32;
                     for di in 0..filtersize {
                         for dj in 0..filtersize {
-                            let dsm_val =
-                                dsm_ref[[i - half_floor + di, j - half_floor + dj]];
+                            let dsm_val = dsm_ref[[i - half_floor + di, j - half_floor + dj]];
                             let bf_val = bf[[di, dj]];
                             if bf_val == 1.0 {
                                 sum_side1 += dsm_val;

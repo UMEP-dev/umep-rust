@@ -116,21 +116,28 @@ pub struct GvfResult {
 pub(crate) struct GvfResultPure {
     pub gvf_lup: Array2<f32>,
     pub gvfalb: Array2<f32>,
-    pub gvfalbnosh: Array2<f32>,
+    /// Purely geometric albedo term. `None` when read from `GvfGeometryCache`.
+    pub gvfalbnosh: Option<Array2<f32>>,
     pub gvf_lup_e: Array2<f32>,
     pub gvfalb_e: Array2<f32>,
-    pub gvfalbnosh_e: Array2<f32>,
+    /// Purely geometric albedo term. `None` when read from `GvfGeometryCache`.
+    pub gvfalbnosh_e: Option<Array2<f32>>,
     pub gvf_lup_s: Array2<f32>,
     pub gvfalb_s: Array2<f32>,
-    pub gvfalbnosh_s: Array2<f32>,
+    /// Purely geometric albedo term. `None` when read from `GvfGeometryCache`.
+    pub gvfalbnosh_s: Option<Array2<f32>>,
     pub gvf_lup_w: Array2<f32>,
     pub gvfalb_w: Array2<f32>,
-    pub gvfalbnosh_w: Array2<f32>,
+    /// Purely geometric albedo term. `None` when read from `GvfGeometryCache`.
+    pub gvfalbnosh_w: Option<Array2<f32>>,
     pub gvf_lup_n: Array2<f32>,
     pub gvfalb_n: Array2<f32>,
-    pub gvfalbnosh_n: Array2<f32>,
-    pub gvf_sum: Array2<f32>,
-    pub gvf_norm: Array2<f32>,
+    /// Purely geometric albedo term. `None` when read from `GvfGeometryCache`.
+    pub gvfalbnosh_n: Option<Array2<f32>>,
+    /// Purely geometric normalization term. `None` when read from `GvfGeometryCache`.
+    pub gvf_sum: Option<Array2<f32>>,
+    /// Purely geometric normalization term. `None` when read from `GvfGeometryCache`.
+    pub gvf_norm: Option<Array2<f32>>,
 }
 
 /// Pure-ndarray implementation of GVF calculation.
@@ -322,21 +329,21 @@ pub(crate) fn gvf_calc_pure(
     GvfResultPure {
         gvf_lup,
         gvfalb,
-        gvfalbnosh,
+        gvfalbnosh: Some(gvfalbnosh),
         gvf_lup_e,
         gvfalb_e,
-        gvfalbnosh_e,
+        gvfalbnosh_e: Some(gvfalbnosh_e),
         gvf_lup_s,
         gvfalb_s,
-        gvfalbnosh_s,
+        gvfalbnosh_s: Some(gvfalbnosh_s),
         gvf_lup_w,
         gvfalb_w,
-        gvfalbnosh_w,
+        gvfalbnosh_w: Some(gvfalbnosh_w),
         gvf_lup_n,
         gvfalb_n,
-        gvfalbnosh_n,
-        gvf_sum,
-        gvf_norm,
+        gvfalbnosh_n: Some(gvfalbnosh_n),
+        gvf_sum: Some(gvf_sum),
+        gvf_norm: Some(gvf_norm),
     }
 }
 
@@ -365,9 +372,44 @@ pub(crate) fn gvf_calc_with_cache(
 ) -> GvfResultPure {
     let (rows, cols) = (buildings.shape()[0], buildings.shape()[1]);
 
-    let azimuth_a: Array1<f32> = Array1::range(5.0, 359.0, 20.0);
-    let num_azimuths = azimuth_a.len() as f32;
+    let num_azimuths = cache.azimuths.len() as f32;
     let num_azimuths_half = num_azimuths / 2.0;
+    let ta_k = ta + 273.15;
+    let ta_k_pow4 = ta_k.powi(4);
+
+    let mut sunwall_mask = wallsun.to_owned();
+    sunwall_mask.mapv_inplace(|x| if x > 0. { 1. } else { x });
+
+    let lup = Zip::from(emis_grid)
+        .and(tg)
+        .and(shadow)
+        .map_collect(|&emis, &tg, &sh| {
+            sbc * emis * (tg * sh + ta_k).powi(4) - sbc * emis * ta_k_pow4
+        });
+    let albshadow = &alb_grid * &shadow;
+
+    let mut tg_for_lup_final = tg.to_owned();
+    if landcover {
+        if let Some(lc_grid) = lc_grid {
+            Zip::from(&mut tg_for_lup_final)
+                .and(lc_grid)
+                .for_each(|tg, &lc| {
+                    if lc == 3. {
+                        *tg = twater - ta;
+                    }
+                });
+        }
+    }
+    let lup_final = Zip::from(emis_grid)
+        .and(&tg_for_lup_final)
+        .and(shadow)
+        .map_collect(|&emis, &tg, &sh| {
+            sbc * emis * (tg * sh + ta_k).powi(4) - sbc * emis * ta_k_pow4
+        });
+    let buildings_inv = buildings.mapv(|x| 1.0 - x);
+    let lup_base = &lup_final * &buildings_inv;
+    let alb_base = &alb_grid * &buildings_inv * &shadow;
+    let lwall = sbc * ewall * (tgwall + ta_k).powi(4) - sbc * ewall * ta_k_pow4;
 
     let first = cache.first;
     let second = cache.second;
@@ -375,7 +417,6 @@ pub(crate) fn gvf_calc_with_cache(
     struct ThermalAccum {
         lup: Array2<f32>,
         alb: Array2<f32>,
-        sum: Array2<f32>,
         lup_e: Array2<f32>,
         alb_e: Array2<f32>,
         lup_s: Array2<f32>,
@@ -388,7 +429,6 @@ pub(crate) fn gvf_calc_with_cache(
     let init_accum = || ThermalAccum {
         lup: Array2::zeros((rows, cols)),
         alb: Array2::zeros((rows, cols)),
-        sum: Array2::zeros((rows, cols)),
         lup_e: Array2::zeros((rows, cols)),
         alb_e: Array2::zeros((rows, cols)),
         lup_s: Array2::zeros((rows, cols)),
@@ -399,36 +439,24 @@ pub(crate) fn gvf_calc_with_cache(
         alb_n: Array2::zeros((rows, cols)),
     };
 
-    let az_indices: Vec<usize> = (0..azimuth_a.len()).collect();
-    let accum = az_indices
+    let accum = cache
+        .azimuths
         .par_iter()
-        .fold(init_accum, |mut a, &idx| {
-            let azimuth = azimuth_a[idx];
-            let geom = &cache.azimuths[idx];
-
-            let (gvf_lup_i, gvfalb_i, gvf2_i) = crate::sun::sun_on_surface_cached(
+        .fold(init_accum, |mut a, geom| {
+            let (gvf_lup_i, gvfalb_i) = crate::sun::sun_on_surface_cached(
                 geom,
-                buildings,
-                shadow,
-                wallsun,
-                tg,
-                tgwall,
-                ta,
-                emis_grid,
-                ewall,
-                alb_grid,
-                sbc,
+                sunwall_mask.view(),
+                lup.view(),
+                albshadow.view(),
+                lwall,
                 albedo_b,
-                twater,
-                lc_grid,
-                landcover,
                 first,
                 second,
             );
 
             a.lup.zip_mut_with(&gvf_lup_i, |x, &y| *x += y);
             a.alb.zip_mut_with(&gvfalb_i, |x, &y| *x += y);
-            a.sum.zip_mut_with(&gvf2_i, |x, &y| *x += y);
+            let azimuth = geom.azimuth_deg;
             if (0.0..180.0).contains(&azimuth) {
                 a.lup_e.zip_mut_with(&gvf_lup_i, |x, &y| *x += y);
                 a.alb_e.zip_mut_with(&gvfalb_i, |x, &y| *x += y);
@@ -450,7 +478,6 @@ pub(crate) fn gvf_calc_with_cache(
         .reduce(init_accum, |mut a, b| {
             a.lup.zip_mut_with(&b.lup, |x, &y| *x += y);
             a.alb.zip_mut_with(&b.alb, |x, &y| *x += y);
-            a.sum.zip_mut_with(&b.sum, |x, &y| *x += y);
             a.lup_e.zip_mut_with(&b.lup_e, |x, &y| *x += y);
             a.alb_e.zip_mut_with(&b.alb_e, |x, &y| *x += y);
             a.lup_s.zip_mut_with(&b.lup_s, |x, &y| *x += y);
@@ -462,46 +489,41 @@ pub(crate) fn gvf_calc_with_cache(
             a
         });
 
-    let ta_kelvin_pow4 = (ta + 273.15).powi(4);
-    let emis_add = emis_grid.mapv(|e| e * sbc * ta_kelvin_pow4);
     let scale_all = 1.0 / num_azimuths;
     let scale_half = 1.0 / num_azimuths_half;
 
-    let gvf_lup = accum.lup.mapv(|v| v * scale_all) + &emis_add;
-    let gvfalb = accum.alb.mapv(|v| v * scale_all);
-    let gvf_lup_e = accum.lup_e.mapv(|v| v * scale_half) + &emis_add;
-    let gvfalb_e = accum.alb_e.mapv(|v| v * scale_half);
-    let gvf_lup_s = accum.lup_s.mapv(|v| v * scale_half) + &emis_add;
-    let gvfalb_s = accum.alb_s.mapv(|v| v * scale_half);
-    let gvf_lup_w = accum.lup_w.mapv(|v| v * scale_half) + &emis_add;
-    let gvfalb_w = accum.alb_w.mapv(|v| v * scale_half);
-    let gvf_lup_n = accum.lup_n.mapv(|v| v * scale_half) + &emis_add;
-    let gvfalb_n = accum.alb_n.mapv(|v| v * scale_half);
+    let gvf_lup = accum.lup.mapv(|v| v * scale_all) + &lup_base;
+    let gvfalb = accum.alb.mapv(|v| v * scale_all) + &alb_base;
+    let gvf_lup_e = accum.lup_e.mapv(|v| v * scale_half) + &lup_base;
+    let gvfalb_e = accum.alb_e.mapv(|v| v * scale_half) + &alb_base;
+    let gvf_lup_s = accum.lup_s.mapv(|v| v * scale_half) + &lup_base;
+    let gvfalb_s = accum.alb_s.mapv(|v| v * scale_half) + &alb_base;
+    let gvf_lup_w = accum.lup_w.mapv(|v| v * scale_half) + &lup_base;
+    let gvfalb_w = accum.alb_w.mapv(|v| v * scale_half) + &alb_base;
+    let gvf_lup_n = accum.lup_n.mapv(|v| v * scale_half) + &lup_base;
+    let gvfalb_n = accum.alb_n.mapv(|v| v * scale_half) + &alb_base;
 
-    let gvf_sum = accum.sum;
-    let mut gvf_norm = gvf_sum.mapv(|v| v * scale_all);
-    Zip::from(&mut gvf_norm)
-        .and(&buildings)
-        .for_each(|norm, &b| { if b == 0.0 { *norm = 1.0; } });
-
+    // `gvfalbnosh*` and GVF normalization terms are purely geometric and already
+    // cached in `GvfGeometryCache`. Return `None` for those fields so accidental
+    // access is explicit instead of silently carrying invalid sentinel arrays.
     GvfResultPure {
         gvf_lup,
         gvfalb,
-        gvfalbnosh: cache.cached_albnosh.clone(),
+        gvfalbnosh: None,
         gvf_lup_e,
         gvfalb_e,
-        gvfalbnosh_e: cache.cached_albnosh_e.clone(),
+        gvfalbnosh_e: None,
         gvf_lup_s,
         gvfalb_s,
-        gvfalbnosh_s: cache.cached_albnosh_s.clone(),
+        gvfalbnosh_s: None,
         gvf_lup_w,
         gvfalb_w,
-        gvfalbnosh_w: cache.cached_albnosh_w.clone(),
+        gvfalbnosh_w: None,
         gvf_lup_n,
         gvfalb_n,
-        gvfalbnosh_n: cache.cached_albnosh_n.clone(),
-        gvf_sum,
-        gvf_norm,
+        gvfalbnosh_n: None,
+        gvf_sum: None,
+        gvf_norm: None,
     }
 }
 
@@ -566,21 +588,49 @@ pub fn gvf_calc(
         GvfResult {
             gvf_lup: result.gvf_lup.into_pyarray(py).unbind(),
             gvfalb: result.gvfalb.into_pyarray(py).unbind(),
-            gvfalbnosh: result.gvfalbnosh.into_pyarray(py).unbind(),
+            gvfalbnosh: result
+                .gvfalbnosh
+                .expect("gvfalbnosh is required for gvf_calc()")
+                .into_pyarray(py)
+                .unbind(),
             gvf_lup_e: result.gvf_lup_e.into_pyarray(py).unbind(),
             gvfalb_e: result.gvfalb_e.into_pyarray(py).unbind(),
-            gvfalbnosh_e: result.gvfalbnosh_e.into_pyarray(py).unbind(),
+            gvfalbnosh_e: result
+                .gvfalbnosh_e
+                .expect("gvfalbnosh_e is required for gvf_calc()")
+                .into_pyarray(py)
+                .unbind(),
             gvf_lup_s: result.gvf_lup_s.into_pyarray(py).unbind(),
             gvfalb_s: result.gvfalb_s.into_pyarray(py).unbind(),
-            gvfalbnosh_s: result.gvfalbnosh_s.into_pyarray(py).unbind(),
+            gvfalbnosh_s: result
+                .gvfalbnosh_s
+                .expect("gvfalbnosh_s is required for gvf_calc()")
+                .into_pyarray(py)
+                .unbind(),
             gvf_lup_w: result.gvf_lup_w.into_pyarray(py).unbind(),
             gvfalb_w: result.gvfalb_w.into_pyarray(py).unbind(),
-            gvfalbnosh_w: result.gvfalbnosh_w.into_pyarray(py).unbind(),
+            gvfalbnosh_w: result
+                .gvfalbnosh_w
+                .expect("gvfalbnosh_w is required for gvf_calc()")
+                .into_pyarray(py)
+                .unbind(),
             gvf_lup_n: result.gvf_lup_n.into_pyarray(py).unbind(),
             gvfalb_n: result.gvfalb_n.into_pyarray(py).unbind(),
-            gvfalbnosh_n: result.gvfalbnosh_n.into_pyarray(py).unbind(),
-            gvf_sum: result.gvf_sum.into_pyarray(py).unbind(),
-            gvf_norm: result.gvf_norm.into_pyarray(py).unbind(),
+            gvfalbnosh_n: result
+                .gvfalbnosh_n
+                .expect("gvfalbnosh_n is required for gvf_calc()")
+                .into_pyarray(py)
+                .unbind(),
+            gvf_sum: result
+                .gvf_sum
+                .expect("gvf_sum is required for gvf_calc()")
+                .into_pyarray(py)
+                .unbind(),
+            gvf_norm: result
+                .gvf_norm
+                .expect("gvf_norm is required for gvf_calc()")
+                .into_pyarray(py)
+                .unbind(),
         },
     )
 }

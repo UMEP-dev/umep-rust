@@ -24,6 +24,13 @@ from .components.tmrt import compute_tmrt
 from .constants import KELVIN_OFFSET, SBC
 from .rustalgos import ground as ground_rust
 
+_OUT_SHADOW = 1 << 0
+_OUT_KDOWN = 1 << 1
+_OUT_KUP = 1 << 2
+_OUT_LDOWN = 1 << 3
+_OUT_LUP = 1 << 4
+_OUT_ALL = _OUT_SHADOW | _OUT_KDOWN | _OUT_KUP | _OUT_LDOWN | _OUT_LUP
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
@@ -36,6 +43,7 @@ def _nighttime_result(
     weather: Weather,
     state: ThermalState | None,
     materials: SimpleNamespace | None,
+    copy_state: bool = True,
 ) -> SolweigResult:
     """
     Compute simplified nighttime result when sun is below horizon.
@@ -51,6 +59,7 @@ def _nighttime_result(
         weather: Weather data (for air temperature)
         state: Optional thermal state (resets for morning)
         materials: Material properties (for emissivity)
+        copy_state: If True, copy state before mutation. If False, mutate in-place.
 
     Returns:
         SolweigResult with nighttime values
@@ -79,7 +88,7 @@ def _nighttime_result(
     # Update thermal state for nighttime (copy first, then mutate)
     output_state = None
     if state is not None:
-        output_state = state.copy()
+        output_state = state.copy() if copy_state else state
         output_state.firstdaytime = 1.0  # Reset for morning
         output_state.timeadd = 0.0  # Reset time accumulator
 
@@ -414,6 +423,8 @@ def calculate_core_fused(
     wall_material: str | None = None,
     use_anisotropic_sky: bool = False,
     max_shadow_distance_m: float | None = None,
+    return_state_copy: bool = True,
+    requested_outputs: set[str] | None = None,
 ) -> SolweigResult:
     """
     Fused SOLWEIG calculation — single Rust FFI call per daytime timestep.
@@ -444,7 +455,7 @@ def calculate_core_fused(
 
     # Early exit for nighttime
     if weather.sun_altitude <= 0:
-        return _nighttime_result(surface, weather, state, materials)
+        return _nighttime_result(surface, weather, state, materials, copy_state=return_state_copy)
 
     # === Precompute (stays in Python) ===
 
@@ -454,12 +465,63 @@ def calculate_core_fused(
     # Valid pixel mask (True where all layers have finite data)
     # Computed once by SurfaceData.prepare(), or derived from DSM on-the-fly
     valid_mask = surface.valid_mask
-    if valid_mask is None:
-        valid_mask = np.isfinite(surface.dsm)
-    valid_mask_u8 = np.ascontiguousarray(valid_mask, dtype=np.uint8)
+    valid_source = valid_mask if valid_mask is not None else surface.dsm
+    valid_mask_key = (id(valid_source), valid_source.shape)
+    valid_mask_cache = getattr(surface, "_valid_mask_u8_cache", None)
+    if valid_mask_cache is not None and valid_mask_cache[0] == valid_mask_key:
+        valid_mask_u8 = valid_mask_cache[1]
+    else:
+        if valid_mask is None:
+            valid_mask = np.isfinite(surface.dsm)
+        valid_mask_u8 = np.ascontiguousarray(valid_mask, dtype=np.uint8)
+        surface._valid_mask_u8_cache = valid_mask_key, valid_mask_u8
+
+    # Valid-bounds crop (ported from old main implementation):
+    # trim heavy per-timestep compute to the minimal bounding rectangle of valid pixels.
+    bbox_cache = getattr(surface, "_valid_bbox_cache", None)
+    if bbox_cache is not None and bbox_cache[0] == valid_mask_key:
+        r0, r1, c0, c1 = bbox_cache[1]
+    else:
+        rows_any = np.any(valid_mask_u8 != 0, axis=1)
+        cols_any = np.any(valid_mask_u8 != 0, axis=0)
+        if not rows_any.any() or not cols_any.any():
+            r0, r1, c0, c1 = 0, rows, 0, cols
+        else:
+            r_idx = np.flatnonzero(rows_any)
+            c_idx = np.flatnonzero(cols_any)
+            r0, r1 = int(r_idx[0]), int(r_idx[-1]) + 1
+            c0, c1 = int(c_idx[0]), int(c_idx[-1]) + 1
+        surface._valid_bbox_cache = valid_mask_key, (r0, r1, c0, c1)
+
+    full_area = rows * cols
+    crop_area = (r1 - r0) * (c1 - c0)
+    use_crop = (r0, r1, c0, c1) != (0, rows, 0, cols) and crop_area < int(full_area * 0.98)
+    crop_slice = (slice(r0, r1), slice(c0, c1))
+
+    # Select which non-Tmrt outputs to materialize from Rust.
+    if requested_outputs is None:
+        output_mask = _OUT_ALL
+    else:
+        output_mask = 0
+        if "shadow" in requested_outputs:
+            output_mask |= _OUT_SHADOW
+        if "kdown" in requested_outputs:
+            output_mask |= _OUT_KDOWN
+        if "kup" in requested_outputs:
+            output_mask |= _OUT_KUP
+        if "ldown" in requested_outputs:
+            output_mask |= _OUT_LDOWN
+        if "lup" in requested_outputs:
+            output_mask |= _OUT_LUP
 
     # Land cover properties
-    alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid = surface.get_land_cover_properties(materials)
+    lc_props_key = (id(surface.land_cover), id(surface.albedo), id(surface.emissivity), id(materials))
+    lc_props_cache = getattr(surface, "_land_cover_props_cache", None)
+    if lc_props_cache is not None and lc_props_cache[0] == lc_props_key:
+        alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid = lc_props_cache[1]
+    else:
+        alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid = surface.get_land_cover_properties(materials)
+        surface._land_cover_props_cache = lc_props_key, (alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid)
 
     # Vegetation inputs
     use_veg = surface.cdsm is not None
@@ -603,29 +665,77 @@ def calculate_core_fused(
     )
 
     # Buildings mask for GVF (computed from DSM/land_cover/walls)
-    buildings = detect_building_mask(
-        surface.dsm,
-        surface.land_cover,
-        wall_ht,
-        pixel_size,
-    )
-    lc_grid = surface.land_cover.astype(np.float32) if surface.land_cover is not None else None
+    buildings_key = (id(surface.dsm), id(surface.land_cover), id(wall_ht), float(pixel_size))
+    buildings_cache = getattr(surface, "_buildings_mask_cache", None)
+    if buildings_cache is not None and buildings_cache[0] == buildings_key:
+        buildings = buildings_cache[1]
+    else:
+        buildings = detect_building_mask(
+            surface.dsm,
+            surface.land_cover,
+            wall_ht,
+            pixel_size,
+        )
+        surface._buildings_mask_cache = buildings_key, buildings
 
-    # GVF geometry cache: precompute on first daytime call, reuse on subsequent
-    gvf_cache = getattr(surface, "_gvf_geometry_cache", None)
-    if gvf_cache is None and has_walls:
+    if surface.land_cover is not None:
+        lc_grid_key = id(surface.land_cover)
+        lc_grid_cache = getattr(surface, "_lc_grid_f32_cache", None)
+        if lc_grid_cache is not None and lc_grid_cache[0] == lc_grid_key:
+            lc_grid = lc_grid_cache[1]
+        else:
+            lc_grid = surface.land_cover.astype(np.float32)
+            surface._lc_grid_f32_cache = lc_grid_key, lc_grid
+    else:
+        lc_grid = None
+
+    # GVF geometry cache: precompute on first daytime call, reuse on subsequent.
+    # Keep separate caches for full-grid and cropped-grid execution.
+    gvf_cache = None
+    if has_walls:
         assert wall_asp is not None  # guaranteed by has_walls
         assert wall_ht is not None
-        gvf_cache = pipeline.precompute_gvf_cache(
-            as_float32(buildings),
-            as_float32(wall_asp),
-            as_float32(wall_ht),
-            as_float32(alb_grid),
-            float(pixel_size),
-            float(human.height),
-            float(albedo_wall),
-        )
-        surface._gvf_geometry_cache = gvf_cache
+        if use_crop:
+            gvf_crop_key = (
+                id(buildings),
+                id(wall_asp),
+                id(wall_ht),
+                id(alb_grid),
+                r0,
+                r1,
+                c0,
+                c1,
+                float(pixel_size),
+                float(human.height),
+                float(albedo_wall),
+            )
+            gvf_crop_cache = getattr(surface, "_gvf_geometry_cache_crop", None)
+            if gvf_crop_cache is not None and gvf_crop_cache[0] == gvf_crop_key:
+                gvf_cache = gvf_crop_cache[1]
+            else:
+                gvf_cache = pipeline.precompute_gvf_cache(
+                    as_float32(buildings[crop_slice]),
+                    as_float32(wall_asp[crop_slice]),
+                    as_float32(wall_ht[crop_slice]),
+                    as_float32(alb_grid[crop_slice]),
+                    float(pixel_size),
+                    float(human.height),
+                    float(albedo_wall),
+                )
+                surface._gvf_geometry_cache_crop = gvf_crop_key, gvf_cache
+        else:
+            gvf_cache = getattr(surface, "_gvf_geometry_cache", None)
+            if gvf_cache is None:
+                gvf_cache = pipeline.precompute_gvf_cache(
+                    as_float32(buildings),
+                    as_float32(wall_asp),
+                    as_float32(wall_ht),
+                    as_float32(alb_grid),
+                    float(pixel_size),
+                    float(human.height),
+                    float(albedo_wall),
+                )
+                surface._gvf_geometry_cache = gvf_cache
 
     # Anisotropic sky: Perez luminance, steradians, ASVF, and esky are now
     # computed inside the Rust pipeline (no Python round-trip). We only need
@@ -643,15 +753,78 @@ def calculate_core_fused(
 
         if shadow_mats is not None:
             ws.patch_option = shadow_mats.patch_option
-            aniso_shmat = np.ascontiguousarray(shadow_mats._shmat_u8)
-            aniso_vegshmat = np.ascontiguousarray(shadow_mats._vegshmat_u8)
-            aniso_vbshmat = np.ascontiguousarray(shadow_mats._vbshmat_u8)
+            if use_crop:
+                aniso_crop_key = (
+                    id(shadow_mats._shmat_u8),
+                    id(shadow_mats._vegshmat_u8),
+                    id(shadow_mats._vbshmat_u8),
+                    r0,
+                    r1,
+                    c0,
+                    c1,
+                )
+                aniso_crop_cache = getattr(surface, "_aniso_shadow_crop_cache", None)
+                if aniso_crop_cache is not None and aniso_crop_cache[0] == aniso_crop_key:
+                    aniso_shmat, aniso_vegshmat, aniso_vbshmat = aniso_crop_cache[1]
+                else:
+                    aniso_shmat = np.ascontiguousarray(shadow_mats._shmat_u8[crop_slice])
+                    aniso_vegshmat = np.ascontiguousarray(shadow_mats._vegshmat_u8[crop_slice])
+                    aniso_vbshmat = np.ascontiguousarray(shadow_mats._vbshmat_u8[crop_slice])
+                    surface._aniso_shadow_crop_cache = aniso_crop_key, (aniso_shmat, aniso_vegshmat, aniso_vbshmat)
+            else:
+                # Keep original arrays to preserve stable pointers across timesteps.
+                aniso_shmat = shadow_mats._shmat_u8
+                aniso_vegshmat = shadow_mats._vegshmat_u8
+                aniso_vbshmat = shadow_mats._vbshmat_u8
 
     # Thermal state (create initial if None)
     if state is None:
         state = ThermalState.initial((rows, cols))
 
     firstdaytime_int = int(state.firstdaytime)
+
+    def _sel(arr):
+        if arr is None:
+            return None
+        return arr[crop_slice] if use_crop else arr
+
+    dsm_call = _sel(surface.dsm)
+    cdsm_call = _sel(cdsm)
+    tdsm_call = _sel(tdsm)
+    bush_call = _sel(bush)
+    wall_ht_call = _sel(wall_ht)
+    wall_asp_call = _sel(wall_asp)
+    svf_call = _sel(svf_bundle.svf)
+    svf_n_call = _sel(svf_bundle.svf_directional.north)
+    svf_e_call = _sel(svf_bundle.svf_directional.east)
+    svf_s_call = _sel(svf_bundle.svf_directional.south)
+    svf_w_call = _sel(svf_bundle.svf_directional.west)
+    svf_veg_call = _sel(svf_bundle.svf_veg)
+    svf_veg_n_call = _sel(svf_bundle.svf_veg_directional.north)
+    svf_veg_e_call = _sel(svf_bundle.svf_veg_directional.east)
+    svf_veg_s_call = _sel(svf_bundle.svf_veg_directional.south)
+    svf_veg_w_call = _sel(svf_bundle.svf_veg_directional.west)
+    svf_aveg_call = _sel(svf_bundle.svf_aveg)
+    svf_aveg_n_call = _sel(svf_bundle.svf_aveg_directional.north)
+    svf_aveg_e_call = _sel(svf_bundle.svf_aveg_directional.east)
+    svf_aveg_s_call = _sel(svf_bundle.svf_aveg_directional.south)
+    svf_aveg_w_call = _sel(svf_bundle.svf_aveg_directional.west)
+    svfbuveg_call = _sel(svf_bundle.svfbuveg)
+    svfalfa_call = _sel(svf_bundle.svfalfa)
+    alb_call = _sel(alb_grid)
+    emis_call = _sel(emis_grid)
+    tgk_call = _sel(tgk_grid)
+    tstart_call = _sel(tstart_grid)
+    tmaxlst_call = _sel(tmaxlst_grid)
+    buildings_call = _sel(buildings)
+    lc_grid_call = _sel(lc_grid)
+    valid_mask_call = _sel(valid_mask_u8)
+    tgmap1_call = _sel(state.tgmap1)
+    tgmap1_e_call = _sel(state.tgmap1_e)
+    tgmap1_s_call = _sel(state.tgmap1_s)
+    tgmap1_w_call = _sel(state.tgmap1_w)
+    tgmap1_n_call = _sel(state.tgmap1_n)
+    tgout1_call = _sel(state.tgout1)
 
     # === Call fused Rust pipeline ===
 
@@ -663,39 +836,39 @@ def calculate_core_fused(
         # GVF geometry cache (None on first call triggers full GVF, then cached)
         gvf_cache,
         # Surface arrays
-        as_float32(surface.dsm),
-        as_float32(cdsm) if cdsm is not None else None,
-        as_float32(tdsm) if tdsm is not None else None,
-        as_float32(bush) if bush is not None else None,
-        as_float32(wall_ht) if wall_ht is not None else None,
-        as_float32(wall_asp) if wall_asp is not None else None,
+        as_float32(dsm_call),
+        as_float32(cdsm_call) if cdsm_call is not None else None,
+        as_float32(tdsm_call) if tdsm_call is not None else None,
+        as_float32(bush_call) if bush_call is not None else None,
+        as_float32(wall_ht_call) if wall_ht_call is not None else None,
+        as_float32(wall_asp_call) if wall_asp_call is not None else None,
         # SVF arrays
-        as_float32(svf_bundle.svf),
-        as_float32(svf_bundle.svf_directional.north),
-        as_float32(svf_bundle.svf_directional.east),
-        as_float32(svf_bundle.svf_directional.south),
-        as_float32(svf_bundle.svf_directional.west),
-        as_float32(svf_bundle.svf_veg),
-        as_float32(svf_bundle.svf_veg_directional.north),
-        as_float32(svf_bundle.svf_veg_directional.east),
-        as_float32(svf_bundle.svf_veg_directional.south),
-        as_float32(svf_bundle.svf_veg_directional.west),
-        as_float32(svf_bundle.svf_aveg),
-        as_float32(svf_bundle.svf_aveg_directional.north),
-        as_float32(svf_bundle.svf_aveg_directional.east),
-        as_float32(svf_bundle.svf_aveg_directional.south),
-        as_float32(svf_bundle.svf_aveg_directional.west),
-        as_float32(svf_bundle.svfbuveg),
-        as_float32(svf_bundle.svfalfa),
+        as_float32(svf_call),
+        as_float32(svf_n_call),
+        as_float32(svf_e_call),
+        as_float32(svf_s_call),
+        as_float32(svf_w_call),
+        as_float32(svf_veg_call),
+        as_float32(svf_veg_n_call),
+        as_float32(svf_veg_e_call),
+        as_float32(svf_veg_s_call),
+        as_float32(svf_veg_w_call),
+        as_float32(svf_aveg_call),
+        as_float32(svf_aveg_n_call),
+        as_float32(svf_aveg_e_call),
+        as_float32(svf_aveg_s_call),
+        as_float32(svf_aveg_w_call),
+        as_float32(svfbuveg_call),
+        as_float32(svfalfa_call),
         # Land cover property grids
-        as_float32(alb_grid),
-        as_float32(emis_grid),
-        as_float32(tgk_grid),
-        as_float32(tstart_grid),
-        as_float32(tmaxlst_grid),
+        as_float32(alb_call),
+        as_float32(emis_call),
+        as_float32(tgk_call),
+        as_float32(tstart_call),
+        as_float32(tmaxlst_call),
         # Buildings mask + land cover
-        as_float32(buildings),
-        as_float32(lc_grid) if lc_grid is not None else None,
+        as_float32(buildings_call),
+        as_float32(lc_grid_call) if lc_grid_call is not None else None,
         # Anisotropic sky inputs (None for isotropic; Perez computed in Rust)
         aniso_shmat,
         aniso_vegshmat,
@@ -704,25 +877,34 @@ def calculate_core_fused(
         firstdaytime_int,
         float(state.timeadd),
         float(state.timestep_dec),
-        as_float32(state.tgmap1),
-        as_float32(state.tgmap1_e),
-        as_float32(state.tgmap1_s),
-        as_float32(state.tgmap1_w),
-        as_float32(state.tgmap1_n),
-        as_float32(state.tgout1),
+        as_float32(tgmap1_call),
+        as_float32(tgmap1_e_call),
+        as_float32(tgmap1_s_call),
+        as_float32(tgmap1_w_call),
+        as_float32(tgmap1_n_call),
+        as_float32(tgout1_call),
         # Valid pixel mask for early NaN exit
-        valid_mask_u8,
+        valid_mask_call,
+        output_mask,
     )
 
     # === Unpack result and update thermal state ===
 
     state.timeadd = result.timeadd
-    state.tgmap1 = np.asarray(result.tgmap1)
-    state.tgmap1_e = np.asarray(result.tgmap1_e)
-    state.tgmap1_s = np.asarray(result.tgmap1_s)
-    state.tgmap1_w = np.asarray(result.tgmap1_w)
-    state.tgmap1_n = np.asarray(result.tgmap1_n)
-    state.tgout1 = np.asarray(result.tgout1)
+    if use_crop:
+        state.tgmap1[crop_slice] = np.asarray(result.tgmap1)
+        state.tgmap1_e[crop_slice] = np.asarray(result.tgmap1_e)
+        state.tgmap1_s[crop_slice] = np.asarray(result.tgmap1_s)
+        state.tgmap1_w[crop_slice] = np.asarray(result.tgmap1_w)
+        state.tgmap1_n[crop_slice] = np.asarray(result.tgmap1_n)
+        state.tgout1[crop_slice] = np.asarray(result.tgout1)
+    else:
+        state.tgmap1 = np.asarray(result.tgmap1)
+        state.tgmap1_e = np.asarray(result.tgmap1_e)
+        state.tgmap1_s = np.asarray(result.tgmap1_s)
+        state.tgmap1_w = np.asarray(result.tgmap1_w)
+        state.tgmap1_n = np.asarray(result.tgmap1_n)
+        state.tgout1 = np.asarray(result.tgout1)
 
     if weather.is_daytime:
         state.firstdaytime = 0.0
@@ -730,15 +912,39 @@ def calculate_core_fused(
         state.firstdaytime = 1.0
         state.timeadd = 0.0
 
-    output_state = state.copy()
+    output_state = state.copy() if return_state_copy else state
 
+    tmrt = np.asarray(result.tmrt)
+    shadow = np.asarray(result.shadow) if result.shadow is not None else None
+    kdown = np.asarray(result.kdown) if result.kdown is not None else None
+    kup = np.asarray(result.kup) if result.kup is not None else None
+    ldown = np.asarray(result.ldown) if result.ldown is not None else None
+    lup = np.asarray(result.lup) if result.lup is not None else None
+
+    if use_crop:
+
+        def _uncrop(arr: np.ndarray | None) -> np.ndarray | None:
+            if arr is None:
+                return None
+            full = np.full((rows, cols), np.nan, dtype=np.float32)
+            full[crop_slice] = arr
+            return full
+
+        tmrt = _uncrop(tmrt)
+        shadow = _uncrop(shadow)
+        kdown = _uncrop(kdown)
+        kup = _uncrop(kup)
+        ldown = _uncrop(ldown)
+        lup = _uncrop(lup)
+
+    assert tmrt is not None  # tmrt is always computed
     return SolweigResult(
-        tmrt=np.asarray(result.tmrt),
-        shadow=np.asarray(result.shadow),
-        kdown=np.asarray(result.kdown),
-        kup=np.asarray(result.kup),
-        ldown=np.asarray(result.ldown),
-        lup=np.asarray(result.lup),
+        tmrt=tmrt,
+        shadow=shadow,
+        kdown=kdown,
+        kup=kup,
+        ldown=ldown,
+        lup=lup,
         utci=None,
         pet=None,
         state=output_state,

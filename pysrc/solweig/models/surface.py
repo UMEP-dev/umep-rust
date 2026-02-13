@@ -14,7 +14,7 @@ from affine import Affine as AffineClass
 from .. import io
 from .. import walls as walls_module
 from ..buffers import BufferPool
-from ..cache import CacheMetadata, clear_stale_cache, validate_cache
+from ..cache import CacheMetadata, clear_stale_cache, pixel_size_tag, validate_cache
 from ..loaders import get_lc_properties_from_params
 from ..rustalgos import skyview
 from ..solweig_logging import get_logger
@@ -205,6 +205,14 @@ class SurfaceData:
     _buffer_pool: BufferPool | None = field(default=None, init=False, repr=False)  # Reusable array pool
     _gvf_geometry_cache: object = field(default=None, init=False, repr=False)  # Rust GVF geometry cache
     _valid_mask: NDArray[np.bool_] | None = field(default=None, init=False, repr=False)  # Combined valid mask
+    # Per-timestep computation caches (set by computation.calculate_core_fused)
+    _valid_mask_u8_cache: object = field(default=None, init=False, repr=False)
+    _valid_bbox_cache: object = field(default=None, init=False, repr=False)
+    _land_cover_props_cache: object = field(default=None, init=False, repr=False)
+    _buildings_mask_cache: object = field(default=None, init=False, repr=False)
+    _lc_grid_f32_cache: object = field(default=None, init=False, repr=False)
+    _gvf_geometry_cache_crop: object = field(default=None, init=False, repr=False)
+    _aniso_shadow_crop_cache: object = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         # Ensure dsm is float32 for memory efficiency
@@ -333,7 +341,9 @@ class SurfaceData:
 
         # Load preprocessing data (walls, SVF)
         working_path = Path(working_dir)
-        preprocess_data = cls._load_preprocessing_data(wall_height, wall_aspect, svf_dir, working_path, force_recompute)
+        preprocess_data = cls._load_preprocessing_data(
+            wall_height, wall_aspect, svf_dir, working_path, force_recompute, pixel_size=pixel_size
+        )
 
         # Compute extent, validate bbox, and resample all rasters
         aligned_rasters = cls._align_rasters(
@@ -362,24 +372,32 @@ class SurfaceData:
             cdsm_arr = aligned_rasters.get("cdsm_arr")
             svf_source = preprocess_data.get("svf_source", "none")
 
+            # Resolve the SVF cache directory (pixel-size-keyed or legacy)
+            svf_base = working_path / "svf" / pixel_size_tag(pixel_size)
+            if not svf_base.exists():
+                svf_base = working_path / "svf"  # legacy fallback
+
             cache_valid = False
             if svf_source == "memmap":
                 # Memmap has cache_meta.json — use hash-based validation
-                svf_cache_dir = working_path / "svf" / "memmap"
-                cache_valid = validate_cache(svf_cache_dir, dsm_arr, pixel_size, cdsm_arr)
+                cache_valid = validate_cache(svf_base / "memmap", dsm_arr, pixel_size, cdsm_arr)
             elif svf_source == "zip":
-                # Zip has no metadata — validate by shape match only
-                svf_shape = preprocess_data["svf_data"].svf.shape
-                cache_valid = svf_shape == dsm_arr.shape
+                # Try metadata first, fall back to shape check
+                zip_meta_dir = svf_base
+                cache_valid = validate_cache(zip_meta_dir, dsm_arr, pixel_size, cdsm_arr)
                 if not cache_valid:
-                    logger.info(f"  SVF shape {svf_shape} doesn't match DSM {dsm_arr.shape}")
+                    # Legacy zip without metadata — validate by shape only
+                    svf_shape = preprocess_data["svf_data"].svf.shape
+                    cache_valid = svf_shape == dsm_arr.shape
+                    if not cache_valid:
+                        logger.info(f"  SVF shape {svf_shape} doesn't match DSM {dsm_arr.shape}")
 
             if not cache_valid:
                 logger.info("  → Cache stale, clearing and recomputing SVF...")
-                clear_stale_cache(working_path / "svf" / "memmap")
+                clear_stale_cache(svf_base / "memmap")
                 # Also remove zip/npz so stale data doesn't persist
                 for stale_file in ("svfs.zip", "shadowmats.npz"):
-                    stale_path = working_path / "svf" / stale_file
+                    stale_path = svf_base / stale_file
                     if stale_path.exists():
                         stale_path.unlink()
                 preprocess_data["svf_data"] = None
@@ -388,7 +406,7 @@ class SurfaceData:
 
         # Compute and cache walls if needed
         if preprocess_data["compute_walls"]:
-            cls._compute_and_cache_walls(surface_data, aligned_rasters, working_path)
+            cls._compute_and_cache_walls(surface_data, aligned_rasters, working_path, pixel_size=pixel_size)
 
         # Compute and cache SVF if needed
         if preprocess_data["compute_svf"]:
@@ -547,6 +565,7 @@ class SurfaceData:
         svf_dir: str | Path | None,
         working_path: Path,
         force_recompute: bool,
+        pixel_size: float = 1.0,
     ) -> dict:
         """
         Load preprocessing data (walls, SVF) with auto-discovery.
@@ -557,6 +576,7 @@ class SurfaceData:
             svf_dir: Directory containing SVF preprocessing files (optional).
             working_path: Working directory for caching.
             force_recompute: If True, skip cache and recompute.
+            pixel_size: Pixel size in metres (used for pixel-size-keyed cache paths).
 
         Returns:
             Dictionary with keys: wall_height_arr, wall_height_transform, wall_aspect_arr,
@@ -566,6 +586,7 @@ class SurfaceData:
         from .precomputed import ShadowArrays, SvfArrays
 
         logger.info("Checking for preprocessing data...")
+        px_tag = pixel_size_tag(pixel_size)
 
         result = {
             "wall_height_arr": None,
@@ -597,9 +618,22 @@ class SurfaceData:
                 logger.info("  → force_recompute=True - will recompute walls from DSM and cache")
                 result["compute_walls"] = True
             else:
-                walls_cache_dir = working_path / "walls"
+                walls_cache_dir = working_path / "walls" / px_tag
                 wall_hts_path = walls_cache_dir / "wall_hts.tif"
                 wall_aspects_path = walls_cache_dir / "wall_aspects.tif"
+
+                # Legacy fallback: try flat working_dir/walls/ if keyed dir absent
+                if not wall_hts_path.exists():
+                    legacy_dir = working_path / "walls"
+                    legacy_hts = legacy_dir / "wall_hts.tif"
+                    legacy_asp = legacy_dir / "wall_aspects.tif"
+                    if legacy_hts.exists() and legacy_asp.exists():
+                        logger.info(
+                            f"  ⚠ Legacy wall cache at {legacy_dir} — future runs will use pixel-size-keyed path"
+                        )
+                        walls_cache_dir = legacy_dir
+                        wall_hts_path = legacy_hts
+                        wall_aspects_path = legacy_asp
 
                 if wall_hts_path.exists() and wall_aspects_path.exists():
                     # Files exist - load them
@@ -658,7 +692,17 @@ class SurfaceData:
                 logger.info("  → force_recompute=True - will recompute SVF and cache")
                 result["compute_svf"] = True
             else:
-                svf_cache_dir = working_path / "svf"
+                svf_cache_dir = working_path / "svf" / px_tag
+
+                # Legacy fallback: try flat working_dir/svf/ if keyed dir absent
+                if not svf_cache_dir.exists():
+                    legacy_svf_dir = working_path / "svf"
+                    if (legacy_svf_dir / "memmap" / "svf.npy").exists() or (legacy_svf_dir / "svfs.zip").exists():
+                        logger.info(
+                            f"  ⚠ Legacy SVF cache at {legacy_svf_dir} — future runs will use pixel-size-keyed path"
+                        )
+                        svf_cache_dir = legacy_svf_dir
+
                 shadow_npz_path = svf_cache_dir / "shadowmats.npz"
 
                 svf_data, svf_source = load_svf_from_dir(svf_cache_dir)
@@ -932,6 +976,8 @@ class SurfaceData:
         surface_data: SurfaceData,
         aligned_rasters: dict,
         working_path: Path,
+        *,
+        pixel_size: float = 1.0,
     ) -> None:
         """
         Compute wall heights/aspects from DSM and cache to working_dir.
@@ -940,10 +986,10 @@ class SurfaceData:
             surface_data: SurfaceData instance to update with computed walls.
             aligned_rasters: Dictionary with aligned raster data.
             working_path: Working directory for caching.
+            pixel_size: Pixel size in metres (for pixel-size-keyed cache path).
         """
-
         logger.info("Computing walls from DSM and caching to working_dir...")
-        walls_cache_dir = working_path / "walls"
+        walls_cache_dir = working_path / "walls" / pixel_size_tag(pixel_size)
 
         # Save resampled DSM to working_dir so wall computation can use it
         resampled_dir = working_path / "resampled"
@@ -974,6 +1020,14 @@ class SurfaceData:
             wall_aspect_arr, _, _, _ = io.load_raster(str(wall_aspects_path))
             surface_data.wall_height = wall_height_arr
             surface_data.wall_aspect = wall_aspect_arr
+
+            # Save cache metadata for wall validation on future runs
+            dsm_arr = aligned_rasters["dsm_arr"]
+            cdsm_arr = aligned_rasters.get("cdsm_arr")
+            wall_pixel_size = aligned_rasters.get("pixel_size", pixel_size)
+            metadata = CacheMetadata.from_arrays(dsm_arr, wall_pixel_size, cdsm_arr)
+            metadata.save(walls_cache_dir)
+
             logger.info(f"  ✓ Walls computed and cached to {walls_cache_dir}")
         else:
             logger.warning("  ⚠ Wall generation completed but files not found")
@@ -1047,7 +1101,7 @@ class SurfaceData:
         _max_pixels = compute_max_tile_pixels(context="svf")
         needs_tiling = rows * cols > _max_pixels
 
-        svf_cache_dir = working_path / "svf"
+        svf_cache_dir = working_path / "svf" / pixel_size_tag(pixel_size)
         svf_cache_dir.mkdir(parents=True, exist_ok=True)
         metadata = CacheMetadata.from_arrays(dsm_arr, pixel_size, cdsm_arr)
 
@@ -1070,6 +1124,7 @@ class SurfaceData:
             memmap_dir = svf_cache_dir / "memmap"
             svf_data.to_memmap(memmap_dir, metadata=metadata)
             _save_svfs_zip(svf_data, svf_cache_dir, aligned_rasters)
+            metadata.save(svf_cache_dir)  # also at svf dir level for zip validation
 
             # Save shadow matrices as npz for cache reload on future runs
             shadow_path = svf_cache_dir / "shadowmats.npz"
@@ -1175,6 +1230,7 @@ class SurfaceData:
             memmap_dir = svf_cache_dir / "memmap"
             svf_data.to_memmap(memmap_dir, metadata=metadata)
             _save_svfs_zip(svf_data, svf_cache_dir, aligned_rasters)
+            metadata.save(svf_cache_dir)  # also at svf dir level for zip validation
 
             # Save shadow matrices (only available in non-tiled mode)
             _save_shadow_matrices(svf_result, svf_cache_dir)
@@ -1834,6 +1890,20 @@ class SurfaceData:
         if self._buffer_pool is not None:
             self._buffer_pool.clear()
             self._buffer_pool = None
+        # Clear runtime compute caches tied to this surface.
+        # These are lazily rebuilt on demand in computation.calculate_core_fused().
+        for attr in (
+            "_valid_mask_u8_cache",
+            "_valid_bbox_cache",
+            "_land_cover_props_cache",
+            "_buildings_mask_cache",
+            "_lc_grid_f32_cache",
+            "_gvf_geometry_cache",
+            "_gvf_geometry_cache_crop",
+            "_aniso_shadow_crop_cache",
+        ):
+            if hasattr(self, attr):
+                setattr(self, attr, None)
 
     def _looks_like_relative_heights(self) -> bool:
         """

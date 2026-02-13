@@ -161,29 +161,38 @@ pub fn sun_on_surface(
             });
 
         // Accumulate thermal quantities weighted by geometry (fused — no temp allocations)
-        Zip::from(&mut weightsumsh).and(&tempsh).and(&f)
+        Zip::from(&mut weightsumsh)
+            .and(&tempsh)
+            .and(&f)
             .for_each(|w, &s, &fv| *w += s * fv);
-        Zip::from(&mut weightsumLupsh).and(&tempLupsh).and(&f)
+        Zip::from(&mut weightsumLupsh)
+            .and(&tempLupsh)
+            .and(&f)
             .for_each(|w, &l, &fv| *w += l * fv);
-        Zip::from(&mut weightsumalbsh).and(&tempalbsh).and(&f)
+        Zip::from(&mut weightsumalbsh)
+            .and(&tempalbsh)
+            .and(&f)
             .for_each(|w, &a, &fv| *w += a * fv);
-        Zip::from(&mut weightsumalbnosh).and(&tempalbnosh).and(&f)
+        Zip::from(&mut weightsumalbnosh)
+            .and(&tempalbnosh)
+            .and(&f)
             .for_each(|w, &a, &fv| *w += a * fv);
 
         // Wall tracking (fused — eliminates tempb, tempbwall allocations)
         tempwallsun
             .slice_mut(x_p_slice)
-            .assign(&sunwall_mut.slice(x_c_slice));
-        Zip::from(&mut tempbub).and(&tempwallsun).and(&f)
+            .assign(&sunwall.slice(x_c_slice));
+        Zip::from(&mut tempbub)
+            .and(&tempwallsun)
+            .and(&f)
             .for_each(|bub, &ws, &fv| {
                 let b = ws * fv;
                 *bub = if *bub + b > 0. { 1. } else { 0. };
             });
-        Zip::from(&mut tempbubwall).and(&f)
-            .for_each(|bubw, &fv| {
-                let bwall = 1. - fv;
-                *bubw = if *bubw + bwall > 0. { 1. } else { 0. };
-            });
+        Zip::from(&mut tempbubwall).and(&f).for_each(|bubw, &fv| {
+            let bwall = 1. - fv;
+            *bubw = if *bubw + bwall > 0. { 1. } else { 0. };
+        });
 
         weightsumLwall.zip_mut_with(&tempbub, |w, &b| *w += b * lwall);
         weightsumalbwall.zip_mut_with(&tempbub, |w, &b| *w += b * wall_albedo);
@@ -331,68 +340,29 @@ pub fn sun_on_surface(
 ///
 /// Skips all building ray-tracing (f accumulation, buildings shifting, tempbubwall).
 /// Uses precomputed `blocking_distance` to reconstruct f inline.
-/// Returns (gvfLup, gvfalb, gvf2) — the thermal-dependent outputs only.
+/// Returns (gvfLup, gvfalb) — the thermal-dependent outputs only.
 /// `gvfalbnosh` is taken from the geometry cache by the caller.
 #[allow(clippy::too_many_arguments)]
 #[allow(non_snake_case)]
 pub fn sun_on_surface_cached(
     geom: &crate::gvf_geometry::AzimuthGeometry,
-    buildings: ArrayView2<f32>,
-    shadow: ArrayView2<f32>,
-    sunwall: ArrayView2<f32>,
-    tground: ArrayView2<f32>,
-    tg_wall: f32,
-    t_air: f32,
-    emis_grid: ArrayView2<f32>,
-    wall_emmisiv: f32,
-    alb_grid: ArrayView2<f32>,
-    sbc: f32,
+    sunwall_mask: ArrayView2<f32>,
+    lup: ArrayView2<f32>,
+    albshadow: ArrayView2<f32>,
+    lwall: f32,
     wall_albedo: f32,
-    t_water: f32,
-    lc_grid: Option<ArrayView2<f32>>,
-    use_landcover: bool,
     first: f32,
     second: f32,
-) -> (Array2<f32>, Array2<f32>, Array2<f32>) {
-    let (sizex, sizey) = (buildings.nrows(), buildings.ncols());
-    let mut sunwall_mut = sunwall.to_owned();
-    sunwall_mut.mapv_inplace(|x| if x > 0. { 1. } else { x });
-
-    // Thermal pre-computation (same as original)
-    let lup = Zip::from(emis_grid)
-        .and(tground)
-        .and(shadow)
-        .map_collect(|&emis, &tg, &sh| {
-            sbc * emis * (tg * sh + t_air + 273.15).powi(4) - sbc * emis * (t_air + 273.15).powi(4)
-        });
-
-    let mut tground_mut = tground.to_owned();
-    if use_landcover {
-        if let Some(lc_grid) = lc_grid {
-            Zip::from(&mut tground_mut)
-                .and(lc_grid)
-                .for_each(|tg, &lc| {
-                    if lc == 3. {
-                        *tg = t_water - t_air;
-                    }
-                });
-        }
-    }
-
-    let lwall = sbc * wall_emmisiv * (tg_wall + t_air + 273.15).powi(4)
-        - sbc * wall_emmisiv * (t_air + 273.15).powi(4);
-
-    let albshadow = &alb_grid * &shadow;
+) -> (Array2<f32>, Array2<f32>) {
+    let (sizex, sizey) = (lup.nrows(), lup.ncols());
 
     // Only thermal temp arrays needed (no tempbu, tempalbnosh, tempbubwall)
-    let mut tempsh = Array2::<f32>::zeros((sizex, sizey));
     let mut tempLupsh = Array2::<f32>::zeros((sizex, sizey));
     let mut tempalbsh = Array2::<f32>::zeros((sizex, sizey));
     let mut tempwallsun = Array2::<f32>::zeros((sizex, sizey));
     let mut tempbub = Array2::<f32>::zeros((sizex, sizey));
 
     // Thermal accumulators only
-    let mut weightsumsh = Array2::<f32>::zeros((sizex, sizey));
     let mut weightsumwall = Array2::<f32>::zeros((sizex, sizey));
     let mut weightsumLupsh = Array2::<f32>::zeros((sizex, sizey));
     let mut weightsumLwall = Array2::<f32>::zeros((sizex, sizey));
@@ -400,7 +370,6 @@ pub fn sun_on_surface_cached(
     let mut weightsumalbwall = Array2::<f32>::zeros((sizex, sizey));
 
     let mut weightsumwall_first = Array2::<f32>::zeros((sizex, sizey));
-    let mut weightsumsh_first = Array2::<f32>::zeros((sizex, sizey));
     let mut weightsumLwall_first = Array2::<f32>::zeros((sizex, sizey));
     let mut weightsumLupsh_first = Array2::<f32>::zeros((sizex, sizey));
     let mut weightsumalbwall_first = Array2::<f32>::zeros((sizex, sizey));
@@ -426,22 +395,37 @@ pub fn sun_on_surface_cached(
         let x_p_slice = s![xp1..xp2, yp1..yp2];
 
         // Shift thermal arrays only (no buildings, no albnosh)
-        tempsh.slice_mut(x_p_slice).assign(&shadow.slice(x_c_slice));
         tempLupsh.slice_mut(x_p_slice).assign(&lup.slice(x_c_slice));
-        tempalbsh.slice_mut(x_p_slice).assign(&albshadow.slice(x_c_slice));
+        tempalbsh
+            .slice_mut(x_p_slice)
+            .assign(&albshadow.slice(x_c_slice));
 
         // Accumulate using reconstructed f from blocking distance
         // f = 1 if n < blocking_distance[pixel], else 0
-        Zip::from(&mut weightsumsh).and(&tempsh).and(bd)
-            .for_each(|w, &s, &b| { if n_u16 < b { *w += s; } });
-        Zip::from(&mut weightsumLupsh).and(&tempLupsh).and(bd)
-            .for_each(|w, &l, &b| { if n_u16 < b { *w += l; } });
-        Zip::from(&mut weightsumalbsh).and(&tempalbsh).and(bd)
-            .for_each(|w, &a, &b| { if n_u16 < b { *w += a; } });
+        Zip::from(&mut weightsumLupsh)
+            .and(&tempLupsh)
+            .and(bd)
+            .for_each(|w, &l, &b| {
+                if n_u16 < b {
+                    *w += l;
+                }
+            });
+        Zip::from(&mut weightsumalbsh)
+            .and(&tempalbsh)
+            .and(bd)
+            .for_each(|w, &a, &b| {
+                if n_u16 < b {
+                    *w += a;
+                }
+            });
 
         // Wall-sun tracking (thermal — depends on sunwall)
-        tempwallsun.slice_mut(x_p_slice).assign(&sunwall_mut.slice(x_c_slice));
-        Zip::from(&mut tempbub).and(&tempwallsun).and(bd)
+        tempwallsun
+            .slice_mut(x_p_slice)
+            .assign(&sunwall_mask.slice(x_c_slice));
+        Zip::from(&mut tempbub)
+            .and(&tempwallsun)
+            .and(bd)
             .for_each(|bub, &ws, &b| {
                 if n_u16 < b {
                     let bv = ws; // f=1, so tempb = ws * 1 = ws
@@ -457,7 +441,6 @@ pub fn sun_on_surface_cached(
         // Snapshot at first-height threshold
         if (n + 1) as f32 <= first {
             weightsumwall_first.assign(&weightsumwall);
-            weightsumsh_first.assign(&weightsumsh);
             weightsumLwall_first.assign(&weightsumLwall);
             weightsumLupsh_first.assign(&weightsumLupsh);
             weightsumalbwall_first.assign(&weightsumalbwall);
@@ -479,34 +462,23 @@ pub fn sun_on_surface_cached(
             *k = if val == -1. { 0. } else { val };
         });
 
-    // gvf2 (view factor — thermal because it uses weightsumwall which depends on sunwall)
-    let mut weightsumwall_mut = weightsumwall.to_owned();
-    weightsumwall_mut.zip_mut_with(&keep, |w, &k| { if k == 1. { *w = 0.; } });
-
-    let mut gvf2 = ((&weightsumwall_mut + &weightsumsh) / (second + 1.)) * &wallsuninfluence_second
-        + (&weightsumsh / second) * (wallsuninfluence_second.mapv(|x| 1. - x));
-    gvf2.mapv_inplace(|x| if x > 1.0 { 1.0 } else { x });
-
     // gvfLup
     let gvfLup1 = ((&weightsumLwall_first + &weightsumLupsh_first) / (first + 1.))
         * &wallsuninfluence_first
         + (&weightsumLupsh_first / first) * (wallsuninfluence_first.mapv(|x| 1. - x));
 
     let mut weightsumLwall_mut = weightsumLwall.to_owned();
-    weightsumLwall_mut.zip_mut_with(&keep, |w, &k| { if k == 1. { *w = 0.; } });
+    weightsumLwall_mut.zip_mut_with(&keep, |w, &k| {
+        if k == 1. {
+            *w = 0.;
+        }
+    });
 
     let gvfLup2 = ((&weightsumLwall_mut + &weightsumLupsh) / (second + 1.))
         * &wallsuninfluence_second
         + (&weightsumLupsh / second) * (wallsuninfluence_second.mapv(|x| 1. - x));
 
-    let buildings_inv = buildings.mapv(|x| 1. - x);
-    let lup_final = Zip::from(emis_grid)
-        .and(&tground_mut)
-        .and(shadow)
-        .map_collect(|&emis, &tg, &sh| {
-            sbc * emis * (tg * sh + t_air + 273.15).powi(4) - sbc * emis * (t_air + 273.15).powi(4)
-        });
-    let gvfLup = (&gvfLup1 * 0.5 + &gvfLup2 * 0.4) / 0.9 + &lup_final * &buildings_inv;
+    let gvfLup = (&gvfLup1 * 0.5 + &gvfLup2 * 0.4) / 0.9;
 
     // gvfalb
     let gvfalb1 = ((&weightsumalbwall_first + &weightsumalbsh_first) / (first + 1.))
@@ -514,13 +486,17 @@ pub fn sun_on_surface_cached(
         + (&weightsumalbsh_first / first) * (wallsuninfluence_first.mapv(|x| 1. - x));
 
     let mut weightsumalbwall_mut = weightsumalbwall.to_owned();
-    weightsumalbwall_mut.zip_mut_with(&keep, |w, &k| { if k == 1. { *w = 0.; } });
+    weightsumalbwall_mut.zip_mut_with(&keep, |w, &k| {
+        if k == 1. {
+            *w = 0.;
+        }
+    });
 
     let gvfalb2 = ((&weightsumalbwall_mut + &weightsumalbsh) / (second + 1.))
         * &wallsuninfluence_second
         + (&weightsumalbsh / second) * (wallsuninfluence_second.mapv(|x| 1. - x));
 
-    let gvfalb = (&gvfalb1 * 0.5 + &gvfalb2 * 0.4) / 0.9 + &alb_grid * &buildings_inv * shadow;
+    let gvfalb = (&gvfalb1 * 0.5 + &gvfalb2 * 0.4) / 0.9;
 
-    (gvfLup, gvfalb, gvf2)
+    (gvfLup, gvfalb)
 }

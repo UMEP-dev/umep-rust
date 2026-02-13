@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 CACHE_METADATA_FILE = "cache_meta.json"
 
 
+def pixel_size_tag(pixel_size: float) -> str:
+    """Return a directory-safe tag encoding the pixel size, e.g. ``'px1.000'``."""
+    return f"px{pixel_size:.3f}"
+
+
 def compute_array_hash(arr: np.ndarray, *, sample_size: int = 10000) -> str:
     """
     Compute a fast hash of a numpy array.

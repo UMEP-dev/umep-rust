@@ -3,7 +3,7 @@
 //! Replaces the pure-Python implementation in `physics/morphology.py`
 //! with an optimized Rust version using slice-based shift-and-OR.
 
-use ndarray::{Array2, ArrayView2, Zip, s};
+use ndarray::{s, Array2, ArrayView2, Zip};
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 

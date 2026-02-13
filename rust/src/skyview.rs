@@ -298,7 +298,6 @@ fn pack_bytes(n_patches: usize) -> usize {
     (n_patches + 7) / 8
 }
 
-
 fn prepare_bushes(vegdem: ArrayView2<f32>, vegdem2: ArrayView2<f32>) -> Array2<f32> {
     // Allocate output array with same shape as input
     let mut bush_areas = Array2::<f32>::zeros(vegdem.raw_dim());
@@ -417,14 +416,18 @@ fn calculate_svf_inner(
         } else {
             (None, None, None)
         };
-        match gpu_ctx.init_svf_accumulation(num_rows, num_cols, usevegdem, dsm_f32.view(), vc, vt, b)
-        {
+        match gpu_ctx.init_svf_accumulation(
+            num_rows,
+            num_cols,
+            usevegdem,
+            dsm_f32.view(),
+            vc,
+            vt,
+            b,
+        ) {
             Ok(()) => true,
             Err(e) => {
-                eprintln!(
-                    "[GPU] SVF accumulation init failed: {}. CPU fallback.",
-                    e
-                );
+                eprintln!("[GPU] SVF accumulation init failed: {}. CPU fallback.", e);
                 false
             }
         }
@@ -516,7 +519,13 @@ fn calculate_svf_inner(
                     ))
                 })?;
                 write_shadow_u8_to_matrix(
-                    &mut inter, &bytes, pi, total_pixels, num_quads, num_rows, num_cols,
+                    &mut inter,
+                    &bytes,
+                    pi,
+                    total_pixels,
+                    num_quads,
+                    num_rows,
+                    num_cols,
                     usevegdem,
                 );
                 if let Some(ref counter) = progress_counter {
@@ -526,10 +535,7 @@ fn calculate_svf_inner(
 
             // Read back accumulated SVF values from GPU
             let svf = gpu_ctx.read_svf_results().map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "GPU SVF readback failed: {}",
-                    e
-                ))
+                pyo3::exceptions::PyRuntimeError::new_err(format!("GPU SVF readback failed: {}", e))
             })?;
 
             inter.svf = svf.svf;
@@ -746,15 +752,17 @@ fn calculate_svf_inner(
             .and(&mut inter.svf_veg_s)
             .and(&mut inter.svf_veg_w)
             .and(&dsm_f32)
-            .for_each(|svf_veg, svf_veg_n, svf_veg_e, svf_veg_s, svf_veg_w, &dsm_val| {
-                if dsm_val.is_nan() {
-                    *svf_veg = f32::NAN;
-                    *svf_veg_n = f32::NAN;
-                    *svf_veg_e = f32::NAN;
-                    *svf_veg_s = f32::NAN;
-                    *svf_veg_w = f32::NAN;
-                }
-            });
+            .for_each(
+                |svf_veg, svf_veg_n, svf_veg_e, svf_veg_s, svf_veg_w, &dsm_val| {
+                    if dsm_val.is_nan() {
+                        *svf_veg = f32::NAN;
+                        *svf_veg_n = f32::NAN;
+                        *svf_veg_e = f32::NAN;
+                        *svf_veg_s = f32::NAN;
+                        *svf_veg_w = f32::NAN;
+                    }
+                },
+            );
 
         Zip::from(&mut inter.svf_veg_blocks_bldg_sh)
             .and(&mut inter.svf_veg_blocks_bldg_sh_n)
@@ -779,7 +787,9 @@ fn calculate_svf_inner(
     let n_pack = pack_bytes(total_patches);
     if !usevegdem {
         inter.veg_sh_matrix.fill(0xFF);
-        inter.veg_blocks_bldg_sh_matrix.assign(&inter.bldg_sh_matrix);
+        inter
+            .veg_blocks_bldg_sh_matrix
+            .assign(&inter.bldg_sh_matrix);
     }
 
     // Zero out bitpacked shadow matrices for NaN pixels in DSM

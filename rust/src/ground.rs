@@ -169,7 +169,11 @@ pub(crate) fn ts_wave_delay_batch_pure(
 
     if timeadd >= threshold {
         let weight1 = (decay_constant * timeadd).exp();
-        let new_timeadd = if timestepdec > threshold { timestepdec } else { 0.0 };
+        let new_timeadd = if timestepdec > threshold {
+            timestepdec
+        } else {
+            0.0
+        };
 
         let m = lerp_par(lup, tgmap1_arr.view(), weight1);
         let me = lerp_par(lup_e, tgmap1_e_arr.view(), weight1);
@@ -179,11 +183,19 @@ pub(crate) fn ts_wave_delay_batch_pure(
         let mt = lerp_par(tg_temp, tgout1_arr.view(), weight1);
 
         TsWaveDelayBatchPureResult {
-            lup: m.clone(), lup_e: me.clone(), lup_s: ms.clone(),
-            lup_w: mw.clone(), lup_n: mn.clone(), tg_out: mt.clone(),
+            lup: m.clone(),
+            lup_e: me.clone(),
+            lup_s: ms.clone(),
+            lup_w: mw.clone(),
+            lup_n: mn.clone(),
+            tg_out: mt.clone(),
             timeadd: new_timeadd,
-            tgmap1: m, tgmap1_e: me, tgmap1_s: ms,
-            tgmap1_w: mw, tgmap1_n: mn, tgout1: mt,
+            tgmap1: m,
+            tgmap1_e: me,
+            tgmap1_s: ms,
+            tgmap1_w: mw,
+            tgmap1_n: mn,
+            tgout1: mt,
         }
     } else {
         let new_timeadd = timeadd + timestepdec;
@@ -197,9 +209,12 @@ pub(crate) fn ts_wave_delay_batch_pure(
             lup_n: lerp_par(lup_n, tgmap1_n_arr.view(), weight1),
             tg_out: lerp_par(tg_temp, tgout1_arr.view(), weight1),
             timeadd: new_timeadd,
-            tgmap1: tgmap1_arr, tgmap1_e: tgmap1_e_arr,
-            tgmap1_s: tgmap1_s_arr, tgmap1_w: tgmap1_w_arr,
-            tgmap1_n: tgmap1_n_arr, tgout1: tgout1_arr,
+            tgmap1: tgmap1_arr,
+            tgmap1_e: tgmap1_e_arr,
+            tgmap1_s: tgmap1_s_arr,
+            tgmap1_w: tgmap1_w_arr,
+            tgmap1_n: tgmap1_n_arr,
+            tgout1: tgout1_arr,
         }
     }
 }
@@ -208,9 +223,12 @@ pub(crate) fn ts_wave_delay_batch_pure(
 fn lerp_par(curr: ArrayView2<f32>, prev: ArrayView2<f32>, w: f32) -> Array2<f32> {
     let w1 = 1.0 - w;
     let mut out = Array2::zeros(curr.dim());
-    Zip::from(&mut out).and(&curr).and(&prev).par_for_each(|o, &c, &p| {
-        *o = c * w1 + p * w;
-    });
+    Zip::from(&mut out)
+        .and(&curr)
+        .and(&prev)
+        .par_for_each(|o, &c, &p| {
+            *o = c * w1 + p * w;
+        });
     out
 }
 

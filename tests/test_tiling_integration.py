@@ -356,6 +356,7 @@ class TestTilingHelpers:
 
         assert tile_surface.svf is not None
         assert tile_surface.svf.svf.shape == (50, 50)
+        assert precomputed.svf is not None
         np.testing.assert_array_equal(
             tile_surface.svf.svf,
             precomputed.svf.svf[0:50, 0:50],
@@ -553,6 +554,19 @@ class TestTimeseriesTiledIntegration:
         )
 
         assert len(calls) > 0, "No progress callbacks received"
+
+    def test_timeseries_tiled_return_results_false(self, small_surface, location, weather_pair):
+        """Streaming mode should avoid retaining tiled timestep results."""
+        from solweig import calculate_timeseries_tiled
+
+        results = calculate_timeseries_tiled(
+            surface=small_surface,
+            weather_series=weather_pair,
+            location=location,
+            return_results=False,
+        )
+
+        assert results == []
 
     def test_timeseries_tiled_precreates_tile_surfaces_once(self, small_surface, location, weather_pair):
         """Tile surfaces should be extracted once per tile, not once per timestep."""

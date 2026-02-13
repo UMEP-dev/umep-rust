@@ -314,7 +314,9 @@ pub(crate) fn anisotropic_sky_pure(
         .into_par_iter()
         .map(|(r, c)| {
             if let Some(ref v) = valid {
-                if v[[r, c]] == 0 { return PixelResult::nan(); }
+                if v[[r, c]] == 0 {
+                    return PixelResult::nan();
+                }
             }
             let mut pres = PixelResult::new();
             let pixel_asvf = asvf[[r, c]];
@@ -738,10 +740,7 @@ fn cylindric_wedge_pixel(tan_zen: f32, svfalfa_val: f32) -> f32 {
 /// Pure-ndarray implementation of cylindric wedge shadow fraction.
 /// Callable from pipeline.rs (fused path) or from the PyO3 wrapper (modular path).
 #[allow(non_snake_case)]
-pub(crate) fn cylindric_wedge_pure(
-    zen: f32,
-    svfalfa: ArrayView2<f32>,
-) -> Array2<f32> {
+pub(crate) fn cylindric_wedge_pure(zen: f32, svfalfa: ArrayView2<f32>) -> Array2<f32> {
     cylindric_wedge_pure_masked(zen, svfalfa, None)
 }
 
@@ -767,7 +766,9 @@ pub(crate) fn cylindric_wedge_pure_masked(
             let r = idx / cols;
             let c = idx % cols;
             if let Some(ref v) = valid {
-                if v[[r, c]] == 0 { return f32::NAN; }
+                if v[[r, c]] == 0 {
+                    return f32::NAN;
+                }
             }
             cylindric_wedge_pixel(tan_zen, svfalfa[[r, c]])
         })

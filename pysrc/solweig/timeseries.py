@@ -12,6 +12,7 @@ import numpy as np
 
 from .metadata import create_run_metadata, save_run_metadata
 from .models import HumanParams, Location, ThermalState
+from .output_async import AsyncGeoTiffWriter, async_output_enabled, collect_output_arrays
 from .progress import ProgressReporter
 from .solweig_logging import get_logger
 
@@ -116,6 +117,7 @@ def calculate_timeseries(
     prefetch_tiles: bool | None = None,
     output_dir: str | Path | None = None,
     outputs: list[str] | None = None,
+    return_results: bool = True,
     progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[SolweigResult]:
     """
@@ -170,6 +172,8 @@ def calculate_timeseries(
             long timeseries to avoid memory issues).
         outputs: Which outputs to save (e.g., ["tmrt", "shadow", "kdown"]).
             Only used if output_dir is provided. If None, uses config.outputs or ["tmrt"].
+        return_results: Whether to keep timestep results in memory and return them.
+            Set False for long runs to stream computation and reduce memory usage.
         progress_callback: Optional callback(current_step, total_steps) called after
             each timestep. If None, a tqdm progress bar is shown automatically.
 
@@ -267,6 +271,10 @@ def calculate_timeseries(
     # Apply defaults for anything still None
     if effective_aniso is None:
         effective_aniso = False
+    if effective_physics is None:
+        from .loaders import load_physics
+
+        effective_physics = load_physics()
     # Auto-load bundled UMEP JSON as default materials (single source of truth)
     if effective_materials is None:
         from .loaders import load_params
@@ -313,6 +321,7 @@ def calculate_timeseries(
             prefetch_tiles=prefetch_tiles,
             output_dir=output_dir,
             outputs=outputs,
+            return_results=return_results,
             progress_callback=progress_callback,
         )
 
@@ -338,6 +347,7 @@ def calculate_timeseries(
         logger.info(f"  Auto-save: {output_dir} ({', '.join(outputs or ['tmrt'])})")
     logger.info("=" * 60)
 
+    output_path: Path | None = None
     # Create output directory if needed
     if output_dir is not None:
         output_path = Path(output_dir)
@@ -346,6 +356,14 @@ def calculate_timeseries(
     # Default outputs
     if output_dir is not None and outputs is None:
         outputs = ["tmrt"]
+    requested_outputs = None
+    if output_dir is not None:
+        requested_outputs = set(outputs or ["tmrt"])
+        requested_outputs.add("tmrt")
+    elif not return_results:
+        # Streaming mode without file output does not need non-Tmrt arrays.
+        # Ask fused Rust path to skip converting optional outputs to numpy.
+        requested_outputs = {"tmrt"}
 
     # Import calculate here to avoid circular import
     from .api import calculate
@@ -359,6 +377,7 @@ def calculate_timeseries(
     logger.info(f"  Pre-computed {len(weather_series)} timesteps in {precompute_time:.1f}s")
 
     results = []
+    processed_steps = 0
     state = ThermalState.initial(surface.shape)
 
     # Incremental stats accumulators (avoids iterating all results for summary)
@@ -380,82 +399,100 @@ def calculate_timeseries(
     # Set up progress reporting (caller callback suppresses tqdm)
     n_steps = len(weather_series)
     _progress = None if progress_callback is not None else ProgressReporter(total=n_steps, desc="SOLWEIG timeseries")
+    use_async_output = output_dir is not None and async_output_enabled()
+    _writer = (
+        AsyncGeoTiffWriter(output_dir=output_path, surface=surface)
+        if use_async_output and output_path is not None
+        else None
+    )
 
     # Start timing
     start_time = time.time()
 
-    for i, weather in enumerate(weather_series):
-        # Process timestep
-        result = calculate(
-            surface=surface,
-            location=location,
-            weather=weather,
-            human=human,
-            precomputed=precomputed,
-            use_anisotropic_sky=use_anisotropic_sky,
-            conifer=conifer,
-            state=state,
-            physics=physics,
-            materials=materials,
-            wall_material=wall_material,
-            max_shadow_distance_m=effective_max_shadow,
-        )
-
-        # Carry forward state to next timestep
-        if result.state is not None:
-            state = result.state
-            result.state = None  # Free state arrays (~23 MB); state managed externally
-
-        # Update incremental stats (before potential array release)
-        _valid = result.tmrt[np.isfinite(result.tmrt)]
-        if _valid.size > 0:
-            _tmrt_sum += _valid.sum()
-            _tmrt_count += _valid.size
-            _tmrt_max = max(_tmrt_max, float(_valid.max()))
-            _tmrt_min = min(_tmrt_min, float(_valid.min()))
-
-        # Save incrementally if output_dir provided
-        if output_dir is not None:
-            result.to_geotiff(
-                output_dir=output_dir,
-                timestamp=weather.datetime,
-                outputs=outputs,
+    try:
+        for i, weather in enumerate(weather_series):
+            # Process timestep
+            result = calculate(
                 surface=surface,
+                location=location,
+                weather=weather,
+                human=human,
+                precomputed=precomputed,
+                use_anisotropic_sky=use_anisotropic_sky,
+                conifer=conifer,
+                state=state,
+                physics=physics,
+                materials=materials,
+                wall_material=wall_material,
+                max_shadow_distance_m=effective_max_shadow,
+                return_state_copy=False,
+                _requested_outputs=requested_outputs,
             )
-            # Free large arrays — data is on disk
-            result.tmrt = None  # type: ignore[assignment]
-            result.shadow = None
-            result.kdown = None
-            result.kup = None
-            result.ldown = None
-            result.lup = None
 
-        results.append(result)
+            # Carry forward state to next timestep
+            if result.state is not None:
+                state = result.state
+                result.state = None  # Free state arrays (~23 MB); state managed externally
 
-        # Report progress
-        if progress_callback is not None:
-            progress_callback(i + 1, n_steps)
-        elif _progress is not None:
-            _progress.update(1)
+            # Update incremental stats (before potential array release)
+            _valid = result.tmrt[np.isfinite(result.tmrt)]
+            if _valid.size > 0:
+                _tmrt_sum += _valid.sum()
+                _tmrt_count += _valid.size
+                _tmrt_max = max(_tmrt_max, float(_valid.max()))
+                _tmrt_min = min(_tmrt_min, float(_valid.min()))
 
-    # Close progress bar
-    if _progress is not None:
-        _progress.close()
+            # Save incrementally if output_dir provided
+            if _writer is not None:
+                _writer.submit(
+                    timestamp=weather.datetime,
+                    arrays=collect_output_arrays(result, outputs or ["tmrt"]),
+                )
+            elif output_dir is not None:
+                result.to_geotiff(
+                    output_dir=output_dir,
+                    timestamp=weather.datetime,
+                    outputs=outputs,
+                    surface=surface,
+                )
+
+            if output_dir is not None or not return_results:
+                # Free large arrays once data is persisted or caller requested streaming mode.
+                result.tmrt = None  # type: ignore[assignment]
+                result.shadow = None
+                result.kdown = None
+                result.kup = None
+                result.ldown = None
+                result.lup = None
+            if return_results:
+                results.append(result)
+            processed_steps += 1
+
+            # Report progress
+            if progress_callback is not None:
+                progress_callback(i + 1, n_steps)
+            elif _progress is not None:
+                _progress.update(1)
+    finally:
+        if _progress is not None:
+            _progress.close()
+        if _writer is not None:
+            _writer.close()
 
     # Calculate total elapsed time
     total_time = time.time() - start_time
-    overall_rate = len(results) / total_time if total_time > 0 else 0
+    overall_rate = processed_steps / total_time if total_time > 0 else 0
 
     # Log summary statistics
     logger.info("=" * 60)
-    logger.info(f"✓ Calculation complete: {len(results)} timesteps processed")
+    logger.info(f"✓ Calculation complete: {processed_steps} timesteps processed")
     logger.info(f"  Total time: {total_time:.1f}s ({overall_rate:.2f} steps/s)")
     if _tmrt_count > 0:
         mean_tmrt = _tmrt_sum / _tmrt_count
         logger.info(f"  Tmrt range: {_tmrt_min:.1f}°C - {_tmrt_max:.1f}°C (mean: {mean_tmrt:.1f}°C)")
 
     if output_dir is not None and outputs is not None:
-        file_count = len(results) * len(outputs)
+        file_count = processed_steps * len(outputs)
         logger.info(f"  Files saved: {file_count} GeoTIFFs in {output_dir}")
     logger.info("=" * 60)
 
