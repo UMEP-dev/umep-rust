@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta31
+version=0.1.0-beta32
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,6 +42,8 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta32
+    - Bump v0.1.0-beta32
     0.1.0-beta31
     - Bump v0.1.0-beta31
     0.1.0-beta30
@@ -51,7 +53,7 @@ changelog=
     0.1.0-beta29
     - Configurable tile orchestration: tile_workers, tile_queue_depth, prefetch_tiles params on calculate_tiled, calculate_timeseries_tiled, and calculate_timeseries (with ModelConfig integration)
     - Backpressure-controlled tile dispatch: bounded inflight limit prevents memory spikes from unbounded task submission
-    - Memory-aware prefetch auto-selection: _resolve_prefetch_default enables prefetch only when estimated inflight bytes fit within 50% of usable RAM
+    - Memory-aware prefetch auto-selection: _resolve_prefetch_default enables prefetch only when estimated inflight bytes fit within 50 percent of usable RAM
     - Adaptive worker count: defaults to max(2, min(6, cpu_count // 2)), capped at tile count, with validation (tile_workers < 1 raises ValueError)
     - Telemetry instrumentation: mean tile turnaround time and max queue depth logged per dispatch cycle
     - Config serialization: tile_workers, tile_queue_depth, prefetch_tiles round-trip through ModelConfig save/load
