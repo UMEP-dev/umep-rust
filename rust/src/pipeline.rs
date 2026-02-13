@@ -17,7 +17,7 @@ use crate::gvf::{gvf_calc_pure, gvf_calc_with_cache, GvfResultPure};
 use crate::gvf_geometry::{precompute_gvf_geometry, GvfGeometryCache};
 use crate::shadowing::{calculate_shadows_rust, ShadowingResultRust};
 use crate::sky::{anisotropic_sky_pure, cylindric_wedge_pure_masked};
-use crate::tmrt::compute_tmrt_pure;
+use crate::tmrt::compute_tmrt_from_dir_sums_pure;
 use crate::vegetation::{kside_veg_isotropic_pure, lside_veg_pure};
 
 #[cfg(feature = "gpu")]
@@ -34,16 +34,6 @@ fn timing_enabled() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ENABLED.get_or_init(|| {
         std::env::var("SOLWEIG_TIMING")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-    })
-}
-
-#[cfg(feature = "gpu")]
-fn aniso_gpu_overlap_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("SOLWEIG_ANISO_GPU_OVERLAP")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
     })
@@ -314,11 +304,11 @@ pub struct TimestepResult {
 /// Raw result struct with owned arrays (no Python types — Send-safe).
 struct TimestepResultRaw {
     tmrt: Array2<f32>,
-    shadow: Array2<f32>,
-    kdown: Array2<f32>,
-    kup: Array2<f32>,
-    ldown: Array2<f32>,
-    lup: Array2<f32>,
+    shadow: Option<Array2<f32>>,
+    kdown: Option<Array2<f32>>,
+    kup: Option<Array2<f32>>,
+    ldown: Option<Array2<f32>>,
+    lup: Option<Array2<f32>>,
     timeadd: f32,
     tgmap1: Array2<f32>,
     tgmap1_e: Array2<f32>,
@@ -575,47 +565,77 @@ fn asvf_for_svf_cached(svf: ArrayView2<f32>) -> Arc<Vec<f32>> {
     entry
 }
 
-/// Directional longwave side components for anisotropic mode.
+/// Weighted sum of four directional side components with valid-mask handling.
 ///
-/// In this mode `lside_veg` returns `lup_dir * 0.5` per direction with NaN on
-/// invalid pixels. Compute it directly to avoid the heavier isotropic pathway.
-fn lside_dirs_aniso_from_lup(
+/// Used to avoid materializing per-direction arrays in Tmrt-only pathways.
+fn weighted_side_sum_four(
+    a: ArrayView2<f32>,
+    b: ArrayView2<f32>,
+    c_arr: ArrayView2<f32>,
+    d_arr: ArrayView2<f32>,
+    valid: ArrayView2<u8>,
+    weight: f32,
+) -> Array2<f32> {
+    let shape = a.dim();
+    let mut sum = Array2::<f32>::zeros(shape);
+
+    Zip::indexed(&mut sum).par_for_each(|(r, c), out| {
+        if valid[[r, c]] == 0 {
+            *out = f32::NAN;
+            return;
+        }
+        *out = (a[[r, c]] + b[[r, c]] + c_arr[[r, c]] + d_arr[[r, c]]) * weight;
+    });
+
+    sum
+}
+
+/// Directional longwave side sum for anisotropic mode.
+///
+/// In anisotropic mode the directional longwave sides are `lup_dir * 0.5`;
+/// only their sum is needed by Tmrt.
+fn lside_dirs_sum_aniso_from_lup(
     lup_e: ArrayView2<f32>,
     lup_s: ArrayView2<f32>,
     lup_w: ArrayView2<f32>,
     lup_n: ArrayView2<f32>,
     valid: ArrayView2<u8>,
-) -> crate::vegetation::LsideVegPureResult {
-    let shape = lup_e.dim();
-    let mut least = Array2::<f32>::zeros(shape);
-    let mut lsouth = Array2::<f32>::zeros(shape);
-    let mut lwest = Array2::<f32>::zeros(shape);
-    let mut lnorth = Array2::<f32>::zeros(shape);
+) -> Array2<f32> {
+    weighted_side_sum_four(lup_e, lup_s, lup_w, lup_n, valid, 0.5)
+}
 
-    Zip::indexed(&mut least)
-        .and(&mut lsouth)
-        .and(&mut lwest)
-        .and(&mut lnorth)
-        .par_for_each(|(r, c), le, ls, lw, ln| {
-            if valid[[r, c]] == 0 {
-                *le = f32::NAN;
-                *ls = f32::NAN;
-                *lw = f32::NAN;
-                *ln = f32::NAN;
-                return;
-            }
-            *le = lup_e[[r, c]] * 0.5;
-            *ls = lup_s[[r, c]] * 0.5;
-            *lw = lup_w[[r, c]] * 0.5;
-            *ln = lup_n[[r, c]] * 0.5;
-        });
+/// Directional shortwave side sum for anisotropic mode.
+///
+/// Current anisotropic directional kside terms are `kup_dir * 0.5`.
+fn kside_dirs_sum_aniso_from_kup(
+    kup_e: ArrayView2<f32>,
+    kup_s: ArrayView2<f32>,
+    kup_w: ArrayView2<f32>,
+    kup_n: ArrayView2<f32>,
+    valid: ArrayView2<u8>,
+) -> Array2<f32> {
+    weighted_side_sum_four(kup_e, kup_s, kup_w, kup_n, valid, 0.5)
+}
 
-    crate::vegetation::LsideVegPureResult {
-        least,
-        lsouth,
-        lwest,
-        lnorth,
-    }
+fn side_sum_from_directional(
+    north: ArrayView2<f32>,
+    east: ArrayView2<f32>,
+    south: ArrayView2<f32>,
+    west: ArrayView2<f32>,
+    valid: ArrayView2<u8>,
+) -> Array2<f32> {
+    let shape = north.dim();
+    let mut sum = Array2::<f32>::zeros(shape);
+
+    Zip::indexed(&mut sum).par_for_each(|(r, c), out| {
+        if valid[[r, c]] == 0 {
+            *out = f32::NAN;
+            return;
+        }
+        *out = north[[r, c]] + east[[r, c]] + south[[r, c]] + west[[r, c]];
+    });
+
+    sum
 }
 
 struct PatchOptionLut {
@@ -675,11 +695,8 @@ fn compute_ani_lum_from_packed(
     let mut out = Array2::<f32>::zeros((rows, cols));
 
     let ncols = cols;
-    out.as_slice_mut()
-        .unwrap()
-        .par_iter_mut()
-        .enumerate()
-        .for_each(|(idx, v)| {
+    if let Some(out_slice) = out.as_slice_mut() {
+        out_slice.par_iter_mut().enumerate().for_each(|(idx, v)| {
             let r = idx / ncols;
             let c = idx % ncols;
 
@@ -699,6 +716,26 @@ fn compute_ani_lum_from_packed(
             }
             *v = sum;
         });
+    } else {
+        for r in 0..rows {
+            for c in 0..cols {
+                if valid[[r, c]] == 0 {
+                    out[[r, c]] = f32::NAN;
+                    continue;
+                }
+                let mut sum = 0.0_f32;
+                for i in 0..n_patches {
+                    let byte = i >> 3;
+                    let bit = i & 7;
+                    let sh = ((shmat[[r, c, byte]] >> bit) & 1) as f32;
+                    let vsh = ((vegshmat[[r, c, byte]] >> bit) & 1) as f32;
+                    let diff = sh - (1.0 - vsh) * (1.0 - psi);
+                    sum += diff * lv_lum[i];
+                }
+                out[[r, c]] = sum;
+            }
+        }
+    }
 
     out
 }
@@ -867,7 +904,17 @@ pub fn compute_timestep(
     let vegshmat_v = vegshmat.as_ref().map(|a| a.as_array());
     let vbshmat_v = vbshmat.as_ref().map(|a| a.as_array());
     let output_mask_bits = output_mask.unwrap_or(OUT_ALL);
+    let want_shadow = (output_mask_bits & OUT_SHADOW) != 0;
+    let want_kdown = (output_mask_bits & OUT_KDOWN) != 0;
+    let want_kup = (output_mask_bits & OUT_KUP) != 0;
+    let want_ldown = (output_mask_bits & OUT_LDOWN) != 0;
+    let want_lup = (output_mask_bits & OUT_LUP) != 0;
 
+    if config.has_walls && (wall_ht_v.is_none() || wall_asp_v.is_none()) {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "config.has_walls=true requires both wall_ht and wall_asp inputs",
+        ));
+    }
     // Extract GVF cache reference (pure Rust data) before releasing the GIL
     let gvf_cache_inner = gvf_cache.map(|c| &c.inner);
 
@@ -900,9 +947,10 @@ pub fn compute_timestep(
                 } else {
                     None
                 },
-                None, // walls_scheme
-                None, // aspect_scheme
-                3.0,  // min_sun_altitude
+                None,  // walls_scheme
+                None,  // aspect_scheme
+                false, // need_full_wall_outputs (pipeline only needs wall_sun)
+                3.0,   // min_sun_altitude
             );
 
             // Combine shadows with vegetation transmissivity
@@ -1078,7 +1126,7 @@ pub fn compute_timestep(
             let zen_rad = weather.sun_zenith * PI / 180.0;
             let f_sh = cylindric_wedge_pure_masked(zen_rad, svfalfa_v, Some(valid_v));
 
-            // Kup — shared by both paths.
+            // Kup helper used in both isotropic and anisotropic paths.
             // In cached-GVF mode, read gvfalbnosh* directly from geometry cache to
             // avoid per-timestep cloning of those static arrays.
             let compute_kup_with =
@@ -1108,179 +1156,131 @@ pub fn compute_timestep(
                         valid_v,
                     )
                 };
-            let (kup, kup_e, kup_s, kup_w, kup_n) = if let Some(cache) = gvf_cache_inner {
-                compute_kup_with(
-                    cache.cached_albnosh.view(),
-                    cache.cached_albnosh_e.view(),
-                    cache.cached_albnosh_s.view(),
-                    cache.cached_albnosh_w.view(),
-                    cache.cached_albnosh_n.view(),
-                )
-            } else {
-                let gvfalbnosh = gvf
-                    .gvfalbnosh
-                    .as_ref()
-                    .expect("gvfalbnosh missing without cache");
-                let gvfalbnosh_e = gvf
-                    .gvfalbnosh_e
-                    .as_ref()
-                    .expect("gvfalbnosh_e missing without cache");
-                let gvfalbnosh_s = gvf
-                    .gvfalbnosh_s
-                    .as_ref()
-                    .expect("gvfalbnosh_s missing without cache");
-                let gvfalbnosh_w = gvf
-                    .gvfalbnosh_w
-                    .as_ref()
-                    .expect("gvfalbnosh_w missing without cache");
-                let gvfalbnosh_n = gvf
-                    .gvfalbnosh_n
-                    .as_ref()
-                    .expect("gvfalbnosh_n missing without cache");
-                compute_kup_with(
-                    gvfalbnosh.view(),
-                    gvfalbnosh_e.view(),
-                    gvfalbnosh_s.view(),
-                    gvfalbnosh_w.view(),
-                    gvfalbnosh_n.view(),
-                )
+            let compute_kup_all = || {
+                if let Some(cache) = gvf_cache_inner {
+                    compute_kup_with(
+                        cache.cached_albnosh.view(),
+                        cache.cached_albnosh_e.view(),
+                        cache.cached_albnosh_s.view(),
+                        cache.cached_albnosh_w.view(),
+                        cache.cached_albnosh_n.view(),
+                    )
+                } else {
+                    let gvfalbnosh = gvf
+                        .gvfalbnosh
+                        .as_ref()
+                        .expect("gvfalbnosh missing without cache");
+                    let gvfalbnosh_e = gvf
+                        .gvfalbnosh_e
+                        .as_ref()
+                        .expect("gvfalbnosh_e missing without cache");
+                    let gvfalbnosh_s = gvf
+                        .gvfalbnosh_s
+                        .as_ref()
+                        .expect("gvfalbnosh_s missing without cache");
+                    let gvfalbnosh_w = gvf
+                        .gvfalbnosh_w
+                        .as_ref()
+                        .expect("gvfalbnosh_w missing without cache");
+                    let gvfalbnosh_n = gvf
+                        .gvfalbnosh_n
+                        .as_ref()
+                        .expect("gvfalbnosh_n missing without cache");
+                    compute_kup_with(
+                        gvfalbnosh.view(),
+                        gvfalbnosh_e.view(),
+                        gvfalbnosh_s.view(),
+                        gvfalbnosh_w.view(),
+                        gvfalbnosh_n.view(),
+                    )
+                }
             };
 
             // Branch: anisotropic vs isotropic
-            let use_aniso = config.use_anisotropic && shmat_v.is_some();
+            let use_aniso = config.use_anisotropic
+                && shmat_v.is_some()
+                && vegshmat_v.is_some()
+                && vbshmat_v.is_some();
 
-            let (
-                kdown,
-                ldown,
-                kside_knorth,
-                kside_keast,
-                kside_ksouth,
-                kside_kwest,
-                lside_lnorth,
-                lside_least,
-                lside_lsouth,
-                lside_lwest,
-                kside_total,
-                lside_total,
-            ) = if use_aniso {
-                // === Anisotropic sky ===
-                let shmat_a = shmat_v.unwrap();
-                let vegshmat_a = vegshmat_v.unwrap();
-                let vbshmat_a = vbshmat_v.unwrap();
+            let (kup, kdown, ldown, kside_dirs_sum, lside_dirs_sum, kside_total, lside_total) =
+                if use_aniso {
+                    // === Anisotropic sky ===
+                    let shmat_a = shmat_v.unwrap();
+                    let vegshmat_a = vegshmat_v.unwrap();
+                    let vbshmat_a = vbshmat_v.unwrap();
 
-                // Perez sky luminance distribution (computed in Rust — no Python round-trip)
-                let lv_arr = crate::perez::perez_v3(
-                    weather.zen_deg,
-                    weather.sun_azimuth,
-                    weather.diffuse_rad,
-                    weather.direct_rad,
-                    weather.jday,
-                    weather.patch_option,
-                );
-                let patch_lut = patch_lut_for_option_cached(weather.patch_option);
-                let patch_altitude_arr = ArrayView1::from(patch_lut.altitudes.as_slice());
-                let patch_azimuth_arr = ArrayView1::from(patch_lut.azimuths.as_slice());
-                let steradians_arr = ArrayView1::from(patch_lut.steradians.as_slice());
-                let patch_altitude_sin_arr = ArrayView1::from(patch_lut.altitude_sin.as_slice());
+                    // Perez sky luminance distribution (computed in Rust — no Python round-trip)
+                    let lv_arr = crate::perez::perez_v3(
+                        weather.zen_deg,
+                        weather.sun_azimuth,
+                        weather.diffuse_rad,
+                        weather.direct_rad,
+                        weather.jday,
+                        weather.patch_option,
+                    );
+                    let patch_lut = patch_lut_for_option_cached(weather.patch_option);
+                    let patch_altitude_arr = ArrayView1::from(patch_lut.altitudes.as_slice());
+                    let patch_azimuth_arr = ArrayView1::from(patch_lut.azimuths.as_slice());
+                    let steradians_arr = ArrayView1::from(patch_lut.steradians.as_slice());
+                    let patch_altitude_sin_arr =
+                        ArrayView1::from(patch_lut.altitude_sin.as_slice());
 
-                // ASVF from SVF (arccos(sqrt(clip(svf, 0, 1)))) cached by SVF buffer.
-                let asvf_cache = asvf_for_svf_cached(svf_v);
-                let asvf_arr = ArrayView2::from_shape(shape, asvf_cache.as_slice())
-                    .expect("ASVF cache shape mismatch");
+                    // ASVF from SVF (arccos(sqrt(clip(svf, 0, 1)))) cached by SVF buffer.
+                    let asvf_cache = asvf_for_svf_cached(svf_v);
+                    let asvf_arr = ArrayView2::from_shape(shape, asvf_cache.as_slice())
+                        .expect("ASVF cache shape mismatch");
 
-                // Esky anisotropic (Jonsson + CI correction)
-                let esky_a = {
-                    let ci = weather.clearness_index;
-                    if ci < 0.95 {
-                        ci * esky + (1.0 - ci)
-                    } else {
-                        esky
-                    }
-                };
-
-                // Full anisotropic sky calculation (ldown, kside, lside totals)
-                // Try GPU path first; fall back to CPU if unavailable.
-                let deg2rad = PI / 180.0;
-                #[allow(unused_variables)]
-                let (lum_chi, rad_tot) = if weather.sun_altitude > 0.0 {
-                    let patch_luminance = lv_arr.column(2);
-                    let mut rad_tot = 0.0f32;
-                    let n_patches = patch_luminance.len();
-                    for i in 0..n_patches {
-                        rad_tot +=
-                            patch_luminance[i] * steradians_arr[i] * patch_altitude_sin_arr[i];
-                    }
-                    if rad_tot > 0.0 {
-                        (patch_luminance.mapv(|lum| (lum * rad_d) / rad_tot), rad_tot)
-                    } else {
-                        (Array1::<f32>::zeros(n_patches), 0.0)
-                    }
-                } else {
-                    (Array1::<f32>::zeros(lv_arr.shape()[0]), 0.0)
-                };
-
-                #[allow(unused_variables)]
-                let (_, esky_band) = crate::emissivity_models::model2(&lv_arr, esky_a, weather.ta);
-
-                let mut lside_dirs = lside_dirs_aniso_from_lup(
-                    delay.lup_e.view(),
-                    delay.lup_s.view(),
-                    delay.lup_w.view(),
-                    delay.lup_n.view(),
-                    valid_v,
-                );
-
-                #[cfg(feature = "gpu")]
-                let gpu_result = if cyl {
-                    if let Some(ctx) = get_aniso_gpu_context() {
-                        if aniso_gpu_overlap_enabled() {
-                            // Overlap mode: start dispatch and complete explicitly.
-                            let gpu_result = ctx
-                                .dispatch_begin(
-                                    shmat_a,
-                                    vegshmat_a,
-                                    vbshmat_a,
-                                    asvf_arr,
-                                    delay.lup.view(),
-                                    delay.lup_e.view(),
-                                    delay.lup_s.view(),
-                                    delay.lup_w.view(),
-                                    delay.lup_n.view(),
-                                    valid_v,
-                                    patch_altitude_arr,
-                                    patch_azimuth_arr,
-                                    steradians_arr,
-                                    esky_band.view(),
-                                    lum_chi.view(),
-                                    weather.sun_altitude,
-                                    weather.sun_azimuth,
-                                    weather.ta,
-                                    cyl,
-                                    config.albedo_wall,
-                                    ground.tg_wall,
-                                    config.emis_wall,
-                                    rad_i,
-                                    rad_d,
-                                    psi,
-                                    rad_tot,
-                                )
-                                .ok();
-                            if let Some(pending) = gpu_result {
-                                ctx.dispatch_end(pending).ok()
-                            } else {
-                                None
-                            }
+                    // Esky anisotropic (Jonsson + CI correction)
+                    let esky_a = {
+                        let ci = weather.clearness_index;
+                        if ci < 0.95 {
+                            ci * esky + (1.0 - ci)
                         } else {
-                            ctx.dispatch(
+                            esky
+                        }
+                    };
+
+                    // Full anisotropic sky calculation (ldown, kside, lside totals)
+                    // Try GPU path first; fall back to CPU if unavailable.
+                    let deg2rad = PI / 180.0;
+                    #[allow(unused_variables)]
+                    let (lum_chi, rad_tot) = if weather.sun_altitude > 0.0 {
+                        let patch_luminance = lv_arr.column(2);
+                        let mut rad_tot = 0.0f32;
+                        let n_patches = patch_luminance.len();
+                        for i in 0..n_patches {
+                            rad_tot +=
+                                patch_luminance[i] * steradians_arr[i] * patch_altitude_sin_arr[i];
+                        }
+                        if rad_tot > 0.0 {
+                            (patch_luminance.mapv(|lum| (lum * rad_d) / rad_tot), rad_tot)
+                        } else {
+                            (Array1::<f32>::zeros(n_patches), 0.0)
+                        }
+                    } else {
+                        (Array1::<f32>::zeros(lv_arr.shape()[0]), 0.0)
+                    };
+
+                    #[allow(unused_variables)]
+                    let (_, esky_band) =
+                        crate::emissivity_models::model2(&lv_arr, esky_a, weather.ta);
+
+                    // Launch anisotropic GPU dispatch early, then compute Kup/lside_dirs
+                    // while GPU work is in flight.
+                    #[cfg(feature = "gpu")]
+                    let mut gpu_ctx = None;
+                    #[cfg(feature = "gpu")]
+                    let mut gpu_pending = None;
+
+                    #[cfg(feature = "gpu")]
+                    if cyl {
+                        if let Some(ctx) = get_aniso_gpu_context() {
+                            match ctx.dispatch_begin(
                                 shmat_a,
                                 vegshmat_a,
                                 vbshmat_a,
                                 asvf_arr,
                                 delay.lup.view(),
-                                delay.lup_e.view(),
-                                delay.lup_s.view(),
-                                delay.lup_w.view(),
-                                delay.lup_n.view(),
                                 valid_v,
                                 patch_altitude_arr,
                                 patch_azimuth_arr,
@@ -1298,266 +1298,291 @@ pub fn compute_timestep(
                                 rad_d,
                                 psi,
                                 rad_tot,
-                            )
-                            .ok()
+                            ) {
+                                Ok(pending) => {
+                                    gpu_ctx = Some(ctx);
+                                    gpu_pending = Some(pending);
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                    "[GPU] Anisotropic dispatch begin failed: {}. CPU fallback.",
+                                    e
+                                );
+                                }
+                            }
+                        }
+                    }
+
+                    // Shared thermal side inputs (always needed in anisotropic mode).
+                    let (kup, kup_e, kup_s, kup_w, kup_n) = compute_kup_all();
+
+                    let lside_dirs_sum = lside_dirs_sum_aniso_from_lup(
+                        delay.lup_e.view(),
+                        delay.lup_s.view(),
+                        delay.lup_w.view(),
+                        delay.lup_n.view(),
+                        valid_v,
+                    );
+
+                    #[cfg(feature = "gpu")]
+                    let gpu_result = if let (Some(ctx), Some(pending)) = (gpu_ctx, gpu_pending) {
+                        match ctx.dispatch_end(pending) {
+                            Ok(gpu) => Some(gpu),
+                            Err(e) => {
+                                eprintln!(
+                                    "[GPU] Anisotropic dispatch end failed: {}. CPU fallback.",
+                                    e
+                                );
+                                None
+                            }
                         }
                     } else {
                         None
-                    }
-                } else {
-                    None
-                };
-
-                // Compute anisotropic sky: GPU path + CPU fallback
-                let mut used_gpu = false;
-                #[allow(unused_mut)]
-                let mut ani_ldown = Array2::<f32>::zeros(shape);
-                #[allow(unused_mut)]
-                let mut ani_lside = Array2::<f32>::zeros(shape);
-                #[allow(unused_mut)]
-                let mut ani_kside = Array2::<f32>::zeros(shape);
-                #[allow(unused_mut)]
-                let mut ani_keast = Array2::<f32>::zeros(shape);
-                #[allow(unused_mut)]
-                let mut ani_ksouth = Array2::<f32>::zeros(shape);
-                #[allow(unused_mut)]
-                let mut ani_kwest = Array2::<f32>::zeros(shape);
-                #[allow(unused_mut)]
-                let mut ani_knorth = Array2::<f32>::zeros(shape);
-                #[allow(unused_mut)]
-                let mut drad = Array2::<f32>::zeros(shape);
-
-                #[cfg(feature = "gpu")]
-                if let Some(gpu) = gpu_result {
-                    // GPU path: derive kside and k-directional from GPU partial outputs
-                    let kside_i = if cyl {
-                        &shadow_f32 * rad_i * (weather.sun_altitude * deg2rad).cos()
-                    } else {
-                        Array2::<f32>::zeros(shape)
                     };
-                    if weather.sun_altitude > 0.0 {
-                        ani_kside = kside_i + &gpu.kside_partial;
-                        ani_keast = &kup_e * 0.5;
-                        ani_ksouth = &kup_s * 0.5;
-                        ani_kwest = &kup_w * 0.5;
-                        ani_knorth = &kup_n * 0.5;
+
+                    // Compute anisotropic sky: GPU path + CPU fallback
+                    let mut used_gpu = false;
+                    #[allow(unused_mut)]
+                    let mut ani_ldown = Array2::<f32>::zeros(shape);
+                    #[allow(unused_mut)]
+                    let mut ani_lside = Array2::<f32>::zeros(shape);
+                    #[allow(unused_mut)]
+                    let mut ani_kside = Array2::<f32>::zeros(shape);
+                    #[allow(unused_mut)]
+                    let mut drad = Array2::<f32>::zeros(shape);
+                    #[allow(unused_mut)]
+                    let mut ani_kside_dirs_sum = Array2::<f32>::zeros(shape);
+
+                    #[cfg(feature = "gpu")]
+                    if let Some(gpu) = gpu_result {
+                        // GPU path: derive kside and k-directional from GPU partial outputs
+                        let kside_i = if cyl {
+                            &shadow_f32 * rad_i * (weather.sun_altitude * deg2rad).cos()
+                        } else {
+                            Array2::<f32>::zeros(shape)
+                        };
+                        if weather.sun_altitude > 0.0 {
+                            ani_kside = kside_i + &gpu.kside_partial;
+                            ani_kside_dirs_sum = kside_dirs_sum_aniso_from_kup(
+                                kup_e.view(),
+                                kup_s.view(),
+                                kup_w.view(),
+                                kup_n.view(),
+                                valid_v,
+                            );
+                        }
+                        ani_ldown = gpu.ldown;
+                        ani_lside = gpu.lside;
+                        drad = gpu.drad;
+                        used_gpu = true;
                     }
-                    ani_ldown = gpu.ldown;
-                    ani_lside = gpu.lside;
-                    drad = gpu.drad;
-                    lside_dirs = crate::vegetation::LsideVegPureResult {
-                        least: gpu.lside_least,
-                        lsouth: gpu.lside_lsouth,
-                        lwest: gpu.lside_lwest,
-                        lnorth: gpu.lside_lnorth,
-                    };
-                    used_gpu = true;
-                }
 
-                if !used_gpu {
-                    // drad via direct accumulation from packed shadow matrices.
-                    // Shadow matrices are bitpacked: 1 bit per patch, 8 patches per byte.
-                    // ani_lum = sum_i((sh_i - (1 - veg_i) * (1 - psi)) * lv_i)
-                    let lv_col2 = lv_arr.column(2);
-                    let ani_lum =
-                        compute_ani_lum_from_packed(shmat_a, vegshmat_a, lv_col2, psi, valid_v);
-                    drad = ani_lum.mapv(|v| v * rad_d);
+                    if !used_gpu {
+                        // drad via direct accumulation from packed shadow matrices.
+                        // Shadow matrices are bitpacked: 1 bit per patch, 8 patches per byte.
+                        // ani_lum = sum_i((sh_i - (1 - veg_i) * (1 - psi)) * lv_i)
+                        let lv_col2 = lv_arr.column(2);
+                        let ani_lum =
+                            compute_ani_lum_from_packed(shmat_a, vegshmat_a, lv_col2, psi, valid_v);
+                        drad = ani_lum.mapv(|v| v * rad_d);
 
-                    let ani = anisotropic_sky_pure(
-                        shmat_a,
-                        vegshmat_a,
-                        vbshmat_a,
-                        weather.sun_altitude,
-                        weather.sun_azimuth,
-                        esky_a,
-                        weather.ta,
-                        cyl,
-                        false, // wall_scheme
-                        config.albedo_wall,
-                        ground.tg_wall,
-                        config.emis_wall,
+                        let ani = anisotropic_sky_pure(
+                            shmat_a,
+                            vegshmat_a,
+                            vbshmat_a,
+                            weather.sun_altitude,
+                            weather.sun_azimuth,
+                            esky_a,
+                            weather.ta,
+                            cyl,
+                            false, // wall_scheme
+                            config.albedo_wall,
+                            ground.tg_wall,
+                            config.emis_wall,
+                            rad_i,
+                            rad_d,
+                            asvf_arr,
+                            lv_arr.view(),
+                            steradians_arr,
+                            delay.lup.view(),
+                            lv_arr.view(),
+                            shadow_f32.view(),
+                            kup_e.view(),
+                            kup_s.view(),
+                            kup_w.view(),
+                            kup_n.view(),
+                            None, // voxel_table
+                            None, // voxel_maps
+                            Some(valid_v),
+                        );
+                        ani_ldown = ani.ldown;
+                        ani_lside = ani.lside;
+                        ani_kside = ani.kside;
+                        ani_kside_dirs_sum = side_sum_from_directional(
+                            ani.knorth.view(),
+                            ani.keast.view(),
+                            ani.ksouth.view(),
+                            ani.kwest.view(),
+                            valid_v,
+                        );
+                    }
+
+                    // Kdown (shared formula, but with anisotropic drad)
+                    let kdown = compute_kdown(
                         rad_i,
                         rad_d,
-                        asvf_arr,
-                        lv_arr.view(),
-                        steradians_arr,
-                        delay.lup.view(),
-                        lv_arr.view(),
+                        rad_g,
                         shadow_f32.view(),
+                        sin_alt,
+                        svfbuveg_v,
+                        config.albedo_wall,
+                        f_sh.view(),
+                        drad.view(),
+                        valid_v,
+                    );
+
+                    // From anisotropic: ldown from ani_sky, lside from lside_veg, kside from ani_sky
+                    (
+                        kup,
+                        kdown,
+                        ani_ldown,
+                        ani_kside_dirs_sum,
+                        lside_dirs_sum,
+                        ani_kside,
+                        ani_lside,
+                    )
+                } else {
+                    // === Isotropic sky ===
+                    let (kup, kup_e, kup_s, kup_w, kup_n) = compute_kup_all();
+
+                    // drad (isotropic diffuse)
+                    let drad = svfbuveg_v.mapv(|sv| rad_d * sv);
+
+                    // Ldown
+                    let ldown = compute_ldown(
+                        esky,
+                        weather.ta,
+                        ground.tg_wall,
+                        svf_v,
+                        svf_veg_v,
+                        svf_aveg_v,
+                        config.emis_wall,
+                        weather.clearness_index,
+                        valid_v,
+                    );
+
+                    // kside_veg (isotropic)
+                    let kside = kside_veg_isotropic_pure(
+                        rad_i,
+                        rad_d,
+                        rad_g,
+                        shadow_f32.view(),
+                        svf_s_v,
+                        svf_w_v,
+                        svf_n_v,
+                        svf_e_v,
+                        svf_veg_e_v,
+                        svf_veg_s_v,
+                        svf_veg_w_v,
+                        svf_veg_n_v,
+                        weather.sun_azimuth,
+                        weather.sun_altitude,
+                        psi,
+                        0.0, // t (instrument offset)
+                        config.albedo_wall,
+                        f_sh.view(),
                         kup_e.view(),
                         kup_s.view(),
                         kup_w.view(),
                         kup_n.view(),
-                        None, // voxel_table
-                        None, // voxel_maps
+                        cyl,
                         Some(valid_v),
                     );
-                    ani_ldown = ani.ldown;
-                    ani_lside = ani.lside;
-                    ani_kside = ani.kside;
-                    ani_keast = ani.keast;
-                    ani_ksouth = ani.ksouth;
-                    ani_kwest = ani.kwest;
-                    ani_knorth = ani.knorth;
-                }
 
-                // Kdown (shared formula, but with anisotropic drad)
-                let kdown = compute_kdown(
-                    rad_i,
-                    rad_d,
-                    rad_g,
-                    shadow_f32.view(),
-                    sin_alt,
-                    svfbuveg_v,
-                    config.albedo_wall,
-                    f_sh.view(),
-                    drad.view(),
-                    valid_v,
-                );
+                    // lside_veg (isotropic)
+                    let lside = lside_veg_pure(
+                        svf_s_v,
+                        svf_w_v,
+                        svf_n_v,
+                        svf_e_v,
+                        svf_veg_e_v,
+                        svf_veg_s_v,
+                        svf_veg_w_v,
+                        svf_veg_n_v,
+                        svf_aveg_e_v,
+                        svf_aveg_s_v,
+                        svf_aveg_w_v,
+                        svf_aveg_n_v,
+                        weather.sun_azimuth,
+                        weather.sun_altitude,
+                        weather.ta,
+                        ground.tg_wall,
+                        SBC,
+                        config.emis_wall,
+                        ldown.view(),
+                        esky,
+                        0.0, // t
+                        f_sh.view(),
+                        weather.clearness_index,
+                        delay.lup_e.view(),
+                        delay.lup_s.view(),
+                        delay.lup_w.view(),
+                        delay.lup_n.view(),
+                        false, // isotropic
+                        Some(valid_v),
+                    );
 
-                // From anisotropic: ldown from ani_sky, lside from lside_veg, kside from ani_sky
-                (
-                    kdown,
-                    ani_ldown,
-                    ani_knorth,
-                    ani_keast,
-                    ani_ksouth,
-                    ani_kwest,
-                    lside_dirs.lnorth,
-                    lside_dirs.least,
-                    lside_dirs.lsouth,
-                    lside_dirs.lwest,
-                    ani_kside,
-                    ani_lside,
-                )
-            } else {
-                // === Isotropic sky ===
+                    // Kdown
+                    let kdown = compute_kdown(
+                        rad_i,
+                        rad_d,
+                        rad_g,
+                        shadow_f32.view(),
+                        sin_alt,
+                        svfbuveg_v,
+                        config.albedo_wall,
+                        f_sh.view(),
+                        drad.view(),
+                        valid_v,
+                    );
 
-                // drad (isotropic diffuse)
-                let drad = svfbuveg_v.mapv(|sv| rad_d * sv);
-
-                // Ldown
-                let ldown = compute_ldown(
-                    esky,
-                    weather.ta,
-                    ground.tg_wall,
-                    svf_v,
-                    svf_veg_v,
-                    svf_aveg_v,
-                    config.emis_wall,
-                    weather.clearness_index,
-                    valid_v,
-                );
-
-                // kside_veg (isotropic)
-                let kside = kside_veg_isotropic_pure(
-                    rad_i,
-                    rad_d,
-                    rad_g,
-                    shadow_f32.view(),
-                    svf_s_v,
-                    svf_w_v,
-                    svf_n_v,
-                    svf_e_v,
-                    svf_veg_e_v,
-                    svf_veg_s_v,
-                    svf_veg_w_v,
-                    svf_veg_n_v,
-                    weather.sun_azimuth,
-                    weather.sun_altitude,
-                    psi,
-                    0.0, // t (instrument offset)
-                    config.albedo_wall,
-                    f_sh.view(),
-                    kup_e.view(),
-                    kup_s.view(),
-                    kup_w.view(),
-                    kup_n.view(),
-                    cyl,
-                    Some(valid_v),
-                );
-
-                // lside_veg (isotropic)
-                let lside = lside_veg_pure(
-                    svf_s_v,
-                    svf_w_v,
-                    svf_n_v,
-                    svf_e_v,
-                    svf_veg_e_v,
-                    svf_veg_s_v,
-                    svf_veg_w_v,
-                    svf_veg_n_v,
-                    svf_aveg_e_v,
-                    svf_aveg_s_v,
-                    svf_aveg_w_v,
-                    svf_aveg_n_v,
-                    weather.sun_azimuth,
-                    weather.sun_altitude,
-                    weather.ta,
-                    ground.tg_wall,
-                    SBC,
-                    config.emis_wall,
-                    ldown.view(),
-                    esky,
-                    0.0, // t
-                    f_sh.view(),
-                    weather.clearness_index,
-                    delay.lup_e.view(),
-                    delay.lup_s.view(),
-                    delay.lup_w.view(),
-                    delay.lup_n.view(),
-                    false, // isotropic
-                    Some(valid_v),
-                );
-
-                // Kdown
-                let kdown = compute_kdown(
-                    rad_i,
-                    rad_d,
-                    rad_g,
-                    shadow_f32.view(),
-                    sin_alt,
-                    svfbuveg_v,
-                    config.albedo_wall,
-                    f_sh.view(),
-                    drad.view(),
-                    valid_v,
-                );
-
-                // Isotropic: kside_total = kside_i, lside_total = zeros
-                (
-                    kdown,
-                    ldown,
-                    kside.knorth,
-                    kside.keast,
-                    kside.ksouth,
-                    kside.kwest,
-                    lside.lnorth,
-                    lside.least,
-                    lside.lsouth,
-                    lside.lwest,
-                    kside.kside_i,
-                    Array2::<f32>::zeros(shape),
-                )
-            };
+                    // Isotropic: kside_total = kside_i, lside_total = zeros
+                    let kside_dirs_sum = side_sum_from_directional(
+                        kside.knorth.view(),
+                        kside.keast.view(),
+                        kside.ksouth.view(),
+                        kside.kwest.view(),
+                        valid_v,
+                    );
+                    let lside_dirs_sum = side_sum_from_directional(
+                        lside.lnorth.view(),
+                        lside.least.view(),
+                        lside.lsouth.view(),
+                        lside.lwest.view(),
+                        valid_v,
+                    );
+                    (
+                        kup,
+                        kdown,
+                        ldown,
+                        kside_dirs_sum,
+                        lside_dirs_sum,
+                        kside.kside_i,
+                        Array2::<f32>::zeros(shape),
+                    )
+                };
 
             let radiation_dur = t_radiation.elapsed();
 
             // ── Step 6: Tmrt ─────────────────────────────────────────────────────
             let t_tmrt = Instant::now();
-            let tmrt = compute_tmrt_pure(
+            let tmrt = compute_tmrt_from_dir_sums_pure(
                 kdown.view(),
                 kup.view(),
                 ldown.view(),
                 delay.lup.view(),
-                kside_knorth.view(),
-                kside_keast.view(),
-                kside_ksouth.view(),
-                kside_kwest.view(),
-                lside_lnorth.view(),
-                lside_least.view(),
-                lside_lsouth.view(),
-                lside_lwest.view(),
+                kside_dirs_sum.view(),
+                lside_dirs_sum.view(),
                 kside_total.view(),
                 lside_total.view(),
                 human.abs_k,
@@ -1594,11 +1619,11 @@ pub fn compute_timestep(
 
             TimestepResultRaw {
                 tmrt,
-                shadow: shadow_f32,
-                kdown,
-                kup,
-                ldown,
-                lup: delay.lup,
+                shadow: if want_shadow { Some(shadow_f32) } else { None },
+                kdown: if want_kdown { Some(kdown) } else { None },
+                kup: if want_kup { Some(kup) } else { None },
+                ldown: if want_ldown { Some(ldown) } else { None },
+                lup: if want_lup { Some(delay.lup) } else { None },
                 timeadd: delay.timeadd,
                 tgmap1: delay.tgmap1,
                 tgmap1_e: delay.tgmap1_e,
@@ -1613,28 +1638,53 @@ pub fn compute_timestep(
     // ── Convert final outputs to PyArrays (needs GIL) ────────────────────
     Ok(TimestepResult {
         tmrt: raw.tmrt.into_pyarray(py).unbind(),
-        shadow: if output_mask_bits & OUT_SHADOW != 0 {
-            Some(raw.shadow.into_pyarray(py).unbind())
+        shadow: if want_shadow {
+            Some(
+                raw.shadow
+                    .expect("shadow missing despite output mask")
+                    .into_pyarray(py)
+                    .unbind(),
+            )
         } else {
             None
         },
-        kdown: if output_mask_bits & OUT_KDOWN != 0 {
-            Some(raw.kdown.into_pyarray(py).unbind())
+        kdown: if want_kdown {
+            Some(
+                raw.kdown
+                    .expect("kdown missing despite output mask")
+                    .into_pyarray(py)
+                    .unbind(),
+            )
         } else {
             None
         },
-        kup: if output_mask_bits & OUT_KUP != 0 {
-            Some(raw.kup.into_pyarray(py).unbind())
+        kup: if want_kup {
+            Some(
+                raw.kup
+                    .expect("kup missing despite output mask")
+                    .into_pyarray(py)
+                    .unbind(),
+            )
         } else {
             None
         },
-        ldown: if output_mask_bits & OUT_LDOWN != 0 {
-            Some(raw.ldown.into_pyarray(py).unbind())
+        ldown: if want_ldown {
+            Some(
+                raw.ldown
+                    .expect("ldown missing despite output mask")
+                    .into_pyarray(py)
+                    .unbind(),
+            )
         } else {
             None
         },
-        lup: if output_mask_bits & OUT_LUP != 0 {
-            Some(raw.lup.into_pyarray(py).unbind())
+        lup: if want_lup {
+            Some(
+                raw.lup
+                    .expect("lup missing despite output mask")
+                    .into_pyarray(py)
+                    .unbind(),
+            )
         } else {
             None
         },

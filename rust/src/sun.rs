@@ -356,10 +356,8 @@ pub fn sun_on_surface_cached(
 ) -> (Array2<f32>, Array2<f32>) {
     let (sizex, sizey) = (lup.nrows(), lup.ncols());
 
-    // Only thermal temp arrays needed (no tempbu, tempalbnosh, tempbubwall)
-    let mut tempLupsh = Array2::<f32>::zeros((sizex, sizey));
-    let mut tempalbsh = Array2::<f32>::zeros((sizex, sizey));
-    let mut tempwallsun = Array2::<f32>::zeros((sizex, sizey));
+    // Only keep the wall latch state; shifted thermal terms are accumulated
+    // directly from source slices to avoid per-step full-grid temp buffers.
     let mut tempbub = Array2::<f32>::zeros((sizex, sizey));
 
     // Thermal accumulators only
@@ -394,44 +392,33 @@ pub fn sun_on_surface_cached(
         let x_c_slice = s![xc1..xc2, yc1..yc2];
         let x_p_slice = s![xp1..xp2, yp1..yp2];
 
-        // Shift thermal arrays only (no buildings, no albnosh)
-        tempLupsh.slice_mut(x_p_slice).assign(&lup.slice(x_c_slice));
-        tempalbsh
-            .slice_mut(x_p_slice)
-            .assign(&albshadow.slice(x_c_slice));
-
-        // Accumulate using reconstructed f from blocking distance
-        // f = 1 if n < blocking_distance[pixel], else 0
-        Zip::from(&mut weightsumLupsh)
-            .and(&tempLupsh)
-            .and(bd)
+        // Accumulate shifted thermal terms directly on active destination slice.
+        // f = 1 if n < blocking_distance[pixel], else 0.
+        Zip::from(weightsumLupsh.slice_mut(x_p_slice))
+            .and(lup.slice(x_c_slice))
+            .and(bd.slice(x_p_slice))
             .for_each(|w, &l, &b| {
                 if n_u16 < b {
                     *w += l;
                 }
             });
-        Zip::from(&mut weightsumalbsh)
-            .and(&tempalbsh)
-            .and(bd)
+        Zip::from(weightsumalbsh.slice_mut(x_p_slice))
+            .and(albshadow.slice(x_c_slice))
+            .and(bd.slice(x_p_slice))
             .for_each(|w, &a, &b| {
                 if n_u16 < b {
                     *w += a;
                 }
             });
 
-        // Wall-sun tracking (thermal — depends on sunwall)
-        tempwallsun
-            .slice_mut(x_p_slice)
-            .assign(&sunwall_mask.slice(x_c_slice));
-        Zip::from(&mut tempbub)
-            .and(&tempwallsun)
-            .and(bd)
+        // Wall-sun latch update on active destination slice.
+        Zip::from(tempbub.slice_mut(x_p_slice))
+            .and(sunwall_mask.slice(x_c_slice))
+            .and(bd.slice(x_p_slice))
             .for_each(|bub, &ws, &b| {
-                if n_u16 < b {
-                    let bv = ws; // f=1, so tempb = ws * 1 = ws
-                    *bub = if *bub + bv > 0. { 1. } else { 0. };
+                if n_u16 < b && *bub + ws > 0. {
+                    *bub = 1.;
                 }
-                // if n >= bd, f=0 so no contribution
             });
 
         weightsumLwall.zip_mut_with(&tempbub, |w, &b| *w += b * lwall);

@@ -53,8 +53,9 @@ Provide the <b>prepared surface directory</b> from "Prepare Surface Data".
 DSM, CDSM, and TDSM are loaded automatically.
 
 <b>Output:</b>
-SVF arrays are saved into the prepared surface directory (svfs.zip,
-shadowmats.npz), replacing any existing SVF files. The SOLWEIG
+SVF arrays are saved into the prepared surface directory (`svfs.zip`).
+Shadow matrices are saved as `shadowmats.npz` when manageable, or kept
+as `svf/&lt;pixel&gt;/shadow_memmaps/` for very large grids. The SOLWEIG
 Calculation algorithm loads these automatically.
 
 <b>Typical runtime:</b>
@@ -151,6 +152,7 @@ Calculation algorithm loads these automatically.
         trunk_ratio = self.parameterAsDouble(parameters, self.TRUNK_RATIO, context)
 
         import os
+        import shutil
         import tempfile
         import zipfile
 
@@ -191,8 +193,16 @@ Calculation algorithm loads these automatically.
         }
 
         rows, cols = dsm_f32.shape
-        if rows * cols > 6_700_000:
-            feedback.pushInfo(f"Large grid ({rows}x{cols} = {rows * cols:,} px) — using tiled GPU computation")
+        from solweig.tiling import compute_max_tile_pixels
+
+        _max_px = compute_max_tile_pixels(context="svf")
+        n_pixels = rows * cols
+        if n_pixels > _max_px:
+            feedback.pushInfo(
+                f"Large grid ({rows}x{cols} = {n_pixels:,} px, limit {_max_px:,}) — using tiled computation"
+            )
+        else:
+            feedback.pushInfo(f"Grid {rows}x{cols} = {n_pixels:,} px — single-pass computation")
 
         try:
             SD._compute_and_cache_svf(
@@ -201,72 +211,113 @@ Calculation algorithm loads these automatically.
                 Path(output_dir),
                 trunk_ratio=trunk_ratio,
                 feedback=feedback,
+                progress_range=(20.0, 90.0),
             )
         except Exception as e:
             raise QgsProcessingException(f"SVF computation failed: {e}") from e
+        if surface.svf is None:
+            raise QgsProcessingException(
+                "SVF computation completed without producing SVF arrays "
+                "(surface.svf is None). Check that the active solweig build "
+                "matches the current plugin code."
+            )
 
         if feedback.isCanceled():
             return {}
 
         feedback.setProgress(90)
 
-        # Save SVF as svfs.zip (format expected by PrecomputedData.prepare())
-        feedback.setProgressText("Saving SVF arrays...")
+        # Reuse exports created by SurfaceData._compute_and_cache_svf when available
+        # to avoid re-running CPU-heavy serialization/compression in this QGIS step.
+        from solweig.cache import pixel_size_tag
 
-        svf_data = surface.svf
-        svf_files = {
-            "svf.tif": svf_data.svf,
-            "svfN.tif": svf_data.svf_north,
-            "svfE.tif": svf_data.svf_east,
-            "svfS.tif": svf_data.svf_south,
-            "svfW.tif": svf_data.svf_west,
-            "svfveg.tif": svf_data.svf_veg,
-            "svfNveg.tif": svf_data.svf_veg_north,
-            "svfEveg.tif": svf_data.svf_veg_east,
-            "svfSveg.tif": svf_data.svf_veg_south,
-            "svfWveg.tif": svf_data.svf_veg_west,
-            "svfaveg.tif": svf_data.svf_aveg,
-            "svfNaveg.tif": svf_data.svf_aveg_north,
-            "svfEaveg.tif": svf_data.svf_aveg_east,
-            "svfSaveg.tif": svf_data.svf_aveg_south,
-            "svfWaveg.tif": svf_data.svf_aveg_west,
-        }
+        cache_dir = Path(output_dir) / "svf" / pixel_size_tag(pixel_size)
+        cache_zip = cache_dir / "svfs.zip"
+        cache_shadow = cache_dir / "shadowmats.npz"
+        cache_shadow_memmaps = cache_dir / "shadow_memmaps"
+        svf_zip_path = Path(output_dir) / "svfs.zip"
+        shadow_path = Path(output_dir) / "shadowmats.npz"
 
-        svf_zip_path = os.path.join(output_dir, "svfs.zip")
-        with tempfile.TemporaryDirectory() as tmpdir:
-            for filename, arr in svf_files.items():
-                tif_path = os.path.join(tmpdir, filename)
-                self.save_georeferenced_output(
-                    array=arr,
-                    output_path=tif_path,
-                    geotransform=geotransform,
-                    crs_wkt=crs_wkt,
-                    feedback=feedback,
-                )
-            with zipfile.ZipFile(svf_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for filename in svf_files:
-                    zf.write(os.path.join(tmpdir, filename), filename)
+        copied_zip = False
+        if cache_zip.exists():
+            feedback.setProgressText("Finalizing SVF arrays...")
+            shutil.copy2(cache_zip, svf_zip_path)
+            feedback.pushInfo(f"Copied SVF arrays from cache: {svf_zip_path}")
+            copied_zip = True
+        else:
+            feedback.pushInfo("SVF cache zip not found; generating svfs.zip from in-memory arrays")
 
-        feedback.pushInfo(f"Saved SVF arrays: {svf_zip_path}")
+        if not copied_zip:
+            # Save SVF as svfs.zip (format expected by PrecomputedData.prepare())
+            feedback.setProgressText("Saving SVF arrays...")
 
-        # Save shadow matrices as shadowmats.npz (for anisotropic sky)
-        feedback.setProgressText("Saving shadow matrices...")
+            svf_data = surface.svf
+            svf_files = {
+                "svf.tif": svf_data.svf,
+                "svfN.tif": svf_data.svf_north,
+                "svfE.tif": svf_data.svf_east,
+                "svfS.tif": svf_data.svf_south,
+                "svfW.tif": svf_data.svf_west,
+                "svfveg.tif": svf_data.svf_veg,
+                "svfNveg.tif": svf_data.svf_veg_north,
+                "svfEveg.tif": svf_data.svf_veg_east,
+                "svfSveg.tif": svf_data.svf_veg_south,
+                "svfWveg.tif": svf_data.svf_veg_west,
+                "svfaveg.tif": svf_data.svf_aveg,
+                "svfNaveg.tif": svf_data.svf_aveg_north,
+                "svfEaveg.tif": svf_data.svf_aveg_east,
+                "svfSaveg.tif": svf_data.svf_aveg_south,
+                "svfWaveg.tif": svf_data.svf_aveg_west,
+            }
 
-        sm = surface.shadow_matrices
-        shmat_u8 = np.array(sm._shmat_u8)
-        vegshmat_u8 = np.array(sm._vegshmat_u8)
-        vbshmat_u8 = np.array(sm._vbshmat_u8)
+            with tempfile.TemporaryDirectory() as tmpdir:
+                for filename, arr in svf_files.items():
+                    tif_path = os.path.join(tmpdir, filename)
+                    self.save_georeferenced_output(
+                        array=arr,
+                        output_path=tif_path,
+                        geotransform=geotransform,
+                        crs_wkt=crs_wkt,
+                        feedback=feedback,
+                    )
+                with zipfile.ZipFile(str(svf_zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
+                    for filename in svf_files:
+                        zf.write(os.path.join(tmpdir, filename), filename)
 
-        shadow_path = os.path.join(output_dir, "shadowmats.npz")
-        np.savez_compressed(
-            shadow_path,
-            shadowmat=shmat_u8,
-            vegshadowmat=vegshmat_u8,
-            vbshmat=vbshmat_u8,
-            patch_count=np.array(sm.patch_count),
-        )
+            feedback.pushInfo(f"Saved SVF arrays: {svf_zip_path}")
 
-        feedback.pushInfo(f"Saved shadow matrices: {shadow_path}")
+        copied_shadow = False
+        if cache_shadow.exists():
+            feedback.setProgressText("Finalizing shadow matrices...")
+            shutil.copy2(cache_shadow, shadow_path)
+            feedback.pushInfo(f"Copied shadow matrices from cache: {shadow_path}")
+            copied_shadow = True
+        elif cache_shadow_memmaps.exists() and (cache_shadow_memmaps / "metadata.json").exists():
+            feedback.pushInfo(
+                f"Using shadow memmap cache (skipping shadowmats.npz export for large grid): {cache_shadow_memmaps}"
+            )
+            copied_shadow = True
+        else:
+            feedback.pushInfo("Shadow cache not found; generating shadowmats.npz from in-memory arrays")
+
+        if not copied_shadow:
+            # Save shadow matrices as shadowmats.npz (for anisotropic sky)
+            feedback.setProgressText("Saving shadow matrices...")
+
+            sm = surface.shadow_matrices
+            shmat_u8 = np.array(sm._shmat_u8)
+            vegshmat_u8 = np.array(sm._vegshmat_u8)
+            vbshmat_u8 = np.array(sm._vbshmat_u8)
+
+            np.savez_compressed(
+                str(shadow_path),
+                shadowmat=shmat_u8,
+                vegshadowmat=vegshmat_u8,
+                vbshmat=vbshmat_u8,
+                patch_count=np.array(sm.patch_count),
+            )
+
+            feedback.pushInfo(f"Saved shadow matrices: {shadow_path}")
 
         computation_time = time.time() - start_time
         feedback.setProgress(100)

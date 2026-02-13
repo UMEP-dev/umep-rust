@@ -117,7 +117,7 @@ def compute_shadows(
 
     Returns:
         ShadowBundle containing:
-            - shadow: Combined shadow fraction (0=sun, 1=shadow)
+            - shadow: Combined shadow fraction (1=sunlit, 0=shaded)
             - bldg_sh: Building shadow only
             - veg_sh: Vegetation shadow only
             - wallsun: Wall sun exposure (for wall temperature)

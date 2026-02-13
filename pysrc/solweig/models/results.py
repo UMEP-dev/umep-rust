@@ -33,7 +33,7 @@ class SolweigResult:
         tmrt: Mean Radiant Temperature grid (°C).
         utci: Universal Thermal Climate Index grid (°C). Optional.
         pet: Physiological Equivalent Temperature grid (°C). Optional.
-        shadow: Shadow mask (1=shadow, 0=sunlit).
+        shadow: Shadow mask (1=sunlit, 0=shaded).
         kdown: Downwelling shortwave radiation (W/m²).
         kup: Upwelling shortwave radiation (W/m²).
         ldown: Downwelling longwave radiation (W/m²).

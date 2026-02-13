@@ -24,6 +24,7 @@ from solweig.tiling import (
     _resolve_inflight_limit,
     _resolve_tile_workers,
     calculate_buffer_distance,
+    compute_max_tile_pixels,
     compute_max_tile_side,
     generate_tiles,
     validate_tile_size,
@@ -681,6 +682,46 @@ class TestCalculateBufferDistance:
 # ---------------------------------------------------------------------------
 
 
+class TestComputeMaxTilePixels:
+    """Tests for compute_max_tile_pixels() in tiling.py."""
+
+    def test_backend_without_hint_uses_single_buffer_estimate(self, monkeypatch):
+        """Unknown backend should use largest-single-buffer bytes/pixel estimate."""
+        max_buf = 1_000_000_000  # bytes (1 GB — large enough to exceed MIN_TILE_SIZE²)
+        headroom = compute_max_tile_pixels.__globals__["_GPU_HEADROOM"]
+
+        monkeypatch.setattr(solweig, "get_gpu_limits", lambda: {"max_buffer_size": max_buf})
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_total_ram_bytes", lambda: None)
+
+        svf_pixels = compute_max_tile_pixels(context="svf")
+        solweig_pixels = compute_max_tile_pixels(context="solweig")
+
+        expected_svf = int(max_buf * headroom) // 60  # _SVF_GPU_SINGLE_BPP
+        expected_solweig = int(max_buf * headroom) // 40  # _SHADOW_GPU_SINGLE_BPP
+
+        assert svf_pixels == expected_svf
+        assert solweig_pixels == expected_solweig
+        assert svf_pixels < solweig_pixels
+
+    def test_metal_backend_uses_total_working_set_estimate(self, monkeypatch):
+        """Metal backend should constrain by aggregate GPU working-set bytes/pixel."""
+        max_buf = 1_000_000_000  # bytes (1 GB — large enough to exceed MIN_TILE_SIZE²)
+        headroom = compute_max_tile_pixels.__globals__["_GPU_HEADROOM"]
+
+        monkeypatch.setattr(solweig, "get_gpu_limits", lambda: {"max_buffer_size": max_buf, "backend": "Metal"})
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_total_ram_bytes", lambda: None)
+
+        svf_pixels = compute_max_tile_pixels(context="svf")
+        solweig_pixels = compute_max_tile_pixels(context="solweig")
+
+        expected_svf = int(max_buf * headroom) // 384  # _SVF_GPU_TOTAL_BPP
+        expected_solweig = int(max_buf * headroom) // 120  # _SHADOW_GPU_TOTAL_BPP
+
+        assert svf_pixels == expected_svf
+        assert solweig_pixels == expected_solweig
+        assert svf_pixels < solweig_pixels
+
+
 class TestValidateTileSize:
     """Tests for validate_tile_size() — tile_size is core (excluding overlap)."""
 
@@ -706,13 +747,14 @@ class TestValidateTileSize:
         assert warning is not None
         assert "exceeds resource limit" in warning
 
-    def test_large_buffer_keeps_minimum_core(self):
-        """When buffer nearly exhausts resources, core stays at MIN_TILE_SIZE."""
+    def test_large_buffer_allows_subminimum_core_to_respect_limit(self):
+        """When overlap is huge, core may drop below MIN_TILE_SIZE to keep full tile valid."""
         max_full = compute_max_tile_side(context="solweig")
         # Buffer so large that max_core < MIN_TILE_SIZE
         huge_buffer = (max_full - MIN_TILE_SIZE) // 2 + 100
         adjusted, warning = validate_tile_size(800, buffer_pixels=huge_buffer, pixel_size=1.0)
-        assert adjusted == MIN_TILE_SIZE
+        max_core = max_full - 2 * huge_buffer
+        assert adjusted == max(1, max_core)
         assert warning is not None
 
     def test_exact_minimum(self):

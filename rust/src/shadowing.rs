@@ -74,6 +74,7 @@ pub fn is_gpu_enabled() -> bool {
 ///
 /// Keys:
 ///   - "max_buffer_size": u64 — largest single wgpu buffer in bytes
+///   - "backend": str — GPU backend name ("Metal", "Vulkan", "Dx12", "Gl", etc.)
 ///
 /// Initialises the GPU context lazily on first call.
 pub fn gpu_limits(py: Python<'_>) -> PyResult<Option<PyObject>> {
@@ -83,6 +84,7 @@ pub fn gpu_limits(py: Python<'_>) -> PyResult<Option<PyObject>> {
     };
     let dict = pyo3::types::PyDict::new(py);
     dict.set_item("max_buffer_size", ctx.max_buffer_size)?;
+    dict.set_item("backend", format!("{:?}", ctx.backend))?;
     Ok(Some(dict.into()))
 }
 
@@ -140,6 +142,7 @@ pub(crate) fn calculate_shadows_rust(
     aspect_view_opt: Option<ArrayView2<f32>>,
     walls_scheme_view_opt: Option<ArrayView2<f32>>,
     aspect_scheme_view_opt: Option<ArrayView2<f32>>,
+    need_full_wall_outputs: bool,
     min_sun_elev_deg: f32,
 ) -> ShadowingResultRust {
     let shape = dsm_view.shape();
@@ -156,11 +159,27 @@ pub(crate) fn calculate_shadows_rust(
             bldg_sh: Array2::<f32>::ones(dim),
             veg_sh: Array2::<f32>::ones(dim),
             veg_blocks_bldg_sh: Array2::<f32>::ones(dim),
-            wall_sh: walls_view_opt.map(|_| Array2::<f32>::zeros(dim)),
+            wall_sh: if need_full_wall_outputs {
+                walls_view_opt.map(|_| Array2::<f32>::zeros(dim))
+            } else {
+                None
+            },
             wall_sun: walls_view_opt.map(|w| w.to_owned()),
-            wall_sh_veg: walls_view_opt.map(|_| Array2::<f32>::zeros(dim)),
-            face_sh: walls_view_opt.map(|_| Array2::<f32>::zeros(dim)),
-            face_sun: walls_view_opt.map(|w| w.mapv(|v| if v > 0.0 { 1.0 } else { 0.0 })),
+            wall_sh_veg: if need_full_wall_outputs {
+                walls_view_opt.map(|_| Array2::<f32>::zeros(dim))
+            } else {
+                None
+            },
+            face_sh: if need_full_wall_outputs {
+                walls_view_opt.map(|_| Array2::<f32>::zeros(dim))
+            } else {
+                None
+            },
+            face_sun: if need_full_wall_outputs {
+                walls_view_opt.map(|w| w.mapv(|v| if v > 0.0 { 1.0 } else { 0.0 }))
+            } else {
+                None
+            },
             sh_on_wall: walls_scheme_view_opt.map(|_| Array2::<f32>::zeros(dim)),
         };
     }
@@ -177,6 +196,8 @@ pub(crate) fn calculate_shadows_rust(
                 bush_view_opt,
                 walls_view_opt,
                 aspect_view_opt,
+                walls_scheme_view_opt.is_some() && aspect_scheme_view_opt.is_some(),
+                need_full_wall_outputs,
                 azimuth_deg,
                 altitude_deg,
                 scale,
@@ -258,25 +279,26 @@ pub(crate) fn calculate_shadows_rust(
         && bush_view_opt.is_some();
 
     // Allocate arrays for vegetation only if all inputs are present
-    let (mut veg_sh, mut veg_blocks_bldg_sh, mut propagated_veg_sh_height) = if veg_inputs_present {
-        let bush_view = bush_view_opt.as_ref().unwrap();
-        let veg_canopy_dsm_view = veg_canopy_dsm_view_opt.as_ref().unwrap();
-        (
-            bush_view.mapv(|v| if v > 1.0 { 1.0 } else { 0.0 }),
-            Array2::<f32>::zeros(dim),
-            {
-                let mut arr = Array2::<f32>::zeros(dim);
-                arr.assign(veg_canopy_dsm_view);
-                arr
-            },
-        )
-    } else {
-        (
-            Array2::<f32>::zeros(dim),
-            Array2::<f32>::zeros(dim),
-            Array2::<f32>::zeros(dim),
-        )
-    };
+    let (mut veg_sh, mut veg_blocks_bldg_sh, mut propagated_veg_sh_height) =
+        if let (Some(bush_view), Some(veg_canopy_dsm_view)) =
+            (bush_view_opt, veg_canopy_dsm_view_opt)
+        {
+            (
+                bush_view.mapv(|v| if v > 1.0 { 1.0 } else { 0.0 }),
+                Array2::<f32>::zeros(dim),
+                {
+                    let mut arr = Array2::<f32>::zeros(dim);
+                    arr.assign(&veg_canopy_dsm_view);
+                    arr
+                },
+            )
+        } else {
+            (
+                Array2::<f32>::zeros(dim),
+                Array2::<f32>::zeros(dim),
+                Array2::<f32>::zeros(dim),
+            )
+        };
 
     let mut bldg_sh = Array2::<f32>::zeros(dim);
     let mut propagated_bldg_sh_height = Array2::<f32>::zeros(dim);
@@ -377,10 +399,9 @@ pub(crate) fn calculate_shadows_rust(
             });
 
             // Vegetation shadow calculation on the slice
-            if veg_inputs_present {
-                let veg_canopy_dsm_view = veg_canopy_dsm_view_opt.as_ref().unwrap();
-                let veg_trunk_dsm_view = veg_trunk_dsm_view_opt.as_ref().unwrap();
-
+            if let (Some(veg_canopy_dsm_view), Some(veg_trunk_dsm_view)) =
+                (veg_canopy_dsm_view_opt, veg_trunk_dsm_view_opt)
+            {
                 let veg_canopy_src_slice =
                     veg_canopy_dsm_view.slice(s![xc1c..xc1c + minx, yc1c..yc1c + miny]);
                 let mut prop_veg_h_dst_slice =
@@ -716,9 +737,18 @@ pub fn calculate_shadows_wall_ht_25(
     let num_veg_inputs = veg_inputs_provided.iter().filter(|&&x| x).count();
 
     let (veg_canopy_dsm_view_opt, veg_trunk_dsm_view_opt, bush_view_opt) = if num_veg_inputs == 3 {
-        let veg_canopy_view = veg_canopy_dsm.as_ref().unwrap().as_array();
-        let veg_trunk_view = veg_trunk_dsm.as_ref().unwrap().as_array();
-        let bush_view = bush.as_ref().unwrap().as_array();
+        let veg_canopy_view = veg_canopy_dsm
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("veg_canopy_dsm is missing"))?
+            .as_array();
+        let veg_trunk_view = veg_trunk_dsm
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("veg_trunk_dsm is missing"))?
+            .as_array();
+        let bush_view = bush
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("bush is missing"))?
+            .as_array();
         if veg_canopy_view.shape() != shape {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "veg_canopy_dsm must have the same shape as dsm.",
@@ -800,6 +830,7 @@ pub fn calculate_shadows_wall_ht_25(
         aspect_view_opt,
         walls_scheme_view_opt,
         aspect_scheme_view_opt,
+        true,
         min_sun_elev_deg.unwrap_or(5.0_f32),
     );
 

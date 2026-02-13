@@ -1,5 +1,22 @@
-use ndarray::{Array2, ArrayView2};
+use ndarray::{Array2, Array3, ArrayView2};
 use std::sync::Arc;
+
+/// Ensures mapped staging buffers are always unmapped on scope exit.
+struct MappedBufferGuard<'a> {
+    buffer: &'a wgpu::Buffer,
+}
+
+impl<'a> MappedBufferGuard<'a> {
+    fn new(buffer: &'a wgpu::Buffer) -> Self {
+        Self { buffer }
+    }
+}
+
+impl Drop for MappedBufferGuard<'_> {
+    fn drop(&mut self) {
+        self.buffer.unmap();
+    }
+}
 
 /// Result struct for GPU shadow calculations
 pub struct GpuShadowResult {
@@ -27,23 +44,41 @@ pub struct SvfShadowResult {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct SvfAccumParams {
     total_pixels: u32,
+    cols: u32,
+    rows: u32,
     weight_iso: f32,
     weight_n: f32,
     weight_e: f32,
     weight_s: f32,
     weight_w: f32,
     has_veg: u32,
-    _padding: u32,
+    _pad0: u32,
+    _pad1: u32,
 }
 
-/// Uniform buffer matching the U8PackParams struct in shadow_to_u8.wgsl.
+/// Uniform buffer matching the U8PackParams struct in shadow_to_bitpack.wgsl.
 #[repr(C)]
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 struct U8PackParams {
     total_pixels: u32,
-    num_quads: u32,
+    cols: u32,
+    rows: u32,
+    n_pack: u32,
+    matrix_words: u32,
     has_veg: u32,
-    _padding: u32,
+    patch_byte_idx: u32,
+    patch_bit_mask: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+    _pad3: u32,
+}
+
+/// Bitpacked shadow matrices produced by GPU SVF path.
+pub struct SvfBitpackedShadowResult {
+    pub bldg_sh_matrix: Array3<u8>,
+    pub veg_sh_matrix: Array3<u8>,
+    pub veg_blocks_bldg_sh_matrix: Array3<u8>,
 }
 
 /// Result of GPU SVF accumulation — 15 arrays (5 building + 5 veg + 5 aveg).
@@ -106,12 +141,32 @@ struct CachedBuffers {
     svf_bind_group: Option<wgpu::BindGroup>,
     svf_has_veg: bool,
     svf_num_arrays: usize, // 5 (no veg) or 15 (with veg)
-    // --- Shadow uint8 packing + double-buffered staging ---
+    // --- Shadow bitpack accumulation (GPU-side across patches) ---
     shadow_u8_params_buffer: Option<wgpu::Buffer>,
     shadow_u8_output_buffer: Option<wgpu::Buffer>,
-    shadow_u8_staging: [Option<wgpu::Buffer>; 2],
+    shadow_u8_staging: Option<wgpu::Buffer>,
     shadow_u8_bind_group: Option<wgpu::BindGroup>,
     shadow_u8_packed_size: u64, // total bytes in packed output
+    shadow_u8_n_pack: usize,
+    shadow_u8_matrix_bytes: usize,
+    shadow_u8_matrix_words: usize,
+    shadow_u8_num_matrices: usize,
+    // Signature of static inputs currently uploaded to GPU.
+    last_static_input_sig: Option<StaticShadowInputSig>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct StaticShadowInputSig {
+    dsm_ptr: usize,
+    veg_canopy_ptr: usize,
+    veg_trunk_ptr: usize,
+    bush_ptr: usize,
+    walls_ptr: usize,
+    aspect_ptr: usize,
+    rows: usize,
+    cols: usize,
+    has_veg: bool,
+    has_walls: bool,
 }
 
 /// GPU context for shadow calculations - maintains GPU resources across multiple calls
@@ -120,6 +175,10 @@ pub struct ShadowGpuContext {
     pub(crate) queue: Arc<wgpu::Queue>,
     /// Adapter-reported maximum single buffer size in bytes.
     pub(crate) max_buffer_size: u64,
+    /// Adapter-reported maximum workgroups per dispatch dimension.
+    max_compute_workgroups_per_dimension: u32,
+    /// GPU backend (Metal, Vulkan, Dx12, Gl, etc.).
+    pub(crate) backend: wgpu::Backend,
     pipeline: wgpu::ComputePipeline,
     wall_pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -489,15 +548,15 @@ impl ShadowGpuContext {
             cache: None,
         });
 
-        // --- Shadow uint8 packing pipeline ---
+        // --- Shadow bitpack accumulation pipeline ---
         let shadow_u8_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Shadow U8 Pack Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shadow_to_u8.wgsl").into()),
+            label: Some("Shadow Bitpack Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shadow_to_bitpack.wgsl").into()),
         });
 
         let shadow_u8_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Shadow U8 Pack Bind Group Layout"),
+                label: Some("Shadow Bitpack Bind Group Layout"),
                 entries: &[
                     // Binding 0: Uniform params
                     wgpu::BindGroupLayoutEntry {
@@ -543,7 +602,7 @@ impl ShadowGpuContext {
                         },
                         count: None,
                     },
-                    // Binding 4: packed_output (read_write)
+                    // Binding 4: packed_output bit matrices (read_write)
                     wgpu::BindGroupLayoutEntry {
                         binding: 4,
                         visibility: wgpu::ShaderStages::COMPUTE,
@@ -559,24 +618,29 @@ impl ShadowGpuContext {
 
         let shadow_u8_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Shadow U8 Pack Pipeline Layout"),
+                label: Some("Shadow Bitpack Pipeline Layout"),
                 bind_group_layouts: &[&shadow_u8_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
         let shadow_u8_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Shadow U8 Pack Pipeline"),
+            label: Some("Shadow Bitpack Pipeline"),
             layout: Some(&shadow_u8_pipeline_layout),
             module: &shadow_u8_shader,
-            entry_point: Some("shadow_to_u8"),
+            entry_point: Some("shadow_to_bitpack"),
             compilation_options: Default::default(),
             cache: None,
         });
+
+        let backend = adapter.get_info().backend;
 
         Ok(Self {
             device,
             queue,
             max_buffer_size: adapter_limits.max_buffer_size,
+            max_compute_workgroups_per_dimension: adapter_limits
+                .max_compute_workgroups_per_dimension,
+            backend,
             pipeline,
             wall_pipeline,
             bind_group_layout,
@@ -586,6 +650,26 @@ impl ShadowGpuContext {
             shadow_u8_bind_group_layout,
             cached: std::sync::Mutex::new(None),
         })
+    }
+
+    fn checked_workgroups_2d(
+        &self,
+        rows: usize,
+        cols: usize,
+        workgroup_x: u32,
+        workgroup_y: u32,
+        label: &str,
+    ) -> Result<(u32, u32), String> {
+        let workgroups_x = (cols as u32).div_ceil(workgroup_x);
+        let workgroups_y = (rows as u32).div_ceil(workgroup_y);
+        let limit = self.max_compute_workgroups_per_dimension;
+        if workgroups_x > limit || workgroups_y > limit {
+            return Err(format!(
+                "{} dispatch exceeds GPU workgroup limit {}: got ({}, {}) for grid {}x{} and workgroup {}x{}",
+                label, limit, workgroups_x, workgroups_y, rows, cols, workgroup_x, workgroup_y
+            ));
+        }
+        Ok((workgroups_x, workgroups_y))
     }
 
     /// Allocate a fresh set of GPU buffers for the given grid dimensions.
@@ -758,9 +842,14 @@ impl ShadowGpuContext {
             svf_num_arrays: 0,
             shadow_u8_params_buffer: None,
             shadow_u8_output_buffer: None,
-            shadow_u8_staging: [None, None],
+            shadow_u8_staging: None,
             shadow_u8_bind_group: None,
             shadow_u8_packed_size: 0,
+            shadow_u8_n_pack: 0,
+            shadow_u8_matrix_bytes: 0,
+            shadow_u8_matrix_words: 0,
+            shadow_u8_num_matrices: 0,
+            last_static_input_sig: None,
         }
     }
 
@@ -774,6 +863,8 @@ impl ShadowGpuContext {
         bush_opt: Option<ArrayView2<f32>>,
         walls_opt: Option<ArrayView2<f32>>,
         aspect_opt: Option<ArrayView2<f32>>,
+        need_propagated_veg_height: bool,
+        need_full_wall_outputs: bool,
         azimuth_deg: f32,
         altitude_deg: f32,
         scale: f32,
@@ -787,33 +878,6 @@ impl ShadowGpuContext {
         let has_veg =
             veg_canopy_dsm_opt.is_some() && veg_trunk_dsm_opt.is_some() && bush_opt.is_some();
         let has_walls = walls_opt.is_some() && aspect_opt.is_some();
-
-        // Helper to get contiguous slice or allocate temp buffer
-        let get_slice = |view: ArrayView2<f32>| -> Vec<f32> {
-            if view.is_standard_layout() {
-                view.as_slice().unwrap().to_vec()
-            } else {
-                view.iter().copied().collect()
-            }
-        };
-
-        // Use slice directly when contiguous, otherwise allocate
-        let dsm_data = get_slice(dsm);
-        let veg_canopy_data = veg_canopy_dsm_opt
-            .map(get_slice)
-            .unwrap_or_else(|| vec![0.0; total_pixels]);
-        let veg_trunk_data = veg_trunk_dsm_opt
-            .map(get_slice)
-            .unwrap_or_else(|| vec![0.0; total_pixels]);
-        let bush_data = bush_opt
-            .map(get_slice)
-            .unwrap_or_else(|| vec![0.0; total_pixels]);
-        let walls_data = walls_opt
-            .map(get_slice)
-            .unwrap_or_else(|| vec![0.0; total_pixels]);
-        let aspect_data = aspect_opt
-            .map(get_slice)
-            .unwrap_or_else(|| vec![0.0; total_pixels]);
 
         // Precompute trigonometric values
         let azimuth_rad = azimuth_deg.to_radians();
@@ -858,48 +922,52 @@ impl ShadowGpuContext {
         }
 
         let buffers = cache_guard
-            .as_ref()
+            .as_mut()
             .ok_or_else(|| "Buffer cache unexpectedly empty".to_string())?;
 
         let buffer_size = (total_pixels * std::mem::size_of::<f32>()) as u64;
 
-        // Write input data into cached buffers
+        // Dynamic params change every timestep.
         self.queue
             .write_buffer(&buffers.params_buffer, 0, bytemuck::cast_slice(&[params]));
-        self.queue
-            .write_buffer(&buffers.dsm_buffer, 0, bytemuck::cast_slice(&dsm_data));
-        self.queue.write_buffer(
-            &buffers.veg_canopy_buffer,
-            0,
-            bytemuck::cast_slice(&veg_canopy_data),
-        );
-        self.queue.write_buffer(
-            &buffers.veg_trunk_buffer,
-            0,
-            bytemuck::cast_slice(&veg_trunk_data),
-        );
-        self.queue
-            .write_buffer(&buffers.bush_buffer, 0, bytemuck::cast_slice(&bush_data));
-        self.queue
-            .write_buffer(&buffers.walls_buffer, 0, bytemuck::cast_slice(&walls_data));
-        self.queue.write_buffer(
-            &buffers.aspect_buffer,
-            0,
-            bytemuck::cast_slice(&aspect_data),
-        );
 
-        // Initialize working buffers (shader modifies these, must reset each call)
-        self.queue.write_buffer(
-            &buffers.propagated_bldg_height_buffer,
-            0,
-            bytemuck::cast_slice(&dsm_data),
-        );
-        if has_veg {
-            self.queue.write_buffer(
-                &buffers.propagated_veg_height_buffer,
-                0,
-                bytemuck::cast_slice(&veg_canopy_data),
-            );
+        // Static inputs are invariant across timesteps for a tile; avoid
+        // re-uploading when backing arrays are unchanged.
+        let static_sig = StaticShadowInputSig {
+            dsm_ptr: dsm.as_ptr() as usize,
+            veg_canopy_ptr: veg_canopy_dsm_opt.map_or(0, |a| a.as_ptr() as usize),
+            veg_trunk_ptr: veg_trunk_dsm_opt.map_or(0, |a| a.as_ptr() as usize),
+            bush_ptr: bush_opt.map_or(0, |a| a.as_ptr() as usize),
+            walls_ptr: walls_opt.map_or(0, |a| a.as_ptr() as usize),
+            aspect_ptr: aspect_opt.map_or(0, |a| a.as_ptr() as usize),
+            rows,
+            cols,
+            has_veg,
+            has_walls,
+        };
+
+        if buffers.last_static_input_sig != Some(static_sig) {
+            Self::write_2d_f32(&self.queue, &buffers.dsm_buffer, &dsm);
+            if has_veg {
+                let veg_canopy = veg_canopy_dsm_opt
+                    .ok_or_else(|| "Vegetation canopy missing despite has_veg=true".to_string())?;
+                let veg_trunk = veg_trunk_dsm_opt
+                    .ok_or_else(|| "Vegetation trunk missing despite has_veg=true".to_string())?;
+                let bush = bush_opt
+                    .ok_or_else(|| "Bush raster missing despite has_veg=true".to_string())?;
+                Self::write_2d_f32(&self.queue, &buffers.veg_canopy_buffer, &veg_canopy);
+                Self::write_2d_f32(&self.queue, &buffers.veg_trunk_buffer, &veg_trunk);
+                Self::write_2d_f32(&self.queue, &buffers.bush_buffer, &bush);
+            }
+            if has_walls {
+                let walls =
+                    walls_opt.ok_or_else(|| "Walls missing despite has_walls=true".to_string())?;
+                let aspect = aspect_opt
+                    .ok_or_else(|| "Aspect missing despite has_walls=true".to_string())?;
+                Self::write_2d_f32(&self.queue, &buffers.walls_buffer, &walls);
+                Self::write_2d_f32(&self.queue, &buffers.aspect_buffer, &aspect);
+            }
+            buffers.last_static_input_sig = Some(static_sig);
         }
 
         // Encode and submit compute passes
@@ -909,10 +977,33 @@ impl ShadowGpuContext {
                 label: Some("Shadow Compute Encoder"),
             });
 
+        // Reset mutable propagation buffers from static input buffers on-GPU.
+        encoder.copy_buffer_to_buffer(
+            &buffers.dsm_buffer,
+            0,
+            &buffers.propagated_bldg_height_buffer,
+            0,
+            buffer_size,
+        );
+        if has_veg {
+            encoder.copy_buffer_to_buffer(
+                &buffers.veg_canopy_buffer,
+                0,
+                &buffers.propagated_veg_height_buffer,
+                0,
+                buffer_size,
+            );
+        }
+
         let workgroup_size_x = 16;
         let workgroup_size_y = 16;
-        let num_workgroups_x = (cols as u32 + workgroup_size_x - 1) / workgroup_size_x;
-        let num_workgroups_y = (rows as u32 + workgroup_size_y - 1) / workgroup_size_y;
+        let (num_workgroups_x, num_workgroups_y) = self.checked_workgroups_2d(
+            rows,
+            cols,
+            workgroup_size_x,
+            workgroup_size_y,
+            "shadow propagation",
+        )?;
 
         // First pass: Main shadow propagation
         {
@@ -936,170 +1027,210 @@ impl ShadowGpuContext {
             compute_pass.dispatch_workgroups(num_workgroups_x, num_workgroups_y, 1);
         }
 
-        // Copy results to cached staging buffer
+        // Copy only required outputs to staging to reduce readback bandwidth.
+        let include_prop_veg = has_veg && need_propagated_veg_height;
+        let mut write_offset = 0u64;
         encoder.copy_buffer_to_buffer(
             &buffers.bldg_shadow_buffer,
             0,
             &buffers.staging_buffer,
-            0,
+            write_offset,
             buffer_size,
         );
+        write_offset += buffer_size;
 
-        // Copy vegetation outputs if enabled
-        let veg_offset = buffer_size;
         if has_veg {
             encoder.copy_buffer_to_buffer(
                 &buffers.veg_shadow_buffer,
                 0,
                 &buffers.staging_buffer,
-                veg_offset,
+                write_offset,
                 buffer_size,
             );
+            write_offset += buffer_size;
             encoder.copy_buffer_to_buffer(
                 &buffers.veg_blocks_bldg_shadow_buffer,
                 0,
                 &buffers.staging_buffer,
-                veg_offset + buffer_size,
+                write_offset,
                 buffer_size,
             );
-            encoder.copy_buffer_to_buffer(
-                &buffers.propagated_veg_height_buffer,
-                0,
-                &buffers.staging_buffer,
-                veg_offset + buffer_size * 2,
-                buffer_size,
-            );
+            write_offset += buffer_size;
+            if include_prop_veg {
+                encoder.copy_buffer_to_buffer(
+                    &buffers.propagated_veg_height_buffer,
+                    0,
+                    &buffers.staging_buffer,
+                    write_offset,
+                    buffer_size,
+                );
+                write_offset += buffer_size;
+            }
         }
 
-        // Copy wall outputs if enabled
-        let wall_offset = buffer_size * 4;
         if has_walls {
-            encoder.copy_buffer_to_buffer(
-                &buffers.wall_sh_buffer,
-                0,
-                &buffers.staging_buffer,
-                wall_offset,
-                buffer_size,
-            );
+            if need_full_wall_outputs {
+                encoder.copy_buffer_to_buffer(
+                    &buffers.wall_sh_buffer,
+                    0,
+                    &buffers.staging_buffer,
+                    write_offset,
+                    buffer_size,
+                );
+                write_offset += buffer_size;
+            }
             encoder.copy_buffer_to_buffer(
                 &buffers.wall_sun_buffer,
                 0,
                 &buffers.staging_buffer,
-                wall_offset + buffer_size,
+                write_offset,
                 buffer_size,
             );
-            encoder.copy_buffer_to_buffer(
-                &buffers.wall_sh_veg_buffer,
-                0,
-                &buffers.staging_buffer,
-                wall_offset + buffer_size * 2,
-                buffer_size,
-            );
-            encoder.copy_buffer_to_buffer(
-                &buffers.face_sh_buffer,
-                0,
-                &buffers.staging_buffer,
-                wall_offset + buffer_size * 3,
-                buffer_size,
-            );
-            encoder.copy_buffer_to_buffer(
-                &buffers.face_sun_buffer,
-                0,
-                &buffers.staging_buffer,
-                wall_offset + buffer_size * 4,
-                buffer_size,
-            );
+            write_offset += buffer_size;
+            if need_full_wall_outputs {
+                encoder.copy_buffer_to_buffer(
+                    &buffers.wall_sh_veg_buffer,
+                    0,
+                    &buffers.staging_buffer,
+                    write_offset,
+                    buffer_size,
+                );
+                write_offset += buffer_size;
+                encoder.copy_buffer_to_buffer(
+                    &buffers.face_sh_buffer,
+                    0,
+                    &buffers.staging_buffer,
+                    write_offset,
+                    buffer_size,
+                );
+                write_offset += buffer_size;
+                encoder.copy_buffer_to_buffer(
+                    &buffers.face_sun_buffer,
+                    0,
+                    &buffers.staging_buffer,
+                    write_offset,
+                    buffer_size,
+                );
+                write_offset += buffer_size;
+            }
         }
+        let read_size = write_offset;
 
-        self.queue.submit(Some(encoder.finish()));
+        let submission_index = self.queue.submit(Some(encoder.finish()));
 
-        // Read back all results from cached staging buffer
-        let buffer_slice = buffers.staging_buffer.slice(..);
+        // Read back only populated bytes from staging buffer.
+        let buffer_slice = buffers.staging_buffer.slice(..read_size);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            let _ = sender.send(result);
         });
 
         self.device
             .poll(wgpu::PollType::Wait {
-                submission_index: None,
+                submission_index: Some(submission_index),
                 timeout: None,
             })
-            .unwrap();
+            .map_err(|e| format!("GPU poll failed while reading shadow buffers: {:?}", e))?;
         receiver
             .recv()
-            .unwrap()
+            .map_err(|e| format!("Failed waiting for shadow buffer mapping: {}", e))?
             .map_err(|e| format!("Failed to map buffer: {:?}", e))?;
 
+        let _unmap_guard = MappedBufferGuard::new(&buffers.staging_buffer);
         let data = buffer_slice.get_mapped_range();
         let all_data: &[f32] = bytemuck::cast_slice(&data);
 
         // Extract building shadow
-        let bldg_sh = Array2::from_shape_vec((rows, cols), all_data[..total_pixels].to_vec())
-            .map_err(|e| format!("Failed to create building shadow array: {}", e))?;
+        let mut read_offset_px = 0usize;
+        let bldg_sh = Array2::from_shape_vec(
+            (rows, cols),
+            all_data[read_offset_px..read_offset_px + total_pixels].to_vec(),
+        )
+        .map_err(|e| format!("Failed to create building shadow array: {}", e))?;
+        read_offset_px += total_pixels;
 
         // Extract vegetation results if enabled
         let (veg_sh, veg_blocks_bldg_sh, propagated_veg_height) = if has_veg {
-            let veg_offset_px = total_pixels;
             let veg_sh = Array2::from_shape_vec(
                 (rows, cols),
-                all_data[veg_offset_px..veg_offset_px + total_pixels].to_vec(),
+                all_data[read_offset_px..read_offset_px + total_pixels].to_vec(),
             )
-            .ok();
+            .map_err(|e| format!("Failed to create vegetation shadow array: {}", e))?;
+            read_offset_px += total_pixels;
             let veg_blocks = Array2::from_shape_vec(
                 (rows, cols),
-                all_data[veg_offset_px + total_pixels..veg_offset_px + total_pixels * 2].to_vec(),
+                all_data[read_offset_px..read_offset_px + total_pixels].to_vec(),
             )
-            .ok();
-            let prop_veg = Array2::from_shape_vec(
-                (rows, cols),
-                all_data[veg_offset_px + total_pixels * 2..veg_offset_px + total_pixels * 3]
-                    .to_vec(),
-            )
-            .ok();
-            (veg_sh, veg_blocks, prop_veg)
+            .map_err(|e| format!("Failed to create vegetation-blocking shadow array: {}", e))?;
+            read_offset_px += total_pixels;
+            let prop_veg = if include_prop_veg {
+                let arr = Array2::from_shape_vec(
+                    (rows, cols),
+                    all_data[read_offset_px..read_offset_px + total_pixels].to_vec(),
+                )
+                .map_err(|e| {
+                    format!("Failed to create propagated vegetation height array: {}", e)
+                })?;
+                read_offset_px += total_pixels;
+                Some(arr)
+            } else {
+                None
+            };
+            (Some(veg_sh), Some(veg_blocks), prop_veg)
         } else {
             (None, None, None)
         };
 
         // Extract wall results if enabled
         let (wall_sh, wall_sun, wall_sh_veg, face_sh, face_sun) = if has_walls {
-            let wall_offset_px = total_pixels * 4;
-            let wall_sh = Array2::from_shape_vec(
-                (rows, cols),
-                all_data[wall_offset_px..wall_offset_px + total_pixels].to_vec(),
-            )
-            .ok();
+            let wall_sh = if need_full_wall_outputs {
+                let arr = Array2::from_shape_vec(
+                    (rows, cols),
+                    all_data[read_offset_px..read_offset_px + total_pixels].to_vec(),
+                )
+                .map_err(|e| format!("Failed to create wall shadow array: {}", e))?;
+                read_offset_px += total_pixels;
+                Some(arr)
+            } else {
+                None
+            };
             let wall_sun = Array2::from_shape_vec(
                 (rows, cols),
-                all_data[wall_offset_px + total_pixels..wall_offset_px + total_pixels * 2].to_vec(),
+                all_data[read_offset_px..read_offset_px + total_pixels].to_vec(),
             )
-            .ok();
-            let wall_sh_veg = Array2::from_shape_vec(
-                (rows, cols),
-                all_data[wall_offset_px + total_pixels * 2..wall_offset_px + total_pixels * 3]
-                    .to_vec(),
-            )
-            .ok();
-            let face_sh = Array2::from_shape_vec(
-                (rows, cols),
-                all_data[wall_offset_px + total_pixels * 3..wall_offset_px + total_pixels * 4]
-                    .to_vec(),
-            )
-            .ok();
-            let face_sun = Array2::from_shape_vec(
-                (rows, cols),
-                all_data[wall_offset_px + total_pixels * 4..wall_offset_px + total_pixels * 5]
-                    .to_vec(),
-            )
-            .ok();
-            (wall_sh, wall_sun, wall_sh_veg, face_sh, face_sun)
+            .map_err(|e| format!("Failed to create wall sunlit array: {}", e))?;
+            read_offset_px += total_pixels;
+            if need_full_wall_outputs {
+                let wall_sh_veg = Array2::from_shape_vec(
+                    (rows, cols),
+                    all_data[read_offset_px..read_offset_px + total_pixels].to_vec(),
+                )
+                .map_err(|e| format!("Failed to create wall vegetation-shadow array: {}", e))?;
+                read_offset_px += total_pixels;
+                let face_sh = Array2::from_shape_vec(
+                    (rows, cols),
+                    all_data[read_offset_px..read_offset_px + total_pixels].to_vec(),
+                )
+                .map_err(|e| format!("Failed to create wall face-shadow array: {}", e))?;
+                read_offset_px += total_pixels;
+                let face_sun = Array2::from_shape_vec(
+                    (rows, cols),
+                    all_data[read_offset_px..read_offset_px + total_pixels].to_vec(),
+                )
+                .map_err(|e| format!("Failed to create wall face-sun array: {}", e))?;
+                (
+                    wall_sh,
+                    Some(wall_sun),
+                    Some(wall_sh_veg),
+                    Some(face_sh),
+                    Some(face_sun),
+                )
+            } else {
+                (wall_sh, Some(wall_sun), None, None, None)
+            }
         } else {
             (None, None, None, None, None)
         };
-
-        drop(data);
-        buffers.staging_buffer.unmap();
 
         Ok(GpuShadowResult {
             bldg_sh,
@@ -1158,8 +1289,8 @@ impl ShadowGpuContext {
             veg_canopy_dsm_opt.is_some() && veg_trunk_dsm_opt.is_some() && bush_opt.is_some();
 
         let get_slice = |view: ArrayView2<f32>| -> Vec<f32> {
-            if view.is_standard_layout() {
-                view.as_slice().unwrap().to_vec()
+            if let Some(slice) = view.as_slice() {
+                slice.to_vec()
             } else {
                 view.iter().copied().collect()
             }
@@ -1223,9 +1354,15 @@ impl ShadowGpuContext {
         );
 
         if has_veg {
-            let veg_canopy_data = get_slice(veg_canopy_dsm_opt.unwrap());
-            let veg_trunk_data = get_slice(veg_trunk_dsm_opt.unwrap());
-            let bush_data = get_slice(bush_opt.unwrap());
+            let veg_canopy = veg_canopy_dsm_opt
+                .ok_or_else(|| "Vegetation canopy DSM missing despite has_veg=true".to_string())?;
+            let veg_trunk = veg_trunk_dsm_opt
+                .ok_or_else(|| "Vegetation trunk DSM missing despite has_veg=true".to_string())?;
+            let bush =
+                bush_opt.ok_or_else(|| "Bush raster missing despite has_veg=true".to_string())?;
+            let veg_canopy_data = get_slice(veg_canopy);
+            let veg_trunk_data = get_slice(veg_trunk);
+            let bush_data = get_slice(bush);
             self.queue.write_buffer(
                 &buffers.veg_canopy_buffer,
                 0,
@@ -1254,8 +1391,13 @@ impl ShadowGpuContext {
 
         let workgroup_size_x = 16;
         let workgroup_size_y = 16;
-        let num_workgroups_x = (cols as u32 + workgroup_size_x - 1) / workgroup_size_x;
-        let num_workgroups_y = (rows as u32 + workgroup_size_y - 1) / workgroup_size_y;
+        let (num_workgroups_x, num_workgroups_y) = self.checked_workgroups_2d(
+            rows,
+            cols,
+            workgroup_size_x,
+            workgroup_size_y,
+            "svf shadow propagation",
+        )?;
 
         {
             let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1293,7 +1435,7 @@ impl ShadowGpuContext {
             );
         }
 
-        self.queue.submit(Some(encoder.finish()));
+        let submission_index = self.queue.submit(Some(encoder.finish()));
 
         // Map only what we need (1 or 3 arrays)
         let read_size = if has_veg {
@@ -1304,20 +1446,21 @@ impl ShadowGpuContext {
         let buffer_slice = buffers.staging_buffer.slice(..read_size);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            let _ = sender.send(result);
         });
 
         self.device
             .poll(wgpu::PollType::Wait {
-                submission_index: None,
+                submission_index: Some(submission_index),
                 timeout: None,
             })
-            .unwrap();
+            .map_err(|e| format!("GPU poll failed while reading SVF shadow buffers: {:?}", e))?;
         receiver
             .recv()
-            .unwrap()
+            .map_err(|e| format!("Failed waiting for SVF shadow buffer mapping: {}", e))?
             .map_err(|e| format!("Failed to map buffer: {:?}", e))?;
 
+        let _unmap_guard = MappedBufferGuard::new(&buffers.staging_buffer);
         let data = buffer_slice.get_mapped_range();
         let all_data: &[f32] = bytemuck::cast_slice(&data);
 
@@ -1329,19 +1472,21 @@ impl ShadowGpuContext {
                 (rows, cols),
                 all_data[total_pixels..total_pixels * 2].to_vec(),
             )
-            .ok();
+            .map_err(|e| format!("Failed to create SVF vegetation shadow array: {}", e))?;
             let veg_blocks = Array2::from_shape_vec(
                 (rows, cols),
                 all_data[total_pixels * 2..total_pixels * 3].to_vec(),
             )
-            .ok();
-            (veg, veg_blocks)
+            .map_err(|e| {
+                format!(
+                    "Failed to create SVF vegetation-blocking shadow array: {}",
+                    e
+                )
+            })?;
+            (Some(veg), Some(veg_blocks))
         } else {
             (None, None)
         };
-
-        drop(data);
-        buffers.staging_buffer.unmap();
 
         Ok(SvfShadowResult {
             bldg_sh,
@@ -1360,6 +1505,7 @@ impl ShadowGpuContext {
         rows: usize,
         cols: usize,
         has_veg: bool,
+        total_patches: usize,
         dsm: ArrayView2<f32>,
         veg_canopy_dsm_opt: Option<ArrayView2<f32>>,
         veg_trunk_dsm_opt: Option<ArrayView2<f32>>,
@@ -1390,8 +1536,8 @@ impl ShadowGpuContext {
 
         // Write static inputs to shadow buffers once (avoids re-uploading per patch)
         let get_slice = |view: ArrayView2<f32>| -> Vec<f32> {
-            if view.is_standard_layout() {
-                view.as_slice().unwrap().to_vec()
+            if let Some(slice) = view.as_slice() {
+                slice.to_vec()
             } else {
                 view.iter().copied().collect()
             }
@@ -1487,10 +1633,12 @@ impl ShadowGpuContext {
             ],
         });
 
-        // --- Shadow uint8 packing buffers + double-buffered staging ---
-        let num_quads = ((total_pixels + 3) / 4) as u64;
-        let num_packed_arrays: u64 = if has_veg { 3 } else { 1 };
-        let packed_output_size = num_quads * 4 * num_packed_arrays; // bytes (u32 per quad)
+        // --- Shadow bitpack buffers (persist across all patch dispatches) ---
+        let n_pack = (total_patches + 7) / 8; // ceil(n_patches/8)
+        let matrix_bytes = total_pixels * n_pack;
+        let matrix_words = (matrix_bytes + 3) / 4; // u32 words
+        let num_matrices = if has_veg { 3usize } else { 1usize };
+        let packed_output_size = (matrix_words * num_matrices) as u64 * 4; // bytes
 
         let shadow_u8_params_buffer = make_buffer(
             "Shadow U8 Params",
@@ -1500,31 +1648,45 @@ impl ShadowGpuContext {
         let shadow_u8_output_buffer = make_buffer(
             "Shadow U8 Output",
             packed_output_size,
-            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
         );
-        let shadow_u8_staging_0 = make_buffer(
-            "Shadow U8 Staging 0",
-            packed_output_size,
-            wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        );
-        let shadow_u8_staging_1 = make_buffer(
-            "Shadow U8 Staging 1",
+        let shadow_u8_staging = make_buffer(
+            "Shadow U8 Staging",
             packed_output_size,
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
 
-        // Write static U8 pack params (doesn't change per patch)
+        // Write static U8 pack params; patch fields are updated per dispatch.
         let u8_params = U8PackParams {
             total_pixels: total_pixels as u32,
-            num_quads: num_quads as u32,
+            cols: cols as u32,
+            rows: rows as u32,
+            n_pack: n_pack as u32,
+            matrix_words: matrix_words as u32,
             has_veg: if has_veg { 1 } else { 0 },
-            _padding: 0,
+            patch_byte_idx: 0,
+            patch_bit_mask: 0,
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+            _pad3: 0,
         };
         self.queue.write_buffer(
             &shadow_u8_params_buffer,
             0,
             bytemuck::cast_slice(&[u8_params]),
         );
+
+        // Zero-initialize bitpacked output buffer once before patch loop.
+        let mut bitpack_init =
+            self.device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("SVF Bitpack Init Encoder"),
+                });
+        bitpack_init.clear_buffer(&shadow_u8_output_buffer, 0, None);
+        self.queue.submit(Some(bitpack_init.finish()));
 
         let shadow_u8_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Shadow U8 Pack Bind Group"),
@@ -1554,7 +1716,7 @@ impl ShadowGpuContext {
         });
 
         eprintln!(
-            "[GPU] SVF accumulation initialized: {}x{} grid, {} SVF arrays ({:.1} MB), u8 staging ({:.1} MB × 2)",
+            "[GPU] SVF accumulation initialized: {}x{} grid, {} SVF arrays ({:.1} MB), bitpack ({:.1} MB)",
             rows,
             cols,
             num_arrays,
@@ -1570,22 +1732,24 @@ impl ShadowGpuContext {
         buffers.svf_num_arrays = num_arrays;
         buffers.shadow_u8_params_buffer = Some(shadow_u8_params_buffer);
         buffers.shadow_u8_output_buffer = Some(shadow_u8_output_buffer);
-        buffers.shadow_u8_staging = [Some(shadow_u8_staging_0), Some(shadow_u8_staging_1)];
+        buffers.shadow_u8_staging = Some(shadow_u8_staging);
         buffers.shadow_u8_bind_group = Some(shadow_u8_bind_group);
         buffers.shadow_u8_packed_size = packed_output_size;
+        buffers.shadow_u8_n_pack = n_pack;
+        buffers.shadow_u8_matrix_bytes = matrix_bytes;
+        buffers.shadow_u8_matrix_words = matrix_words;
+        buffers.shadow_u8_num_matrices = num_matrices;
 
         Ok(())
     }
 
-    /// Per-patch: dispatch shadow + SVF accumulate + uint8 pack to GPU (non-blocking).
+    /// Per-patch: dispatch shadow + SVF accumulate + bitpack update on GPU (non-blocking).
     ///
-    /// Returns a SubmissionIndex for later synchronization. The shadow results are
-    /// packed to uint8 on the GPU and copied to staging[slot] for later readback
-    /// via `read_shadow_staging()`. SVF accumulation happens on-GPU (no readback).
+    /// Shadow matrices and SVF accumulators stay on GPU for the full patch loop.
     #[allow(clippy::too_many_arguments)]
     pub fn dispatch_shadow_and_accumulate_svf(
         &self,
-        staging_slot: usize,
+        patch_idx: usize,
         azimuth_deg: f32,
         altitude_deg: f32,
         scale: f32,
@@ -1597,8 +1761,6 @@ impl ShadowGpuContext {
         weight_s: f32,
         weight_w: f32,
     ) -> Result<wgpu::SubmissionIndex, String> {
-        assert!(staging_slot < 2, "staging_slot must be 0 or 1");
-
         let mut cache_guard = self
             .cached
             .lock()
@@ -1612,6 +1774,10 @@ impl ShadowGpuContext {
             .svf_params_buffer
             .as_ref()
             .ok_or_else(|| "SVF not initialized".to_string())?;
+        let u8_params_buf = buffers
+            .shadow_u8_params_buffer
+            .as_ref()
+            .ok_or_else(|| "Shadow U8 params missing".to_string())?;
         let has_veg = buffers.svf_has_veg;
         let rows = buffers.rows;
         let cols = buffers.cols;
@@ -1651,17 +1817,37 @@ impl ShadowGpuContext {
         // Write SVF accumulation params
         let svf_params = SvfAccumParams {
             total_pixels: total_pixels as u32,
+            cols: cols as u32,
+            rows: rows as u32,
             weight_iso,
             weight_n,
             weight_e,
             weight_s,
             weight_w,
             has_veg: if has_veg { 1 } else { 0 },
-            _padding: 0,
+            _pad0: 0,
+            _pad1: 0,
         };
 
         self.queue
             .write_buffer(svf_params_buf, 0, bytemuck::cast_slice(&[svf_params]));
+
+        let u8_params = U8PackParams {
+            total_pixels: total_pixels as u32,
+            cols: cols as u32,
+            rows: rows as u32,
+            n_pack: buffers.shadow_u8_n_pack as u32,
+            matrix_words: buffers.shadow_u8_matrix_words as u32,
+            has_veg: if has_veg { 1 } else { 0 },
+            patch_byte_idx: (patch_idx >> 3) as u32,
+            patch_bit_mask: (1u32 << (patch_idx & 7)),
+            _pad0: 0,
+            _pad1: 0,
+            _pad2: 0,
+            _pad3: 0,
+        };
+        self.queue
+            .write_buffer(u8_params_buf, 0, bytemuck::cast_slice(&[u8_params]));
 
         // Build command encoder with 3 passes + staging copy
         let mut encoder = self
@@ -1690,8 +1876,13 @@ impl ShadowGpuContext {
 
         let workgroup_size_x = 16;
         let workgroup_size_y = 16;
-        let num_workgroups_x = (cols as u32 + workgroup_size_x - 1) / workgroup_size_x;
-        let num_workgroups_y = (rows as u32 + workgroup_size_y - 1) / workgroup_size_y;
+        let (num_workgroups_x, num_workgroups_y) = self.checked_workgroups_2d(
+            rows,
+            cols,
+            workgroup_size_x,
+            workgroup_size_y,
+            "svf shadow propagation update",
+        )?;
 
         // Pass 1: Shadow propagation
         {
@@ -1710,108 +1901,163 @@ impl ShadowGpuContext {
                 .svf_bind_group
                 .as_ref()
                 .ok_or("SVF bind group missing")?;
-            let svf_workgroups = (total_pixels as u32 + 255) / 256;
+            let svf_workgroup_x = 16u32;
+            let svf_workgroup_y = 16u32;
+            let (svf_workgroups_x, svf_workgroups_y) = self.checked_workgroups_2d(
+                rows,
+                cols,
+                svf_workgroup_x,
+                svf_workgroup_y,
+                "svf accumulation",
+            )?;
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("SVF Accumulation"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.svf_pipeline);
             pass.set_bind_group(0, svf_bg, &[]);
-            pass.dispatch_workgroups(svf_workgroups, 1, 1);
+            pass.dispatch_workgroups(svf_workgroups_x, svf_workgroups_y, 1);
         }
 
-        // Pass 3: Pack shadows to uint8 (reads shadow outputs → packed u32 output)
+        // Pass 3: Update bitpacked shadow matrices for this patch.
         {
             let u8_bg = buffers
                 .shadow_u8_bind_group
                 .as_ref()
                 .ok_or("Shadow U8 bind group missing")?;
-            let num_quads = ((total_pixels + 3) / 4) as u32;
-            let u8_workgroups = (num_quads + 255) / 256;
+            let u8_workgroup_x = 16u32;
+            let u8_workgroup_y = 16u32;
+            let (u8_workgroups_x, u8_workgroups_y) = self.checked_workgroups_2d(
+                rows,
+                cols,
+                u8_workgroup_x,
+                u8_workgroup_y,
+                "svf shadow bitpack update",
+            )?;
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("Shadow U8 Pack"),
+                label: Some("Shadow Bitpack Update"),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.shadow_u8_pipeline);
             pass.set_bind_group(0, u8_bg, &[]);
-            pass.dispatch_workgroups(u8_workgroups, 1, 1);
+            pass.dispatch_workgroups(u8_workgroups_x, u8_workgroups_y, 1);
         }
 
-        // Copy packed uint8 output to staging[slot]
-        let packed_size = buffers.shadow_u8_packed_size;
-        let staging = buffers.shadow_u8_staging[staging_slot]
-            .as_ref()
-            .ok_or("Shadow U8 staging not initialized")?;
-        let output_buf = buffers
-            .shadow_u8_output_buffer
-            .as_ref()
-            .ok_or("Shadow U8 output buffer missing")?;
-        encoder.copy_buffer_to_buffer(output_buf, 0, staging, 0, packed_size);
-
-        // Submit — DO NOT poll. Return submission index for caller to sync later.
-        let idx = self.queue.submit(Some(encoder.finish()));
-        Ok(idx)
+        // Submit — no per-patch synchronization; read back once after all patches.
+        let submission_index = self.queue.submit(Some(encoder.finish()));
+        Ok(submission_index)
     }
 
-    /// Read packed uint8 shadow data from a staging buffer after a previous dispatch.
-    ///
-    /// Waits for the specific submission to complete, maps the staging buffer,
-    /// and returns the raw bytes. The caller unpacks into the shadow matrix.
-    pub fn read_shadow_staging(
+    /// Wait for a specific submitted GPU workload to complete.
+    pub fn wait_for_submission(
         &self,
-        staging_slot: usize,
-        submission_idx: wgpu::SubmissionIndex,
-    ) -> Result<Vec<u8>, String> {
-        assert!(staging_slot < 2, "staging_slot must be 0 or 1");
+        submission_index: wgpu::SubmissionIndex,
+    ) -> Result<(), String> {
+        self.device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(submission_index),
+                timeout: None,
+            })
+            .map(|_| ())
+            .map_err(|e| format!("GPU poll failed while waiting for SVF dispatch: {:?}", e))
+    }
 
-        let cache_guard = self
+    /// After all patches: read back GPU-built bitpacked shadow matrices.
+    pub fn read_svf_bitpacked_shadows(&self) -> Result<SvfBitpackedShadowResult, String> {
+        let mut cache_guard = self
             .cached
             .lock()
             .map_err(|e| format!("Failed to lock buffer cache: {}", e))?;
 
         let buffers = cache_guard
-            .as_ref()
+            .as_mut()
             .ok_or_else(|| "Buffer cache empty".to_string())?;
 
-        let packed_size = buffers.shadow_u8_packed_size;
-        let staging = buffers.shadow_u8_staging[staging_slot]
+        let output_buf = buffers
+            .shadow_u8_output_buffer
             .as_ref()
-            .ok_or("Shadow U8 staging not initialized")?;
+            .ok_or_else(|| "Shadow U8 output buffer missing".to_string())?;
+        let staging = buffers
+            .shadow_u8_staging
+            .as_ref()
+            .ok_or_else(|| "Shadow U8 staging not initialized".to_string())?;
 
-        // Wait for this specific submission to complete
-        self.device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission_idx),
-                timeout: None,
-            })
-            .map_err(|e| format!("Poll failed: {:?}", e))?;
+        let packed_size = buffers.shadow_u8_packed_size;
+        let matrix_bytes = buffers.shadow_u8_matrix_bytes;
+        let n_pack = buffers.shadow_u8_n_pack;
+        let rows = buffers.rows;
+        let cols = buffers.cols;
+        let has_veg = buffers.shadow_u8_num_matrices > 1;
 
-        // Map staging buffer
-        let buffer_slice = staging.slice(..packed_size);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("SVF Read Bitpacked Shadows Encoder"),
+            });
+        encoder.copy_buffer_to_buffer(output_buf, 0, staging, 0, packed_size);
+        let submission_index = self.queue.submit(Some(encoder.finish()));
+
+        let slice = staging.slice(..packed_size);
         let (sender, receiver) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
         });
 
-        // Submission already complete, this should return immediately
         self.device
             .poll(wgpu::PollType::Wait {
-                submission_index: None,
+                submission_index: Some(submission_index),
                 timeout: None,
             })
-            .map_err(|e| format!("Poll for map failed: {:?}", e))?;
+            .map_err(|e| format!("Poll failed while reading bitpacked shadows: {:?}", e))?;
         receiver
             .recv()
-            .unwrap()
-            .map_err(|e| format!("Failed to map staging: {:?}", e))?;
+            .map_err(|e| format!("Failed waiting for bitpacked shadow mapping: {}", e))?
+            .map_err(|e| format!("Failed to map bitpacked shadow staging: {:?}", e))?;
 
-        let data = buffer_slice.get_mapped_range();
-        let bytes = data.to_vec();
+        let _unmap_guard = MappedBufferGuard::new(staging);
+        let data = slice.get_mapped_range();
+        let all_bytes: &[u8] = bytemuck::cast_slice(&data);
+        let expected = if has_veg {
+            matrix_bytes * 3
+        } else {
+            matrix_bytes
+        };
+        if all_bytes.len() < expected {
+            return Err(format!(
+                "Bitpacked shadow buffer too small: got {} bytes, need at least {}",
+                all_bytes.len(),
+                expected
+            ));
+        }
 
-        drop(data);
-        staging.unmap();
+        let bldg =
+            Array3::from_shape_vec((rows, cols, n_pack), all_bytes[0..matrix_bytes].to_vec())
+                .map_err(|e| format!("Failed to reshape bldg shadow matrix: {}", e))?;
 
-        Ok(bytes)
+        let (veg, vb) = if has_veg {
+            let veg_start = matrix_bytes;
+            let vb_start = matrix_bytes * 2;
+            let veg_arr = Array3::from_shape_vec(
+                (rows, cols, n_pack),
+                all_bytes[veg_start..vb_start].to_vec(),
+            )
+            .map_err(|e| format!("Failed to reshape veg shadow matrix: {}", e))?;
+            let vb_arr = Array3::from_shape_vec(
+                (rows, cols, n_pack),
+                all_bytes[vb_start..vb_start + matrix_bytes].to_vec(),
+            )
+            .map_err(|e| format!("Failed to reshape vb shadow matrix: {}", e))?;
+            (veg_arr, vb_arr)
+        } else {
+            let shape = (rows, cols, n_pack);
+            (Array3::<u8>::zeros(shape), Array3::<u8>::zeros(shape))
+        };
+
+        Ok(SvfBitpackedShadowResult {
+            bldg_sh_matrix: bldg,
+            veg_sh_matrix: veg,
+            veg_blocks_bldg_sh_matrix: vb,
+        })
     }
 
     /// After all patches: read back accumulated SVF values from GPU.
@@ -1849,47 +2095,49 @@ impl ShadowGpuContext {
                 label: Some("SVF Read Results Encoder"),
             });
         encoder.copy_buffer_to_buffer(svf_data_buf, 0, svf_staging, 0, svf_data_size);
-        self.queue.submit(Some(encoder.finish()));
+        let submission_index = self.queue.submit(Some(encoder.finish()));
 
         // Map and read
         let slice = svf_staging.slice(..svf_data_size);
         let (sender, receiver) = std::sync::mpsc::channel();
         slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender.send(result).unwrap();
+            let _ = sender.send(result);
         });
 
         self.device
             .poll(wgpu::PollType::Wait {
-                submission_index: None,
+                submission_index: Some(submission_index),
                 timeout: None,
             })
-            .unwrap();
+            .map_err(|e| format!("GPU poll failed while reading SVF results: {:?}", e))?;
         receiver
             .recv()
-            .unwrap()
+            .map_err(|e| format!("Failed waiting for SVF result mapping: {}", e))?
             .map_err(|e| format!("Failed to map SVF staging: {:?}", e))?;
 
+        let _unmap_guard = MappedBufferGuard::new(svf_staging);
         let data = slice.get_mapped_range();
         let all: &[f32] = bytemuck::cast_slice(&data);
         let n = total_pixels;
 
-        let extract = |offset: usize| -> Array2<f32> {
-            Array2::from_shape_vec((rows, cols), all[offset..offset + n].to_vec()).unwrap()
+        let extract = |offset: usize, label: &str| -> Result<Array2<f32>, String> {
+            Array2::from_shape_vec((rows, cols), all[offset..offset + n].to_vec())
+                .map_err(|e| format!("Failed to reshape {} array: {}", label, e))
         };
 
-        let svf = extract(0);
-        let svf_n = extract(n);
-        let svf_e = extract(2 * n);
-        let svf_s = extract(3 * n);
-        let svf_w = extract(4 * n);
+        let svf = extract(0, "svf")?;
+        let svf_n = extract(n, "svf_n")?;
+        let svf_e = extract(2 * n, "svf_e")?;
+        let svf_s = extract(3 * n, "svf_s")?;
+        let svf_w = extract(4 * n, "svf_w")?;
 
         let (svf_veg, svf_veg_n, svf_veg_e, svf_veg_s, svf_veg_w) = if has_veg {
             (
-                Some(extract(5 * n)),
-                Some(extract(6 * n)),
-                Some(extract(7 * n)),
-                Some(extract(8 * n)),
-                Some(extract(9 * n)),
+                Some(extract(5 * n, "svf_veg")?),
+                Some(extract(6 * n, "svf_veg_n")?),
+                Some(extract(7 * n, "svf_veg_e")?),
+                Some(extract(8 * n, "svf_veg_s")?),
+                Some(extract(9 * n, "svf_veg_w")?),
             )
         } else {
             (None, None, None, None, None)
@@ -1897,18 +2145,15 @@ impl ShadowGpuContext {
 
         let (svf_aveg, svf_aveg_n, svf_aveg_e, svf_aveg_s, svf_aveg_w) = if has_veg {
             (
-                Some(extract(10 * n)),
-                Some(extract(11 * n)),
-                Some(extract(12 * n)),
-                Some(extract(13 * n)),
-                Some(extract(14 * n)),
+                Some(extract(10 * n, "svf_aveg")?),
+                Some(extract(11 * n, "svf_aveg_n")?),
+                Some(extract(12 * n, "svf_aveg_e")?),
+                Some(extract(13 * n, "svf_aveg_s")?),
+                Some(extract(14 * n, "svf_aveg_w")?),
             )
         } else {
             (None, None, None, None, None)
         };
-
-        drop(data);
-        svf_staging.unmap();
 
         Ok(SvfAccumResult {
             svf,
@@ -1927,6 +2172,16 @@ impl ShadowGpuContext {
             svf_aveg_s,
             svf_aveg_w,
         })
+    }
+
+    #[inline]
+    fn write_2d_f32(queue: &wgpu::Queue, buffer: &wgpu::Buffer, arr: &ArrayView2<f32>) {
+        if let Some(slice) = arr.as_slice() {
+            queue.write_buffer(buffer, 0, bytemuck::cast_slice(slice));
+        } else {
+            let packed: Vec<f32> = arr.iter().copied().collect();
+            queue.write_buffer(buffer, 0, bytemuck::cast_slice(&packed));
+        }
     }
 }
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,7 +30,39 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def _save_svfs_zip(svf_data: SvfArrays, svf_cache_dir: Path, aligned_rasters: dict) -> None:
+def _should_compress_svf_exports(n_pixels: int) -> bool:
+    """
+    Return True when SVF/shadow exports should use compression.
+
+    Large rasters spend a long post-GPU tail in single-threaded compression.
+    Default threshold can be overridden with SOLWEIG_COMPRESS_MAX_PIXELS.
+    """
+    try:
+        limit = int(os.getenv("SOLWEIG_COMPRESS_MAX_PIXELS", "50000000"))
+    except ValueError:
+        limit = 50_000_000
+    return n_pixels <= max(0, limit)
+
+
+def _should_export_shadow_npz(n_pixels: int) -> bool:
+    """
+    Return True when shadowmats.npz should be written.
+
+    For very large grids, serializing 3 bitpacked matrices into one NPZ can
+    dominate runtime after GPU work completes. For those cases we keep the
+    memmap cache and skip NPZ export by default.
+    """
+    force = os.getenv("SOLWEIG_FORCE_SHADOW_NPZ", "").strip().lower() in ("1", "true")
+    if force:
+        return True
+    try:
+        limit = int(os.getenv("SOLWEIG_SHADOW_NPZ_MAX_PIXELS", "50000000"))
+    except ValueError:
+        limit = 50_000_000
+    return n_pixels <= max(0, limit)
+
+
+def _save_svfs_zip(svf_data: SvfArrays, svf_cache_dir: Path, aligned_rasters: dict, *, compress: bool = True) -> None:
     """Save SVF arrays as svfs.zip for PrecomputedData.prepare() compatibility."""
     import tempfile
     import zipfile
@@ -67,21 +102,32 @@ def _save_svfs_zip(svf_data: SvfArrays, svf_cache_dir: Path, aligned_rasters: di
         for filename, arr in svf_files.items():
             if arr is not None:
                 tif_path = str(Path(tmpdir) / filename)
-                io.save_raster(tif_path, arr, geotransform, crs_wkt)
-        with zipfile.ZipFile(str(svf_zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
+                # Intermediate export for zip packaging: avoid COG/preview overhead.
+                io.save_raster(
+                    tif_path,
+                    arr,
+                    geotransform,
+                    crs_wkt,
+                    use_cog=False,
+                    generate_preview=False,
+                )
+        compression = zipfile.ZIP_DEFLATED if compress else zipfile.ZIP_STORED
+        with zipfile.ZipFile(str(svf_zip_path), "w", compression=compression) as zf:
             for filename in svf_files:
                 tif_file = Path(tmpdir) / filename
                 if tif_file.exists():
                     zf.write(str(tif_file), filename)
 
-    logger.info(f"  ✓ SVF saved as {svf_zip_path}")
+    mode = "compressed" if compress else "stored (uncompressed)"
+    logger.info(f"  ✓ SVF saved as {svf_zip_path} ({mode})")
 
 
-def _save_shadow_matrices(svf_result, svf_cache_dir: Path, patch_count: int = 153) -> None:
+def _save_shadow_matrices(svf_result, svf_cache_dir: Path, patch_count: int = 153, *, compress: bool = True) -> None:
     """Save shadow matrices as shadowmats.npz for anisotropic sky model."""
     # Shadow matrices are bitpacked uint8 from Rust: shape (rows, cols, ceil(patches/8))
     shadow_path = svf_cache_dir / "shadowmats.npz"
-    np.savez_compressed(
+    save_fn = np.savez_compressed if compress else np.savez
+    save_fn(
         str(shadow_path),
         shadowmat=np.array(svf_result.bldg_sh_matrix),
         vegshadowmat=np.array(svf_result.veg_sh_matrix),
@@ -89,7 +135,8 @@ def _save_shadow_matrices(svf_result, svf_cache_dir: Path, patch_count: int = 15
         patch_count=np.array(patch_count),
     )
 
-    logger.info(f"  ✓ Shadow matrices saved as {shadow_path}")
+    mode = "compressed" if compress else "uncompressed"
+    logger.info(f"  ✓ Shadow matrices saved as {shadow_path} ({mode})")
 
 
 def _max_shadow_height(dsm: np.ndarray, cdsm: np.ndarray | None = None, use_veg: bool = False) -> float:
@@ -422,11 +469,14 @@ class SurfaceData:
             if not cache_valid:
                 logger.info("  → Cache stale, clearing and recomputing SVF...")
                 clear_stale_cache(svf_base / "memmap")
-                # Also remove zip/npz so stale data doesn't persist
+                # Also remove zip/npz/memmaps so stale data doesn't persist
                 for stale_file in ("svfs.zip", "shadowmats.npz"):
                     stale_path = svf_base / stale_file
                     if stale_path.exists():
                         stale_path.unlink()
+                stale_shadow_memmaps = svf_base / "shadow_memmaps"
+                if stale_shadow_memmaps.exists():
+                    shutil.rmtree(stale_shadow_memmaps, ignore_errors=True)
                 preprocess_data["svf_data"] = None
                 preprocess_data["compute_svf"] = True
                 surface_data.svf = None
@@ -693,11 +743,27 @@ class SurfaceData:
                 return svf_data, "zip"
             return None, "none"
 
+        # Helper to load shadow matrices, preferring NPZ then memmap directory.
+        # Returns (ShadowArrays | None, source: str) where source is "npz", "memmap", or "none".
+        def load_shadow_from_dir(base_path: Path) -> tuple[ShadowArrays | None, str]:
+            shadow_npz_path = base_path / "shadowmats.npz"
+            if shadow_npz_path.exists():
+                shadow_data = ShadowArrays.from_npz(str(shadow_npz_path))
+                logger.info("  ✓ Shadow matrices loaded from npz")
+                return shadow_data, "npz"
+
+            shadow_mm_dir = base_path / "shadow_memmaps"
+            if shadow_mm_dir.exists() and (shadow_mm_dir / "metadata.json").exists():
+                shadow_data = ShadowArrays.from_memmap(shadow_mm_dir)
+                logger.info("  ✓ Shadow matrices loaded from memmap cache")
+                return shadow_data, "memmap"
+
+            return None, "none"
+
         # Load SVF with auto-discovery
         if svf_dir is not None:
             # Explicit SVF directory provided - use it
             svf_path = Path(svf_dir)
-            shadow_npz_path = svf_path / "shadowmats.npz"
 
             svf_data, svf_source = load_svf_from_dir(svf_path)
             if svf_data is not None:
@@ -705,8 +771,14 @@ class SurfaceData:
                 result["svf_source"] = svf_source
                 logger.info("  ✓ Existing SVF found (will use precomputed)")
 
-                if shadow_npz_path.exists():
-                    result["shadow_data"] = ShadowArrays.from_npz(str(shadow_npz_path))
+                # First try direct shadow files in svf_dir
+                shadow_data, _ = load_shadow_from_dir(svf_path)
+                if shadow_data is None:
+                    # Fallback for prepared surface roots: svf/<pixel-tag>/
+                    tagged_cache = svf_path / "svf" / px_tag
+                    shadow_data, _ = load_shadow_from_dir(tagged_cache)
+                if shadow_data is not None:
+                    result["shadow_data"] = shadow_data
                     logger.info("  ✓ Existing shadow matrices found (anisotropic sky enabled)")
             else:
                 logger.info(f"  → SVF directory provided but no SVF files found: {svf_path}")
@@ -730,16 +802,15 @@ class SurfaceData:
                         )
                         svf_cache_dir = legacy_svf_dir
 
-                shadow_npz_path = svf_cache_dir / "shadowmats.npz"
-
                 svf_data, svf_source = load_svf_from_dir(svf_cache_dir)
                 if svf_data is not None:
                     result["svf_data"] = svf_data
                     result["svf_source"] = svf_source
                     logger.info(f"  ✓ SVF found in working_dir: {svf_cache_dir}")
 
-                    if shadow_npz_path.exists():
-                        result["shadow_data"] = ShadowArrays.from_npz(str(shadow_npz_path))
+                    shadow_data, _ = load_shadow_from_dir(svf_cache_dir)
+                    if shadow_data is not None:
+                        result["shadow_data"] = shadow_data
                         logger.info("  ✓ Shadow matrices found (anisotropic sky enabled)")
                 else:
                     # No cached SVF - will compute and cache
@@ -1073,13 +1144,13 @@ class SurfaceData:
         Compute SVF from DSM/CDSM/TDSM and cache to working_dir.
 
         Automatically tiles the computation for large grids to avoid GPU
-        buffer size limits. Tiled mode skips shadow matrix assembly (too
-        large for anisotropic sky — consistent with calculate_tiled()).
+        buffer size limits.
 
-        Saves three cache formats:
+        Saves cache artifacts:
         - memmap/ for fast reload in Python API
         - svfs.zip for PrecomputedData.prepare() compatibility
-        - shadowmats.npz for anisotropic sky model (non-tiled only)
+        - shadowmats.npz for anisotropic sky model when export size is reasonable
+          (otherwise shadow_memmaps/ is used directly)
 
         Args:
             surface_data: SurfaceData instance to update with computed SVF.
@@ -1123,7 +1194,20 @@ class SurfaceData:
         from ..tiling import compute_max_tile_pixels
 
         _max_pixels = compute_max_tile_pixels(context="svf")
-        needs_tiling = rows * cols > _max_pixels
+        n_pixels = rows * cols
+        needs_tiling = n_pixels > _max_pixels
+        compress_exports = _should_compress_svf_exports(n_pixels)
+        export_shadow_npz = _should_export_shadow_npz(n_pixels)
+        if not compress_exports:
+            logger.info(
+                "  Large SVF export detected; using uncompressed cache files to reduce post-GPU CPU tail "
+                "(set SOLWEIG_COMPRESS_MAX_PIXELS to tune)"
+            )
+        if not export_shadow_npz:
+            logger.info(
+                "  Large shadow cache detected; skipping shadowmats.npz export and keeping shadow_memmaps "
+                "(set SOLWEIG_FORCE_SHADOW_NPZ=1 to force NPZ export)"
+            )
 
         svf_cache_dir = working_path / "svf" / pixel_size_tag(pixel_size)
         svf_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1142,24 +1226,39 @@ class SurfaceData:
                 feedback=feedback,
                 progress_range=progress_range,
             )
+            if svf_data is None:
+                raise RuntimeError("SVF tiled computation returned None")
             n_patches = 153  # patch_option=2
 
             # Cache SVF arrays
+            if feedback is not None and hasattr(feedback, "setProgressText"):
+                feedback.setProgressText("Finalizing SVF cache...")
             memmap_dir = svf_cache_dir / "memmap"
             svf_data.to_memmap(memmap_dir, metadata=metadata)
-            _save_svfs_zip(svf_data, svf_cache_dir, aligned_rasters)
+            _save_svfs_zip(svf_data, svf_cache_dir, aligned_rasters, compress=compress_exports)
             metadata.save(svf_cache_dir)  # also at svf dir level for zip validation
 
-            # Save shadow matrices as npz for cache reload on future runs
-            shadow_path = svf_cache_dir / "shadowmats.npz"
-            np.savez_compressed(
-                str(shadow_path),
-                shadowmat=np.asarray(shmat_mm),
-                vegshadowmat=np.asarray(vegshmat_mm),
-                vbshmat=np.asarray(vbshmat_mm),
-                patch_count=np.array(n_patches),
-            )
-            logger.info(f"  ✓ Shadow matrices saved as {shadow_path}")
+            # Save shadow matrices as npz for compatibility when affordable.
+            # For very large rasters, keep shadow_memmaps and skip expensive repacking.
+            if export_shadow_npz:
+                if feedback is not None and hasattr(feedback, "setProgressText"):
+                    feedback.setProgressText("Saving shadow matrices cache...")
+                shadow_path = svf_cache_dir / "shadowmats.npz"
+                save_fn = np.savez_compressed if compress_exports else np.savez
+                save_fn(
+                    str(shadow_path),
+                    shadowmat=np.asarray(shmat_mm),
+                    vegshadowmat=np.asarray(vegshmat_mm),
+                    vbshmat=np.asarray(vbshmat_mm),
+                    patch_count=np.array(n_patches),
+                )
+                mode = "compressed" if compress_exports else "uncompressed"
+                logger.info(f"  ✓ Shadow matrices saved as {shadow_path} ({mode})")
+            else:
+                shadow_path = svf_cache_dir / "shadowmats.npz"
+                if shadow_path.exists():
+                    shadow_path.unlink()
+                logger.info(f"  ✓ Shadow matrices cached as memmaps in {svf_cache_dir / 'shadow_memmaps'}")
 
             surface_data.svf = svf_data
             # Shadow matrices assembled from tiled memmaps (bitpacked uint8, on disk)
@@ -1195,7 +1294,7 @@ class SurfaceData:
                         2,  # patch_option
                         3.0,  # min_sun_elev_deg
                     )
-                except Exception as e:
+                except BaseException as e:
                     error_box[0] = e
 
             thread = threading.Thread(target=_run_svf, daemon=True)
@@ -1227,8 +1326,10 @@ class SurfaceData:
 
             thread.join()
             if error_box[0] is not None:
-                raise error_box[0]
+                raise RuntimeError(f"SVF computation failed: {error_box[0]}") from error_box[0]
             svf_result = result_box[0]
+            if svf_result is None:
+                raise RuntimeError("SVF computation returned None (skyview.calculate_svf produced no result)")
 
             ones = np.ones_like(dsm_arr, dtype=np.float32)
 
@@ -1253,11 +1354,11 @@ class SurfaceData:
             # Cache SVF arrays
             memmap_dir = svf_cache_dir / "memmap"
             svf_data.to_memmap(memmap_dir, metadata=metadata)
-            _save_svfs_zip(svf_data, svf_cache_dir, aligned_rasters)
+            _save_svfs_zip(svf_data, svf_cache_dir, aligned_rasters, compress=compress_exports)
             metadata.save(svf_cache_dir)  # also at svf dir level for zip validation
 
             # Save shadow matrices (only available in non-tiled mode)
-            _save_shadow_matrices(svf_result, svf_cache_dir)
+            _save_shadow_matrices(svf_result, svf_cache_dir, compress=compress_exports)
 
             surface_data.svf = svf_data
 
@@ -1352,18 +1453,37 @@ class SurfaceData:
             "svf_veg_blocks_bldg_sh_south",
             "svf_veg_blocks_bldg_sh_west",
         ]
-        all_fields = svf_fields + veg_fields
+        all_fields = svf_fields + veg_fields if use_veg else svf_fields
 
-        # Pre-allocate output arrays (ones = default SVF for unprocessed edges)
+        # Pre-allocate output arrays as memmaps on disk to avoid massive RAM
+        # use for very large rasters (e.g. >100M pixels).
         outputs: dict[str, np.ndarray] = {}
+        svf_memmap_dir = working_path / "svf_memmaps"
+        svf_memmap_dir.mkdir(parents=True, exist_ok=True)
         for name in all_fields:
-            outputs[name] = np.ones((rows, cols), dtype=np.float32)
+            mm = np.memmap(
+                svf_memmap_dir / f"{name}.dat",
+                dtype=np.float32,
+                mode="w+",
+                shape=(rows, cols),
+            )
+            mm[:] = 1.0  # default for untouched pixels / masked edges
+            outputs[name] = mm
 
         # Pre-allocate memmap files for shadow matrices (bitpacked uint8, on disk)
         memmap_dir = working_path / "shadow_memmaps"
         memmap_dir.mkdir(parents=True, exist_ok=True)
         n_pack = (n_patches + 7) // 8  # ceil(153/8) = 20
         sh_shape = (rows, cols, n_pack)
+        shadow_meta = {
+            "shape": [rows, cols, n_pack],
+            "patch_count": n_patches,
+            "shadowmat_file": "shmat.dat",
+            "vegshadowmat_file": "vegshmat.dat",
+            "vbshmat_file": "vbshmat.dat",
+        }
+        with (memmap_dir / "metadata.json").open("w", encoding="utf-8") as f:
+            json.dump(shadow_meta, f, indent=2)
         shmat_mm = np.memmap(
             memmap_dir / "shmat.dat",
             dtype=np.uint8,
@@ -1382,102 +1502,177 @@ class SurfaceData:
             mode="w+",
             shape=sh_shape,
         )
+        if not use_veg:
+            vegshmat_mm[:] = 0
+            vbshmat_mm[:] = 0
 
+        # Progress: n_tiles × n_patches gives fine-grained per-patch visibility.
         pbar = ProgressReporter(
-            total=n_tiles,
+            total=n_tiles * n_patches,
             desc="Computing SVF (tiled)",
             feedback=feedback,
             progress_range=progress_range,
         )
 
         # Pipeline: overlap GPU computation of tile N+1 with CPU
-        # result-copying of tile N.  calculate_svf releases the GIL
-        # inside py.allow_threads(), so a background thread can drive
-        # the GPU while the main thread does numpy bookkeeping.
+        # result-copying of tile N.  SkyviewRunner.calculate_svf releases the
+        # GIL inside py.allow_threads(), so a background thread can drive the
+        # GPU while the main thread polls progress and does numpy bookkeeping.
         import threading
 
         def _submit_tile(tile):
-            """Prepare inputs and run SVF on background thread."""
+            """Prepare inputs and run SVF on background thread with progress."""
             rs = tile.read_slice
+            cs = tile.core_slice
+            core_row_start = int(cs[0].start or 0)
+            core_row_end = int(cs[0].stop or 0)
+            core_col_start = int(cs[1].start or 0)
+            core_col_end = int(cs[1].stop or 0)
             td = dsm_f32[rs].copy()
             tc = cdsm_f32[rs].copy()
             tt = tdsm_f32[rs].copy()
             mh = _max_shadow_height(td, tc, use_veg=use_veg)
+            runner = skyview.SkyviewRunner()
             box = [None, None]  # [result, error]
+            core_only = hasattr(runner, "calculate_svf_core")
 
             def _run():
                 try:
-                    box[0] = skyview.calculate_svf(
-                        td,
-                        tc,
-                        tt,
-                        pixel_size,
-                        use_veg,
-                        mh,
-                        2,
-                        3.0,
-                        None,
-                    )
-                except Exception as e:
+                    if core_only:
+                        box[0] = runner.calculate_svf_core(
+                            td,
+                            tc,
+                            tt,
+                            pixel_size,
+                            use_veg,
+                            mh,
+                            2,  # patch_option
+                            3.0,  # min_sun_elev_deg
+                            core_row_start,
+                            core_row_end,
+                            core_col_start,
+                            core_col_end,
+                        )
+                    else:
+                        box[0] = runner.calculate_svf(
+                            td,
+                            tc,
+                            tt,
+                            pixel_size,
+                            use_veg,
+                            mh,
+                            2,  # patch_option
+                            3.0,  # min_sun_elev_deg
+                        )
+                except BaseException as e:
                     box[1] = e
 
             t = threading.Thread(target=_run, daemon=True)
             t.start()
-            return t, box
+            return t, box, runner, core_only
 
-        def _process_result(tile_result, tile):
+        def _process_result(tile_result, tile, core_only):
             """Copy SVF + shadow matrices from a completed tile."""
             cs = tile.core_slice
             ws = tile.write_slice
+
+            # Avoid redundant array copies: Rust returns numpy-backed arrays.
+            svf_arrays = {name: np.asarray(getattr(tile_result, name)) for name in svf_fields}
             for name in svf_fields:
-                outputs[name][ws] = np.array(getattr(tile_result, name))[cs]
+                outputs[name][ws] = svf_arrays[name] if core_only else svf_arrays[name][cs]
             if use_veg:
+                veg_arrays = {name: np.asarray(getattr(tile_result, name)) for name in veg_fields}
                 for name in veg_fields:
-                    outputs[name][ws] = np.array(getattr(tile_result, name))[cs]
+                    outputs[name][ws] = veg_arrays[name] if core_only else veg_arrays[name][cs]
             # Shadow matrices are already bitpacked uint8 from Rust
-            for src_name, mm in [
-                ("bldg_sh_matrix", shmat_mm),
-                ("veg_sh_matrix", vegshmat_mm),
-                ("veg_blocks_bldg_sh_matrix", vbshmat_mm),
-            ]:
-                arr = np.array(getattr(tile_result, src_name))
-                mm[ws] = arr[cs]
+            bldg = np.asarray(tile_result.bldg_sh_matrix)
+            shmat_mm[ws] = bldg if core_only else bldg[cs]
+            if use_veg:
+                veg = np.asarray(tile_result.veg_sh_matrix)
+                vb = np.asarray(tile_result.veg_blocks_bldg_sh_matrix)
+                vegshmat_mm[ws] = veg if core_only else veg[cs]
+                vbshmat_mm[ws] = vb if core_only else vb[cs]
 
         # Kick off first tile
-        thread, box = _submit_tile(tiles[0])
+        thread, box, runner, core_only = _submit_tile(tiles[0])
 
-        for tile_idx in range(n_tiles):
-            pbar.set_description(f"SVF tile {tile_idx + 1}/{n_tiles}")
-            pbar.set_text(f"Computing SVF — Tile {tile_idx + 1}/{n_tiles}")
-            # Wait for current tile to finish
-            thread.join()
-            if box[1] is not None:
-                raise box[1]
-            cur_result = box[0]
-            cur_tile = tiles[tile_idx]
+        try:
+            for tile_idx in range(n_tiles):
+                pbar.set_description(f"SVF tile {tile_idx + 1}/{n_tiles}")
+                pbar.set_text(f"Computing SVF — Tile {tile_idx + 1}/{n_tiles}")
 
-            # Submit next tile (GPU starts while we copy results below)
-            if tile_idx + 1 < n_tiles:
-                thread, box = _submit_tile(tiles[tile_idx + 1])
+                # Poll per-patch progress while tile runs
+                last_patch = 0
+                cancelled = False
+                while thread.is_alive():
+                    thread.join(timeout=0.05)
+                    done = runner.progress()
+                    if done > last_patch:
+                        pbar.update(done - last_patch)
+                        last_patch = done
+                    # Check QGIS cancellation within tile
+                    if pbar.is_cancelled():
+                        runner.cancel()
+                        thread.join(timeout=5.0)
+                        cancelled = True
+                        break
+                if cancelled:
+                    logger.info("  SVF computation cancelled by user")
+                    break
 
-            # Copy results on main thread (overlaps with next GPU computation)
-            _process_result(cur_result, cur_tile)
-            pbar.update(1)
-            if on_tile_complete is not None:
-                on_tile_complete(tile_idx, n_tiles)
-            # Check QGIS cancellation between tiles
-            if pbar.is_cancelled():
-                pbar.close()
-                logger.info("  SVF computation cancelled by user")
-                break
+                # Ensure progress accounts for all patches in this tile
+                if last_patch < n_patches:
+                    pbar.update(n_patches - last_patch)
 
-        pbar.close()
+                # Check for errors
+                if box[1] is not None:
+                    tile = tiles[tile_idx]
+                    raise RuntimeError(
+                        f"SVF tile {tile_idx + 1}/{n_tiles} failed (read_slice={tile.read_slice}): {box[1]}"
+                    ) from box[1]
+                cur_result = box[0]
+                if cur_result is None:
+                    raise RuntimeError(
+                        f"SVF tile {tile_idx + 1}/{n_tiles} returned None (skyview.calculate_svf produced no result)"
+                    )
+                cur_core_only = core_only
+
+                # Submit next tile (GPU starts while we copy results below)
+                if tile_idx + 1 < n_tiles:
+                    thread, box, runner, core_only = _submit_tile(tiles[tile_idx + 1])
+
+                # Copy results on main thread (overlaps with next GPU computation)
+                _process_result(cur_result, tiles[tile_idx], cur_core_only)
+                if on_tile_complete is not None:
+                    on_tile_complete(tile_idx, n_tiles)
+        except BaseException:
+            # Clean up partial memmap files so stale data doesn't persist
+            import shutil
+
+            for d in (svf_memmap_dir, memmap_dir):
+                if d.exists():
+                    shutil.rmtree(d, ignore_errors=True)
+            raise
+        finally:
+            pbar.close()
         # Flush memmaps to disk
         shmat_mm.flush()
         vegshmat_mm.flush()
         vbshmat_mm.flush()
 
-        ones = np.ones((rows, cols), dtype=np.float32)
+        # Shared ones memmap for non-vegetation cases (avoids 5x full-size copies).
+        # When use_veg is True the veg outputs come from the real computation and
+        # ``ones`` is unused, but we still need a valid ndarray for the type checker.
+        if use_veg:
+            ones = np.ones((1, 1), dtype=np.float32)
+        else:
+            ones = np.memmap(
+                svf_memmap_dir / "ones.dat",
+                dtype=np.float32,
+                mode="w+",
+                shape=(rows, cols),
+            )
+            ones[:] = 1.0
 
         svf_data = SvfArrays(
             svf=outputs["svf"],
@@ -1485,17 +1680,24 @@ class SurfaceData:
             svf_east=outputs["svf_east"],
             svf_south=outputs["svf_south"],
             svf_west=outputs["svf_west"],
-            svf_veg=outputs["svf_veg"] if use_veg else ones.copy(),
-            svf_veg_north=outputs["svf_veg_north"] if use_veg else ones.copy(),
-            svf_veg_east=outputs["svf_veg_east"] if use_veg else ones.copy(),
-            svf_veg_south=outputs["svf_veg_south"] if use_veg else ones.copy(),
-            svf_veg_west=outputs["svf_veg_west"] if use_veg else ones.copy(),
-            svf_aveg=outputs["svf_veg_blocks_bldg_sh"] if use_veg else ones.copy(),
-            svf_aveg_north=outputs["svf_veg_blocks_bldg_sh_north"] if use_veg else ones.copy(),
-            svf_aveg_east=outputs["svf_veg_blocks_bldg_sh_east"] if use_veg else ones.copy(),
-            svf_aveg_south=outputs["svf_veg_blocks_bldg_sh_south"] if use_veg else ones.copy(),
-            svf_aveg_west=outputs["svf_veg_blocks_bldg_sh_west"] if use_veg else ones.copy(),
+            svf_veg=outputs["svf_veg"] if use_veg else ones,
+            svf_veg_north=outputs["svf_veg_north"] if use_veg else ones,
+            svf_veg_east=outputs["svf_veg_east"] if use_veg else ones,
+            svf_veg_south=outputs["svf_veg_south"] if use_veg else ones,
+            svf_veg_west=outputs["svf_veg_west"] if use_veg else ones,
+            svf_aveg=outputs["svf_veg_blocks_bldg_sh"] if use_veg else ones,
+            svf_aveg_north=outputs["svf_veg_blocks_bldg_sh_north"] if use_veg else ones,
+            svf_aveg_east=outputs["svf_veg_blocks_bldg_sh_east"] if use_veg else ones,
+            svf_aveg_south=outputs["svf_veg_blocks_bldg_sh_south"] if use_veg else ones,
+            svf_aveg_west=outputs["svf_veg_blocks_bldg_sh_west"] if use_veg else ones,
         )
+
+        # Flush all SVF memmaps to disk
+        for arr in outputs.values():
+            if hasattr(arr, "flush"):
+                arr.flush()  # type: ignore[union-attr]
+        if hasattr(ones, "flush"):
+            ones.flush()  # type: ignore[union-attr]
 
         return svf_data, (shmat_mm, vegshmat_mm, vbshmat_mm)
 

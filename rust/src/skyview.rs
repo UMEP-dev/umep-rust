@@ -1,7 +1,9 @@
 use core::f32;
-use ndarray::{Array2, Array3, ArrayView2, Zip};
+use ndarray::{s, Array2, Array3, ArrayView2, Zip};
 use numpy::{IntoPyArray, PyArray2, PyArray3, PyReadonlyArray2};
 use pyo3::prelude::*;
+#[cfg(feature = "gpu")]
+use std::collections::VecDeque;
 use std::f32::consts::PI;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -75,6 +77,7 @@ fn compute_svf_shadows(
         None,
         None,
         None,
+        false,
         min_sun_elev,
     )
 }
@@ -147,7 +150,7 @@ pub struct PatchInfo {
     pub annulino_end: i32,
 }
 
-fn create_patches(option: u8) -> Vec<PatchInfo> {
+fn create_patches(option: u8) -> PyResult<Vec<PatchInfo>> {
     let (annulino, altitudes, azi_starts, azimuth_patches) = match option {
         1 => (
             vec![0, 12, 24, 36, 48, 60, 72, 84, 90],
@@ -173,7 +176,12 @@ fn create_patches(option: u8) -> Vec<PatchInfo> {
             vec![0, 0, 4, 4, 2, 2, 5, 5, 8, 8, 0, 0, 10, 10, 0],
             vec![62, 62, 60, 60, 56, 56, 48, 48, 38, 38, 26, 26, 14, 14, 2],
         ),
-        _ => panic!("Unsupported patch option: {}", option),
+        _ => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Unsupported patch option: {} (valid: 1, 2, 3, 4)",
+                option
+            )));
+        }
     };
 
     // Iterate over the patch configurations and create PatchInfo instances
@@ -195,7 +203,7 @@ fn create_patches(option: u8) -> Vec<PatchInfo> {
             });
         }
     }
-    patches
+    Ok(patches)
 }
 
 // Structure to hold SVF results for Python
@@ -311,65 +319,6 @@ fn prepare_bushes(vegdem: ArrayView2<f32>, vegdem2: ArrayView2<f32>) -> Array2<f
     bush_areas
 }
 
-/// Bitpack GPU uint8 shadow bytes into the shadow matrices.
-///
-/// The `shadow_bytes` layout (from shadow_to_u8.wgsl):
-///   [0 .. Q*4)         bldg_sh as uint8
-///   [Q*4 .. 2*Q*4)     veg_sh as uint8      (only if usevegdem)
-///   [2*Q*4 .. 3*Q*4)   vbsh as uint8        (only if usevegdem)
-/// where Q = ceil(total_pixels / 4), and within each section the first
-/// `total_pixels` bytes are the uint8 shadow values (0 or 255) in row-major order.
-///
-/// This function sets bit `patch_idx` in the bitpacked matrices for each pixel
-/// where the u8 shadow value is >= 128 (i.e., was 255).
-#[cfg(feature = "gpu")]
-fn write_shadow_u8_to_matrix(
-    inter: &mut SvfIntermediate,
-    shadow_bytes: &[u8],
-    patch_idx: usize,
-    _total_pixels: usize,
-    num_quads: usize,
-    num_rows: usize,
-    num_cols: usize,
-    usevegdem: bool,
-) {
-    let q4 = num_quads * 4; // byte stride between sections
-    let byte_idx = patch_idx >> 3;
-    let bit_mask = 1u8 << (patch_idx & 7);
-
-    // bldg_sh: first section — set bit for pixels where shadow value >= 128
-    for r in 0..num_rows {
-        let row_offset = r * num_cols;
-        for c in 0..num_cols {
-            if shadow_bytes[row_offset + c] >= 128 {
-                inter.bldg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
-            }
-        }
-    }
-
-    if usevegdem {
-        // veg_sh: second section
-        for r in 0..num_rows {
-            let row_offset = r * num_cols;
-            for c in 0..num_cols {
-                if shadow_bytes[q4 + row_offset + c] >= 128 {
-                    inter.veg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
-                }
-            }
-        }
-
-        // veg_blocks_bldg_sh: third section
-        for r in 0..num_rows {
-            let row_offset = r * num_cols;
-            for c in 0..num_cols {
-                if shadow_bytes[2 * q4 + row_offset + c] >= 128 {
-                    inter.veg_blocks_bldg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
-                }
-            }
-        }
-    }
-}
-
 // --- Main Calculation Function ---
 // Calculate SVF with 153 patches (equivalent to Python's svfForProcessing153)
 // Internal implementation that supports an optional progress counter
@@ -397,7 +346,7 @@ fn calculate_svf_inner(
     let bush_f32 = prepare_bushes(vegdem_f32.view(), vegdem2_f32.view());
 
     // Create sky patches (use patch_option argument)
-    let patches = create_patches(patch_option);
+    let patches = create_patches(patch_option)?;
     let total_patches = patches.len(); // Needed for 3D array dimensions
 
     // Create a single intermediate result and allocate all arrays there
@@ -420,6 +369,7 @@ fn calculate_svf_inner(
             num_rows,
             num_cols,
             usevegdem,
+            total_patches,
             dsm_f32.view(),
             vc,
             vt,
@@ -441,20 +391,22 @@ fn calculate_svf_inner(
     if use_gpu_svf {
         #[cfg(feature = "gpu")]
         {
-            let gpu_ctx = crate::shadowing::get_gpu_context().unwrap();
-            let total_pixels = num_rows * num_cols;
-            let num_quads = (total_pixels + 3) / 4;
+            let gpu_ctx = crate::shadowing::get_gpu_context().ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "GPU context became unavailable during SVF execution",
+                )
+            })?;
             let min_elev = min_sun_elev_deg.unwrap_or(5.0_f32);
-
-            // Double-buffered pipeline: dispatch current patch, read previous
-            let mut prev = None;
+            const MAX_INFLIGHT_SVF_SUBMITS: usize = 8;
+            let progress_cap = patches.len().saturating_sub(1);
+            let mut inflight_submissions: VecDeque<wgpu::SubmissionIndex> = VecDeque::new();
+            let mut completed_patches: usize = 0;
 
             for (patch_idx, patch) in patches.iter().enumerate() {
-                let slot = patch_idx % 2;
                 let pw = precompute_patch_weights(patch);
-                let sub_idx = gpu_ctx
+                let submission_index = gpu_ctx
                     .dispatch_shadow_and_accumulate_svf(
-                        slot,
+                        patch_idx,
                         patch.azimuth,
                         patch.altitude,
                         scale,
@@ -472,33 +424,24 @@ fn calculate_svf_inner(
                             patch_idx, e
                         ))
                     })?;
+                inflight_submissions.push_back(submission_index);
 
-                // Read PREVIOUS patch (overlapped with current GPU work)
-                if let Some((prev_slot, prev_sub, prev_pi)) = prev.take() {
-                    let bytes = gpu_ctx
-                        .read_shadow_staging(prev_slot, prev_sub)
-                        .map_err(|e| {
+                // Dispatch is non-blocking. Update progress only after submitted
+                // GPU work is observed complete to avoid a progress bar that races ahead.
+                if inflight_submissions.len() >= MAX_INFLIGHT_SVF_SUBMITS {
+                    if let Some(done_idx) = inflight_submissions.pop_front() {
+                        gpu_ctx.wait_for_submission(done_idx).map_err(|e| {
                             pyo3::exceptions::PyRuntimeError::new_err(format!(
-                                "GPU shadow readback failed at patch {}: {}",
-                                prev_pi, e
+                                "GPU SVF synchronization failed at patch {}: {}",
+                                patch_idx, e
                             ))
                         })?;
-                    write_shadow_u8_to_matrix(
-                        &mut inter,
-                        &bytes,
-                        prev_pi,
-                        total_pixels,
-                        num_quads,
-                        num_rows,
-                        num_cols,
-                        usevegdem,
-                    );
-                    if let Some(ref counter) = progress_counter {
-                        counter.fetch_add(1, Ordering::SeqCst);
+                        completed_patches += 1;
+                        if let Some(ref counter) = progress_counter {
+                            counter.store(completed_patches.min(progress_cap), Ordering::SeqCst);
+                        }
                     }
                 }
-
-                prev = Some((slot, sub_idx, patch_idx));
 
                 // Check cancellation flag between patches
                 if let Some(ref flag) = cancel_flag {
@@ -510,28 +453,38 @@ fn calculate_svf_inner(
                 }
             }
 
-            // Read final patch
-            if let Some((slot, sub_idx, pi)) = prev {
-                let bytes = gpu_ctx.read_shadow_staging(slot, sub_idx).map_err(|e| {
+            // Drain remaining submissions so progress advances smoothly during GPU work,
+            // not only at the final readback barrier.
+            while let Some(done_idx) = inflight_submissions.pop_front() {
+                gpu_ctx.wait_for_submission(done_idx).map_err(|e| {
                     pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "GPU shadow readback failed at final patch {}: {}",
-                        pi, e
+                        "GPU SVF synchronization failed while draining submissions: {}",
+                        e
                     ))
                 })?;
-                write_shadow_u8_to_matrix(
-                    &mut inter,
-                    &bytes,
-                    pi,
-                    total_pixels,
-                    num_quads,
-                    num_rows,
-                    num_cols,
-                    usevegdem,
-                );
+                completed_patches += 1;
                 if let Some(ref counter) = progress_counter {
-                    counter.fetch_add(1, Ordering::SeqCst);
+                    counter.store(completed_patches.min(progress_cap), Ordering::SeqCst);
+                }
+                if let Some(ref flag) = cancel_flag {
+                    if flag.load(Ordering::SeqCst) {
+                        return Err(pyo3::exceptions::PyInterruptedError::new_err(
+                            "SVF computation cancelled",
+                        ));
+                    }
                 }
             }
+
+            // Read back final bitpacked shadow matrices once.
+            let bitpacked = gpu_ctx.read_svf_bitpacked_shadows().map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "GPU SVF bitpacked shadow readback failed: {}",
+                    e
+                ))
+            })?;
+            inter.bldg_sh_matrix = bitpacked.bldg_sh_matrix;
+            inter.veg_sh_matrix = bitpacked.veg_sh_matrix;
+            inter.veg_blocks_bldg_sh_matrix = bitpacked.veg_blocks_bldg_sh_matrix;
 
             // Read back accumulated SVF values from GPU
             let svf = gpu_ctx.read_svf_results().map_err(|e| {
@@ -575,6 +528,12 @@ fn calculate_svf_inner(
                 if let Some(v) = svf.svf_aveg_w {
                     inter.svf_veg_blocks_bldg_sh_w = v;
                 }
+            }
+
+            // Keep one progress step for finalize/packing so UI does not show
+            // 100% while CPU post-processing is still running.
+            if let Some(ref counter) = progress_counter {
+                counter.store(progress_cap, Ordering::SeqCst);
             }
         }
     } else {
@@ -693,92 +652,114 @@ fn calculate_svf_inner(
     }
 
     // Finalize: apply last-annulus correction and clamp values, same semantics as the previous finalize
+    let has_nan = dsm_f32.iter().any(|v| v.is_nan());
+
     inter.svf_s += LAST_ANNULUS_CORRECTION;
     inter.svf_w += LAST_ANNULUS_CORRECTION;
 
-    inter.svf.mapv_inplace(|x| x.min(1.0));
-    inter.svf_n.mapv_inplace(|x| x.min(1.0));
-    inter.svf_e.mapv_inplace(|x| x.min(1.0));
-    inter.svf_s.mapv_inplace(|x| x.min(1.0));
-    inter.svf_w.mapv_inplace(|x| x.min(1.0));
+    Zip::from(&mut inter.svf).par_for_each(|x| *x = x.min(1.0));
+    Zip::from(&mut inter.svf_n).par_for_each(|x| *x = x.min(1.0));
+    Zip::from(&mut inter.svf_e).par_for_each(|x| *x = x.min(1.0));
+    Zip::from(&mut inter.svf_s).par_for_each(|x| *x = x.min(1.0));
+    Zip::from(&mut inter.svf_w).par_for_each(|x| *x = x.min(1.0));
 
-    // Set NaN in outputs for NaN pixels in DSM
-    Zip::from(&mut inter.svf)
-        .and(&mut inter.svf_n)
-        .and(&mut inter.svf_e)
-        .and(&mut inter.svf_s)
-        .and(&mut inter.svf_w)
-        .and(&dsm_f32)
-        .for_each(|svf, svf_n, svf_e, svf_s, svf_w, &dsm_val| {
-            if dsm_val.is_nan() {
-                *svf = f32::NAN;
-                *svf_n = f32::NAN;
-                *svf_e = f32::NAN;
-                *svf_s = f32::NAN;
-                *svf_w = f32::NAN;
-            }
-        });
-
-    if usevegdem {
-        // Create correction array for veg components
-        let last_veg = Array2::from_shape_fn((num_rows, num_cols), |(row_idx, col_idx)| {
-            if vegdem2_f32[[row_idx, col_idx]] == 0.0 {
-                LAST_ANNULUS_CORRECTION
-            } else {
-                0.0
-            }
-        });
-
-        inter.svf_veg_s += &last_veg;
-        inter.svf_veg_w += &last_veg;
-        inter.svf_veg_blocks_bldg_sh_s += &last_veg;
-        inter.svf_veg_blocks_bldg_sh_w += &last_veg;
-
-        inter.svf_veg.mapv_inplace(|x| x.min(1.0));
-        inter.svf_veg_n.mapv_inplace(|x| x.min(1.0));
-        inter.svf_veg_e.mapv_inplace(|x| x.min(1.0));
-        inter.svf_veg_s.mapv_inplace(|x| x.min(1.0));
-        inter.svf_veg_w.mapv_inplace(|x| x.min(1.0));
-        inter.svf_veg_blocks_bldg_sh.mapv_inplace(|x| x.min(1.0));
-        inter.svf_veg_blocks_bldg_sh_n.mapv_inplace(|x| x.min(1.0));
-        inter.svf_veg_blocks_bldg_sh_e.mapv_inplace(|x| x.min(1.0));
-        inter.svf_veg_blocks_bldg_sh_s.mapv_inplace(|x| x.min(1.0));
-        inter.svf_veg_blocks_bldg_sh_w.mapv_inplace(|x| x.min(1.0));
-
-        // Set NaN in veg outputs for NaN pixels in DSM (split into two operations due to Zip limit)
-        Zip::from(&mut inter.svf_veg)
-            .and(&mut inter.svf_veg_n)
-            .and(&mut inter.svf_veg_e)
-            .and(&mut inter.svf_veg_s)
-            .and(&mut inter.svf_veg_w)
+    // Set NaN in outputs only when needed.
+    if has_nan {
+        Zip::from(&mut inter.svf)
+            .and(&mut inter.svf_n)
+            .and(&mut inter.svf_e)
+            .and(&mut inter.svf_s)
+            .and(&mut inter.svf_w)
             .and(&dsm_f32)
-            .for_each(
-                |svf_veg, svf_veg_n, svf_veg_e, svf_veg_s, svf_veg_w, &dsm_val| {
-                    if dsm_val.is_nan() {
-                        *svf_veg = f32::NAN;
-                        *svf_veg_n = f32::NAN;
-                        *svf_veg_e = f32::NAN;
-                        *svf_veg_s = f32::NAN;
-                        *svf_veg_w = f32::NAN;
-                    }
-                },
-            );
-
-        Zip::from(&mut inter.svf_veg_blocks_bldg_sh)
-            .and(&mut inter.svf_veg_blocks_bldg_sh_n)
-            .and(&mut inter.svf_veg_blocks_bldg_sh_e)
-            .and(&mut inter.svf_veg_blocks_bldg_sh_s)
-            .and(&mut inter.svf_veg_blocks_bldg_sh_w)
-            .and(&dsm_f32)
-            .for_each(|svf_vb, svf_vb_n, svf_vb_e, svf_vb_s, svf_vb_w, &dsm_val| {
+            .par_for_each(|svf, svf_n, svf_e, svf_s, svf_w, &dsm_val| {
                 if dsm_val.is_nan() {
-                    *svf_vb = f32::NAN;
-                    *svf_vb_n = f32::NAN;
-                    *svf_vb_e = f32::NAN;
-                    *svf_vb_s = f32::NAN;
-                    *svf_vb_w = f32::NAN;
+                    *svf = f32::NAN;
+                    *svf_n = f32::NAN;
+                    *svf_e = f32::NAN;
+                    *svf_s = f32::NAN;
+                    *svf_w = f32::NAN;
                 }
             });
+    }
+
+    if usevegdem {
+        // Apply directional correction in-place without allocating a temporary full-grid array.
+        Zip::from(&mut inter.svf_veg_s)
+            .and(&vegdem2_f32)
+            .par_for_each(|svf_veg_s, &veg2| {
+                if veg2 == 0.0 {
+                    *svf_veg_s += LAST_ANNULUS_CORRECTION;
+                }
+            });
+        Zip::from(&mut inter.svf_veg_w)
+            .and(&vegdem2_f32)
+            .par_for_each(|svf_veg_w, &veg2| {
+                if veg2 == 0.0 {
+                    *svf_veg_w += LAST_ANNULUS_CORRECTION;
+                }
+            });
+        Zip::from(&mut inter.svf_veg_blocks_bldg_sh_s)
+            .and(&vegdem2_f32)
+            .par_for_each(|svf_vb_s, &veg2| {
+                if veg2 == 0.0 {
+                    *svf_vb_s += LAST_ANNULUS_CORRECTION;
+                }
+            });
+        Zip::from(&mut inter.svf_veg_blocks_bldg_sh_w)
+            .and(&vegdem2_f32)
+            .par_for_each(|svf_vb_w, &veg2| {
+                if veg2 == 0.0 {
+                    *svf_vb_w += LAST_ANNULUS_CORRECTION;
+                }
+            });
+
+        Zip::from(&mut inter.svf_veg).par_for_each(|x| *x = x.min(1.0));
+        Zip::from(&mut inter.svf_veg_n).par_for_each(|x| *x = x.min(1.0));
+        Zip::from(&mut inter.svf_veg_e).par_for_each(|x| *x = x.min(1.0));
+        Zip::from(&mut inter.svf_veg_s).par_for_each(|x| *x = x.min(1.0));
+        Zip::from(&mut inter.svf_veg_w).par_for_each(|x| *x = x.min(1.0));
+        Zip::from(&mut inter.svf_veg_blocks_bldg_sh).par_for_each(|x| *x = x.min(1.0));
+        Zip::from(&mut inter.svf_veg_blocks_bldg_sh_n).par_for_each(|x| *x = x.min(1.0));
+        Zip::from(&mut inter.svf_veg_blocks_bldg_sh_e).par_for_each(|x| *x = x.min(1.0));
+        Zip::from(&mut inter.svf_veg_blocks_bldg_sh_s).par_for_each(|x| *x = x.min(1.0));
+        Zip::from(&mut inter.svf_veg_blocks_bldg_sh_w).par_for_each(|x| *x = x.min(1.0));
+
+        // Set NaN in veg outputs only when needed (split into two operations due to Zip limit)
+        if has_nan {
+            Zip::from(&mut inter.svf_veg)
+                .and(&mut inter.svf_veg_n)
+                .and(&mut inter.svf_veg_e)
+                .and(&mut inter.svf_veg_s)
+                .and(&mut inter.svf_veg_w)
+                .and(&dsm_f32)
+                .par_for_each(
+                    |svf_veg, svf_veg_n, svf_veg_e, svf_veg_s, svf_veg_w, &dsm_val| {
+                        if dsm_val.is_nan() {
+                            *svf_veg = f32::NAN;
+                            *svf_veg_n = f32::NAN;
+                            *svf_veg_e = f32::NAN;
+                            *svf_veg_s = f32::NAN;
+                            *svf_veg_w = f32::NAN;
+                        }
+                    },
+                );
+
+            Zip::from(&mut inter.svf_veg_blocks_bldg_sh)
+                .and(&mut inter.svf_veg_blocks_bldg_sh_n)
+                .and(&mut inter.svf_veg_blocks_bldg_sh_e)
+                .and(&mut inter.svf_veg_blocks_bldg_sh_s)
+                .and(&mut inter.svf_veg_blocks_bldg_sh_w)
+                .and(&dsm_f32)
+                .par_for_each(|svf_vb, svf_vb_n, svf_vb_e, svf_vb_s, svf_vb_w, &dsm_val| {
+                    if dsm_val.is_nan() {
+                        *svf_vb = f32::NAN;
+                        *svf_vb_n = f32::NAN;
+                        *svf_vb_e = f32::NAN;
+                        *svf_vb_s = f32::NAN;
+                        *svf_vb_w = f32::NAN;
+                    }
+                });
+        }
     }
 
     // When no vegetation, veg shadow matrices must indicate "no blocking":
@@ -792,17 +773,29 @@ fn calculate_svf_inner(
             .assign(&inter.bldg_sh_matrix);
     }
 
-    // Zero out bitpacked shadow matrices for NaN pixels in DSM
-    for row in 0..num_rows {
-        for col in 0..num_cols {
-            if dsm_f32[[row, col]].is_nan() {
-                for bi in 0..n_pack {
-                    inter.bldg_sh_matrix[[row, col, bi]] = 0;
-                    inter.veg_sh_matrix[[row, col, bi]] = 0;
-                    inter.veg_blocks_bldg_sh_matrix[[row, col, bi]] = 0;
-                }
-            }
+    // Zero out bitpacked shadow matrices for NaN pixels only when needed.
+    // Run per-byte in parallel over pixels to avoid a long single-core tail.
+    if has_nan {
+        for bi in 0..n_pack {
+            let mut bldg_plane = inter.bldg_sh_matrix.slice_mut(s![.., .., bi]);
+            let mut veg_plane = inter.veg_sh_matrix.slice_mut(s![.., .., bi]);
+            let mut vb_plane = inter.veg_blocks_bldg_sh_matrix.slice_mut(s![.., .., bi]);
+            Zip::from(&dsm_f32)
+                .and(&mut bldg_plane)
+                .and(&mut veg_plane)
+                .and(&mut vb_plane)
+                .par_for_each(|&dsm_val, bldg, veg, vb| {
+                    if dsm_val.is_nan() {
+                        *bldg = 0;
+                        *veg = 0;
+                        *vb = 0;
+                    }
+                });
         }
+    }
+
+    if let Some(ref counter) = progress_counter {
+        counter.store(patches.len(), Ordering::SeqCst);
     }
 
     Ok(inter)
@@ -833,6 +826,98 @@ fn svf_intermediate_to_py(py: Python, inter: SvfIntermediate) -> PyResult<Py<Svf
             veg_blocks_bldg_sh_matrix: inter.veg_blocks_bldg_sh_matrix.into_pyarray(py).unbind(),
         },
     )
+}
+
+fn crop_svf_intermediate(
+    inter: SvfIntermediate,
+    row_start: usize,
+    row_end: usize,
+    col_start: usize,
+    col_end: usize,
+) -> PyResult<SvfIntermediate> {
+    let rows = inter.svf.nrows();
+    let cols = inter.svf.ncols();
+    if row_start >= row_end || col_start >= col_end || row_end > rows || col_end > cols {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "Invalid core window: rows [{}, {}), cols [{}, {}) for tile {}x{}",
+            row_start, row_end, col_start, col_end, rows, cols
+        )));
+    }
+
+    Ok(SvfIntermediate {
+        svf: inter
+            .svf
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_n: inter
+            .svf_n
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_e: inter
+            .svf_e
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_s: inter
+            .svf_s
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_w: inter
+            .svf_w
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_veg: inter
+            .svf_veg
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_veg_n: inter
+            .svf_veg_n
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_veg_e: inter
+            .svf_veg_e
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_veg_s: inter
+            .svf_veg_s
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_veg_w: inter
+            .svf_veg_w
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_veg_blocks_bldg_sh: inter
+            .svf_veg_blocks_bldg_sh
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_veg_blocks_bldg_sh_n: inter
+            .svf_veg_blocks_bldg_sh_n
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_veg_blocks_bldg_sh_e: inter
+            .svf_veg_blocks_bldg_sh_e
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_veg_blocks_bldg_sh_s: inter
+            .svf_veg_blocks_bldg_sh_s
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        svf_veg_blocks_bldg_sh_w: inter
+            .svf_veg_blocks_bldg_sh_w
+            .slice(s![row_start..row_end, col_start..col_end])
+            .to_owned(),
+        bldg_sh_matrix: inter
+            .bldg_sh_matrix
+            .slice(s![row_start..row_end, col_start..col_end, ..])
+            .to_owned(),
+        veg_sh_matrix: inter
+            .veg_sh_matrix
+            .slice(s![row_start..row_end, col_start..col_end, ..])
+            .to_owned(),
+        veg_blocks_bldg_sh_matrix: inter
+            .veg_blocks_bldg_sh_matrix
+            .slice(s![row_start..row_end, col_start..col_end, ..])
+            .to_owned(),
+    })
 }
 
 // Keep existing pyfunction wrapper for backward compatibility (ignores progress)
@@ -937,5 +1022,51 @@ impl SkyviewRunner {
             )
         })?;
         svf_intermediate_to_py(py, inter)
+    }
+
+    pub fn calculate_svf_core(
+        &self,
+        py: Python,
+        dsm_py: PyReadonlyArray2<f32>,
+        vegdem_py: PyReadonlyArray2<f32>,
+        vegdem2_py: PyReadonlyArray2<f32>,
+        scale: f32,
+        usevegdem: bool,
+        max_local_dsm_ht: f32,
+        patch_option: Option<u8>,
+        min_sun_elev_deg: Option<f32>,
+        core_row_start: usize,
+        core_row_end: usize,
+        core_col_start: usize,
+        core_col_end: usize,
+    ) -> PyResult<Py<SvfResult>> {
+        let patch_option = patch_option.unwrap_or(2);
+        self.progress.store(0, Ordering::SeqCst);
+        self.cancelled.store(false, Ordering::SeqCst);
+        let dsm_owned = dsm_py.as_array().to_owned();
+        let vegdem_owned = vegdem_py.as_array().to_owned();
+        let vegdem2_owned = vegdem2_py.as_array().to_owned();
+        let inter = py.allow_threads(|| {
+            calculate_svf_inner(
+                dsm_owned,
+                vegdem_owned,
+                vegdem2_owned,
+                scale,
+                usevegdem,
+                max_local_dsm_ht,
+                patch_option,
+                min_sun_elev_deg,
+                Some(self.progress.clone()),
+                Some(self.cancelled.clone()),
+            )
+        })?;
+        let core_inter = crop_svf_intermediate(
+            inter,
+            core_row_start,
+            core_row_end,
+            core_col_start,
+            core_col_end,
+        )?;
+        svf_intermediate_to_py(py, core_inter)
     }
 }

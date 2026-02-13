@@ -12,6 +12,7 @@ ensuring physically accurate ground temperature modeling with thermal inertia.
 
 from __future__ import annotations
 
+import math
 import os
 import sys
 import time
@@ -52,9 +53,39 @@ MAX_TILE_SIZE = _FALLBACK_MAX_TILE_SIZE
 
 # Resource estimation constants
 _RAM_FRACTION = 0.50  # Use at most 50% of total physical RAM for tile arrays
-_SVF_BYTES_PER_PIXEL = 32  # GPU staging bytes per pixel for SVF computation
+
+# GPU memory constants — two sets per context, derived from
+# rust/src/gpu/shadow_gpu.rs allocate_buffers() + init_svf_accumulation().
+#
+# *_TOTAL: aggregate footprint of ALL wgpu buffers alive simultaneously.
+#          Used when max_buffer_size ≈ total GPU memory (Metal/DX12).
+# *_SINGLE: largest single buffer per pixel.
+#           Used when max_buffer_size is a per-buffer cap (Vulkan/GL).
+#
+# Shadow context ("solweig" timestep): allocate_buffers() only
+#   16 f32 storage buffers (64 B/px) + staging 10× (40 B/px) + overhead/headroom
+_SHADOW_GPU_TOTAL_BPP = 120
+_SHADOW_GPU_SINGLE_BPP = 40  # staging_buffer = 10 × buffer_size
+#
+# SVF context: allocate_buffers() + init_svf_accumulation()
+#   shadow (104) + svf_data 15× (60) + svf_staging (60)
+#   + bitpack 3×20 output (60) + bitpack staging (60)
+_SVF_GPU_TOTAL_BPP = 384
+_SVF_GPU_SINGLE_BPP = 60  # svf_data_buffer = 15 × buffer_size
+#
+# SVF CPU/RAM: Rust SvfIntermediate::zeros() = 15 f32 arrays (60 B/px)
+# + 3 bitpacked u8 arrays at 20 B each (60 B/px) + memmap overhead (~30 B/px).
+_SVF_RAM_BYTES_PER_PIXEL = 150
+
 _SOLWEIG_BYTES_PER_PIXEL = 400  # Peak Python-side bytes per pixel (benchmarked ~370)
 _GPU_HEADROOM = 0.80  # Use 80% of GPU max buffer to leave headroom
+
+# Backends where max_buffer_size ≈ total GPU/unified memory.
+# On these backends we constrain by total allocation across all buffers.
+# On others (Vulkan, GL) max_buffer_size is a per-buffer cap, so we
+# constrain by the largest single buffer and rely on init_svf_accumulation()
+# falling back to CPU if total VRAM is exceeded.
+_TOTAL_MEMORY_BACKENDS = {"Metal", "Dx12"}
 _MAX_AUTO_TILE_WORKERS = 6  # Hard cap to avoid bandwidth/cache thrash on many-core CPUs
 
 # Cache for computed tile limits (populated once per context on first call)
@@ -122,27 +153,40 @@ def compute_max_tile_pixels(*, context: str = "solweig") -> int:
     """
     from . import get_gpu_limits
 
-    bytes_per_pixel = _SVF_BYTES_PER_PIXEL if context == "svf" else _SOLWEIG_BYTES_PER_PIXEL
+    if context == "svf":
+        ram_bytes_per_pixel = _SVF_RAM_BYTES_PER_PIXEL
+        gpu_total_bpp = _SVF_GPU_TOTAL_BPP
+        gpu_single_bpp = _SVF_GPU_SINGLE_BPP
+    else:
+        ram_bytes_per_pixel = _SOLWEIG_BYTES_PER_PIXEL
+        gpu_total_bpp = _SHADOW_GPU_TOTAL_BPP
+        gpu_single_bpp = _SHADOW_GPU_SINGLE_BPP
 
-    # GPU constraint: largest single buffer must fit the tile's staging data.
-    # Always uses _SVF_BYTES_PER_PIXEL (~32) because the GPU staging buffer
-    # holds shadow + SVF arrays regardless of context. The heavier Python-side
-    # working memory (~400 bytes/pixel for "solweig") is captured by the RAM
-    # constraint below, which uses the context-appropriate bytes_per_pixel.
+    # GPU constraint: total GPU allocation for all buffers must fit in memory.
+    # On Metal (Apple Silicon), max_buffer_size ≈ total GPU/unified memory,
+    # so this effectively constrains the aggregate footprint per tile.
+    # - "solweig": shadow buffers only (~104 B/px)
+    # - "svf": shadow + SVF accumulation + bitpack (~344 B/px with veg)
     gpu_max_pixels = None
     limits = get_gpu_limits()
     if limits is not None:
         max_buf = limits["max_buffer_size"]
-        gpu_max_pixels = int(max_buf * _GPU_HEADROOM) // _SVF_BYTES_PER_PIXEL
+        backend = str(limits.get("backend", ""))
+        # Metal/DX12 backends generally report max_buffer_size close to total
+        # GPU/unified memory, so constrain by aggregate per-tile working set.
+        # Other backends may expose per-buffer caps; for them use largest single
+        # buffer estimate.
+        bpp = gpu_total_bpp if backend in _TOTAL_MEMORY_BACKENDS else gpu_single_bpp
+        gpu_max_pixels = int(int(max_buf) * _GPU_HEADROOM) // bpp
 
     # RAM constraint: total physical RAM × fraction / bytes per pixel.
-    # Uses context-dependent bytes_per_pixel: ~32 for "svf" (GPU staging only),
-    # ~400 for "solweig" (full timestep with radiation grids, state arrays, etc).
+    # - "svf": ~150 B/px (Rust SvfIntermediate + memmap overhead)
+    # - "solweig": ~400 B/px (timestep with radiation grids, state arrays, etc).
     ram_max_pixels = None
     total_ram = _get_total_ram_bytes()
     if total_ram is not None:
         usable_ram = int(total_ram * _RAM_FRACTION)
-        ram_max_pixels = usable_ram // bytes_per_pixel
+        ram_max_pixels = usable_ram // ram_bytes_per_pixel
 
     # Use the tighter of the two constraints
     candidates = [c for c in [gpu_max_pixels, ram_max_pixels] if c is not None]
@@ -273,6 +317,62 @@ def _resolve_prefetch_default(
 
     usable_ram = int(total_ram * _RAM_FRACTION)
     return estimated_inflight_bytes <= int(usable_ram * 0.5)
+
+
+def _maybe_subdivide_single_tile_for_timeseries(
+    rows: int,
+    cols: int,
+    tile_size: int,
+    buffer_pixels: int,
+    pixel_size: float,
+    requested_workers: int | None,
+) -> int:
+    """
+    Optionally reduce tile size for large single-tile timeseries runs.
+
+    Motivation:
+    Resource-aware sizing often yields one very large tile that fits memory, but
+    that can leave CPU/GPU orchestration under-utilized in timeseries mode.
+    Splitting into a few tiles enables overlapping GPU and CPU work across workers.
+    """
+    if rows * cols < 4_000_000:
+        return tile_size
+
+    env_target = os.getenv("SOLWEIG_TIMESERIES_TARGET_TILES", "").strip()
+    try:
+        target_tiles = int(env_target) if env_target else 0
+    except ValueError:
+        target_tiles = 0
+
+    if target_tiles <= 1:
+        if requested_workers is not None:
+            target_tiles = max(2, min(16, requested_workers))
+        else:
+            cpu_count = os.cpu_count() or 2
+            target_tiles = max(2, min(16, cpu_count // 2))
+
+    splits = max(2, int(math.ceil(math.sqrt(target_tiles))))
+    candidate_core = int(math.ceil(max(rows / splits, cols / splits)))
+    candidate_core = max(MIN_TILE_SIZE, min(candidate_core, tile_size))
+
+    if candidate_core >= tile_size:
+        return tile_size
+
+    adjusted_candidate, warning = validate_tile_size(candidate_core, buffer_pixels, pixel_size)
+    if warning:
+        logger.warning(warning)
+    if adjusted_candidate >= tile_size:
+        return tile_size
+
+    candidate_tiles = generate_tiles(rows, cols, adjusted_candidate, buffer_pixels)
+    if len(candidate_tiles) <= 1:
+        return tile_size
+
+    logger.info(
+        "Timeseries CPU parallelization: splitting single tile into "
+        f"{len(candidate_tiles)} tiles (core {tile_size} -> {adjusted_candidate})"
+    )
+    return adjusted_candidate
 
 
 def _extract_tile_surface(
@@ -581,22 +681,28 @@ def validate_tile_size(
         Tuple of (adjusted_core_size, warning_message or None).
 
     Constraints:
-        - core >= MIN_TILE_SIZE (256)
+        - core >= MIN_TILE_SIZE (preferred)
+        - core >= 1 when large overlap leaves less than MIN_TILE_SIZE
         - core + 2 * buffer_pixels <= resource-derived maximum
     """
     max_full = compute_max_tile_side(context=context)
     warning = None
     core = tile_size
 
-    # Enforce minimum core size
-    if core < MIN_TILE_SIZE:
-        warning = f"Tile core size {tile_size} below minimum, using {MIN_TILE_SIZE}"
-        core = MIN_TILE_SIZE
-
     # Enforce maximum: full tile (core + 2*buffer) must fit resource limit
     max_core = max_full - 2 * buffer_pixels
+    if max_core < 1:
+        warning = f"Buffer {buffer_pixels}px too large for resource limit ({max_full}px). Using minimum feasible core=1"
+        return 1, warning
+
+    # Enforce minimum core size (prefer MIN_TILE_SIZE, but allow smaller when overlap is large)
+    min_core = MIN_TILE_SIZE if max_core >= MIN_TILE_SIZE else 1
+    if core < min_core:
+        warning = f"Tile core size {tile_size} below minimum, using {min_core}"
+        core = min_core
+
     if core > max_core:
-        core = max(MIN_TILE_SIZE, max_core)
+        core = max_core
         warning = (
             f"Tile core {tile_size} + 2x{buffer_pixels}px buffer exceeds resource limit "
             f"({max_full}px). Using core={core}"
@@ -697,7 +803,7 @@ def calculate_tiled(
         human: Human body parameters. Uses defaults if not provided.
         precomputed: Pre-computed walls (SVF computed per-tile).
         tile_size: Core tile size in pixels (default 1024).
-        use_anisotropic_sky: Use anisotropic sky model. Default False.
+        use_anisotropic_sky: Use anisotropic sky model.
         conifer: Treat vegetation as evergreen conifers. Default False.
         physics: Physics parameters. If None, uses bundled defaults.
         materials: Material properties. If None, uses bundled defaults.
@@ -905,7 +1011,7 @@ def calculate_timeseries_tiled(
         config: Model configuration (provides defaults for None params).
         human: Human body parameters. If None, uses config or defaults.
         precomputed: Pre-computed walls (SVF computed per-tile).
-        use_anisotropic_sky: Use anisotropic sky model. Default False.
+        use_anisotropic_sky: Use anisotropic sky model.
             Shadow matrices are spatially sliced per tile.
         conifer: Treat vegetation as evergreen conifers. Default False.
         physics: Physics parameters. If None, uses config or bundled defaults.
@@ -964,7 +1070,8 @@ def calculate_timeseries_tiled(
             effective_prefetch_tiles = config.prefetch_tiles
 
     if effective_aniso is None:
-        effective_aniso = False
+        # Keep behavior aligned with calculate() and ModelConfig defaults.
+        effective_aniso = True
     if effective_human is None:
         effective_human = HumanParams()
     if effective_max_shadow is None:
@@ -984,11 +1091,15 @@ def calculate_timeseries_tiled(
     if output_dir is not None:
         requested_outputs = set(effective_outputs or ["tmrt"])
         requested_outputs.add("tmrt")
-    need_shadow = output_dir is None or requested_outputs is None or "shadow" in requested_outputs
-    need_kdown = output_dir is None or requested_outputs is None or "kdown" in requested_outputs
-    need_kup = output_dir is None or requested_outputs is None or "kup" in requested_outputs
-    need_ldown = output_dir is None or requested_outputs is None or "ldown" in requested_outputs
-    need_lup = output_dir is None or requested_outputs is None or "lup" in requested_outputs
+    elif not return_results:
+        # Streaming mode without file output only needs Tmrt.
+        requested_outputs = {"tmrt"}
+
+    need_shadow = requested_outputs is None or "shadow" in requested_outputs
+    need_kdown = requested_outputs is None or "kdown" in requested_outputs
+    need_kup = requested_outputs is None or "kup" in requested_outputs
+    need_ldown = requested_outputs is None or "ldown" in requested_outputs
+    need_lup = requested_outputs is None or "lup" in requested_outputs
 
     # Fill NaN in surface layers
     surface.fill_nan()
@@ -1012,6 +1123,22 @@ def calculate_timeseries_tiled(
     tiles = generate_tiles(rows, cols, adjusted_tile_size, buffer_pixels)
     n_tiles = len(tiles)
     n_steps = len(weather_series)
+
+    # Large one-tile runs can underutilize CPU/GPU in timeseries mode.
+    # Optionally split into several tiles to increase overlap and throughput.
+    if n_tiles == 1:
+        adjusted_parallel = _maybe_subdivide_single_tile_for_timeseries(
+            rows,
+            cols,
+            adjusted_tile_size,
+            buffer_pixels,
+            pixel_size,
+            effective_tile_workers,
+        )
+        if adjusted_parallel < adjusted_tile_size:
+            adjusted_tile_size = adjusted_parallel
+            tiles = generate_tiles(rows, cols, adjusted_tile_size, buffer_pixels)
+            n_tiles = len(tiles)
 
     # Pre-compute weather (sun positions, radiation)
     from .timeseries import _precompute_weather
@@ -1097,7 +1224,7 @@ def calculate_timeseries_tiled(
     tile_precomputeds = [_slice_tile_precomputed(precomputed, tile) for tile in tiles]
     tile_states = [_slice_tile_state(state, tile) for tile in tiles]
 
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
     try:
         with ThreadPoolExecutor(max_workers=n_workers) as executor:
@@ -1176,19 +1303,19 @@ def calculate_timeseries_tiled(
                 for tile_idx, tile in enumerate(tiles):
                     _refresh_tile_state(tile_states[tile_idx], state, tile)
 
-                # Submit all tiles in parallel — Rust releases the GIL during
-                # compute_timestep, so threads overlap Python prep with Rust compute.
-                futures: dict[int, Any] = {}
+                # Submit tiles in parallel and drain by completion order.
+                # This avoids head-of-line blocking when one tile is slower.
+                futures: dict[Any, int] = {}
                 submit_times: dict[int, float] = {}
                 next_submit = 0
+                completed_tiles = 0
                 max_queue = 0
                 turnaround_sum = 0.0
 
-                # Collect in tile order (state merge requires ordered writes), while
-                # keeping only a bounded number of tile tasks in flight.
-                for tile_idx in range(n_tiles):
+                # Keep only a bounded number of tile tasks in flight.
+                while completed_tiles < n_tiles:
                     while next_submit < n_tiles and len(futures) < inflight_limit:
-                        futures[next_submit] = executor.submit(
+                        future = executor.submit(
                             calculate,
                             surface=tile_surfaces[next_submit],
                             location=location,
@@ -1205,55 +1332,61 @@ def calculate_timeseries_tiled(
                             return_state_copy=False,
                             _requested_outputs=requested_outputs,
                         )
+                        futures[future] = next_submit
                         submit_times[next_submit] = time.perf_counter()
                         next_submit += 1
                     max_queue = max(max_queue, max(0, len(futures) - n_workers))
 
-                    future = futures.pop(tile_idx)
-                    tile = tiles[tile_idx]
-                    submit_t = submit_times.pop(tile_idx)
+                    done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                    if not done:
+                        continue
+                    for future in done:
+                        tile_idx = futures.pop(future)
+                        tile = tiles[tile_idx]
+                        submit_t = submit_times.pop(tile_idx)
 
-                    if _TIMING_ENABLED:
-                        _t0 = time.perf_counter()
+                        if _TIMING_ENABLED:
+                            _t0 = time.perf_counter()
 
-                    tile_result = future.result()
-                    turnaround_sum += time.perf_counter() - submit_t
+                        tile_result = future.result()
+                        turnaround_sum += time.perf_counter() - submit_t
 
-                    if _TIMING_ENABLED:
-                        _t_ffi = time.perf_counter() - _t0
-                        _t1 = time.perf_counter()
+                        if _TIMING_ENABLED:
+                            _t_ffi = time.perf_counter() - _t0
+                            _t1 = time.perf_counter()
 
-                    # Write core results to global arrays (non-overlapping write_slice)
-                    _write_tile_result(
-                        tile_result,
-                        tile,
-                        tmrt_out,
-                        shadow_out,
-                        kdown_out,
-                        kup_out,
-                        ldown_out,
-                        lup_out,
-                    )
-
-                    # Merge tile state back to global state (non-overlapping write_slice)
-                    if tile_result.state is not None:
-                        _merge_tile_state(tile_result.state, tile, state)
-
-                    if _TIMING_ENABLED:
-                        _t_merge = time.perf_counter() - _t1
-                        print(
-                            f"[TIMING] tile {tile_idx + 1}/{n_tiles} "
-                            f"ffi={_t_ffi * 1000:.1f}ms "
-                            f"merge={_t_merge * 1000:.1f}ms",
-                            file=sys.stderr,
+                        # Write core results to global arrays (non-overlapping write_slice)
+                        _write_tile_result(
+                            tile_result,
+                            tile,
+                            tmrt_out,
+                            shadow_out,
+                            kdown_out,
+                            kup_out,
+                            ldown_out,
+                            lup_out,
                         )
 
-                    # Report progress
-                    step = t_idx * n_tiles + tile_idx + 1
-                    if progress_callback is not None:
-                        progress_callback(step, total_work)
-                    elif _progress is not None:
-                        _progress.update(1)
+                        # Merge tile state back to global state (non-overlapping write_slice)
+                        if tile_result.state is not None:
+                            _merge_tile_state(tile_result.state, tile, state)
+
+                        if _TIMING_ENABLED:
+                            _t_merge = time.perf_counter() - _t1
+                            print(
+                                f"[TIMING] tile {tile_idx + 1}/{n_tiles} "
+                                f"ffi={_t_ffi * 1000:.1f}ms "
+                                f"merge={_t_merge * 1000:.1f}ms",
+                                file=sys.stderr,
+                            )
+
+                        # Report progress
+                        completed_tiles += 1
+                        step = t_idx * n_tiles + completed_tiles
+                        if progress_callback is not None:
+                            progress_callback(step, total_work)
+                        elif _progress is not None:
+                            _progress.update(1)
 
                 mean_turnaround_ms = (turnaround_sum / n_tiles) * 1000.0 if n_tiles > 0 else 0.0
                 logger.debug(

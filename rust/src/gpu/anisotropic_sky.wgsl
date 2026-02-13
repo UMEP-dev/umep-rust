@@ -26,6 +26,8 @@ const NAN_BITS: u32 = 0x7FC00000u;          // quiet NaN in IEEE 754
 
 struct Params {
     total_pixels: u32,
+    cols: u32,
+    rows: u32,
     n_patches:    u32,
     n_pack:       u32,        // ceil(n_patches / 8)
     cyl:          u32,        // 1 = standing (cylindric), 0 = lying
@@ -117,9 +119,14 @@ fn compute_sunlit_degrees(p_alt: f32, p_azi: f32, pixel_asvf: f32) -> f32 {
 
 // ── Main kernel ──────────────────────────────────────────────────────────
 
-@compute @workgroup_size(256, 1, 1)
+@compute @workgroup_size(16, 16, 1)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx: u32 = gid.x;
+    let x: u32 = gid.x;
+    let y: u32 = gid.y;
+    if (x >= params.cols || y >= params.rows) {
+        return;
+    }
+    let idx: u32 = y * params.cols + x;
     if (idx >= params.total_pixels) {
         return;
     }

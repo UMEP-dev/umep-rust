@@ -22,13 +22,16 @@
 
 struct SvfAccumParams {
     total_pixels: u32,
+    cols: u32,
+    rows: u32,
     weight_iso: f32,
     weight_n: f32,
     weight_e: f32,
     weight_s: f32,
     weight_w: f32,
     has_veg: u32,
-    _padding: u32,
+    _pad0: u32,
+    _pad1: u32,
 }
 
 @group(0) @binding(0) var<uniform> params: SvfAccumParams;
@@ -37,9 +40,14 @@ struct SvfAccumParams {
 @group(0) @binding(3) var<storage, read> veg_blocks_bldg_sh: array<f32>;
 @group(0) @binding(4) var<storage, read_write> svf_data: array<f32>;
 
-@compute @workgroup_size(256)
+@compute @workgroup_size(16, 16, 1)
 fn accumulate_svf(@builtin(global_invocation_id) id: vec3<u32>) {
-    let idx = id.x;
+    let x = id.x;
+    let y = id.y;
+    if (x >= params.cols || y >= params.rows) {
+        return;
+    }
+    let idx = y * params.cols + x;
     if (idx >= params.total_pixels) {
         return;
     }

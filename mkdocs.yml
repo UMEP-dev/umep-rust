@@ -90,6 +90,7 @@ nav:
   - Development:
     - Contributing: development/contributing.md
     - Architecture: development/architecture.md
+    - GPU Execution Plan: development/gpu-execution-plan.md
     - Roadmap: development/roadmap.md
 
 extra:

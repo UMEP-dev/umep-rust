@@ -165,7 +165,7 @@ _PREVIEW_RANGES: dict[str, tuple[float, float]] = {
     "tmrt": (0, 80),  # Mean radiant temperature (°C)
     "utci": (-40, 50),  # Universal Thermal Climate Index (°C)
     "pet": (-40, 50),  # Physiological Equivalent Temperature (°C)
-    "shadow": (0, 1),  # Shadow fraction (0=sun, 1=shade)
+    "shadow": (0, 1),  # Shadow fraction (1=sunlit, 0=shaded)
     "kdown": (0, 1200),  # Downwelling shortwave radiation (W/m²)
     "kup": (0, 800),  # Upwelling shortwave radiation (W/m²)
     "ldown": (150, 550),  # Downwelling longwave radiation (W/m²)

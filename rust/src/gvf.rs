@@ -492,15 +492,20 @@ pub(crate) fn gvf_calc_with_cache(
     let scale_all = 1.0 / num_azimuths;
     let scale_half = 1.0 / num_azimuths_half;
 
-    let gvf_lup = accum.lup.mapv(|v| v * scale_all) + &lup_base;
+    // Ambient baseline: SBC × emis × Ta_K^4  (UMEP gvf_2018a.py line 64)
+    // The per-azimuth accumulation uses *differential* Lup (excess above ambient).
+    // After averaging, the ambient baseline must be added back to produce total Lup.
+    let ambient_lup = emis_grid.mapv(|emis| sbc * emis * ta_k_pow4);
+
+    let gvf_lup = accum.lup.mapv(|v| v * scale_all) + &lup_base + &ambient_lup;
     let gvfalb = accum.alb.mapv(|v| v * scale_all) + &alb_base;
-    let gvf_lup_e = accum.lup_e.mapv(|v| v * scale_half) + &lup_base;
+    let gvf_lup_e = accum.lup_e.mapv(|v| v * scale_half) + &lup_base + &ambient_lup;
     let gvfalb_e = accum.alb_e.mapv(|v| v * scale_half) + &alb_base;
-    let gvf_lup_s = accum.lup_s.mapv(|v| v * scale_half) + &lup_base;
+    let gvf_lup_s = accum.lup_s.mapv(|v| v * scale_half) + &lup_base + &ambient_lup;
     let gvfalb_s = accum.alb_s.mapv(|v| v * scale_half) + &alb_base;
-    let gvf_lup_w = accum.lup_w.mapv(|v| v * scale_half) + &lup_base;
+    let gvf_lup_w = accum.lup_w.mapv(|v| v * scale_half) + &lup_base + &ambient_lup;
     let gvfalb_w = accum.alb_w.mapv(|v| v * scale_half) + &alb_base;
-    let gvf_lup_n = accum.lup_n.mapv(|v| v * scale_half) + &lup_base;
+    let gvf_lup_n = accum.lup_n.mapv(|v| v * scale_half) + &lup_base + &ambient_lup;
     let gvfalb_n = accum.alb_n.mapv(|v| v * scale_half) + &alb_base;
 
     // `gvfalbnosh*` and GVF normalization terms are purely geometric and already

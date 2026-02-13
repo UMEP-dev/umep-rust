@@ -270,7 +270,8 @@ def calculate_timeseries(
 
     # Apply defaults for anything still None
     if effective_aniso is None:
-        effective_aniso = False
+        # Keep behavior aligned with calculate() and ModelConfig defaults.
+        effective_aniso = True
     if effective_physics is None:
         from .loaders import load_physics
 

@@ -128,3 +128,39 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           UMEP_USE_GDAL: "1"
+
+  test-gpu-gates:
+    name: Test GPU gates (correctness + performance)
+    runs-on: ubuntu-latest
+    # GPU tests require hardware; this job validates the CPU-fallback path on
+    # standard runners and is expected to pass.  For true GPU coverage, run
+    # locally or on a self-hosted GPU runner.
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Build Rust extension
+        run: uv run maturin develop --release
+
+      - name: Run GPU correctness gates
+        run: uv run poe test_gpu_gates
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Run GPU performance gate
+        run: uv run poe test_gpu_perf_gate
+        env:
+          PYTHONPATH: ${{ github.workspace }}

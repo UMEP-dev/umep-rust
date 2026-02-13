@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import time
 import zipfile
+from pathlib import Path
 
 import numpy as np
 from qgis.core import (
@@ -77,7 +79,8 @@ everything needed to run SOLWEIG Calculation directly.
     wall_height.tif
     wall_aspect.tif
     svfs.zip          (Sky View Factor arrays)
-    shadowmats.npz    (shadow matrices for anisotropic sky)
+    shadowmats.npz    (shadow matrices for anisotropic sky, when export size is manageable)
+    svf/&lt;pixel&gt;/shadow_memmaps/ (large-grid shadow cache fallback)
     cdsm.tif         (if CDSM provided)
     dem.tif           (if DEM provided)
     tdsm.tif          (if TDSM provided)
@@ -386,8 +389,6 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
         feedback.setProgressText("Computing Sky View Factor (this may take a while)...")
         feedback.setProgress(35)
 
-        from pathlib import Path
-
         from solweig.models.surface import SurfaceData as SD
 
         use_veg = surface.cdsm is not None
@@ -409,8 +410,16 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
         }
 
         rows, cols = dsm_f32.shape
-        if rows * cols > 6_700_000:
-            feedback.pushInfo(f"Large grid ({rows}x{cols} = {rows * cols:,} px) — using tiled GPU computation")
+        from solweig.tiling import compute_max_tile_pixels
+
+        _max_px = compute_max_tile_pixels(context="svf")
+        n_pixels = rows * cols
+        if n_pixels > _max_px:
+            feedback.pushInfo(
+                f"Large grid ({rows}x{cols} = {n_pixels:,} px, limit {_max_px:,}) — using tiled computation"
+            )
+        else:
+            feedback.pushInfo(f"Grid {rows}x{cols} = {n_pixels:,} px — single-pass computation")
 
         try:
             SD._compute_and_cache_svf(
@@ -419,9 +428,16 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
                 Path(output_dir),
                 trunk_ratio=0.25,
                 feedback=feedback,
+                progress_range=(35.0, 75.0),
             )
         except Exception as e:
             raise QgsProcessingException(f"SVF computation failed: {e}") from e
+        if surface.svf is None:
+            raise QgsProcessingException(
+                "SVF computation completed without producing SVF arrays "
+                "(surface.svf is None). Check that the active solweig build "
+                "matches the current plugin code."
+            )
 
         feedback.pushInfo("Sky View Factor computed")
         feedback.setProgress(75)
@@ -433,48 +449,78 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
         feedback.setProgressText("Saving SVF and shadow matrices...")
         feedback.setProgress(80)
 
-        svf_data = surface.svf
-        svf_files = {
-            "svf.tif": svf_data.svf,
-            "svfN.tif": svf_data.svf_north,
-            "svfE.tif": svf_data.svf_east,
-            "svfS.tif": svf_data.svf_south,
-            "svfW.tif": svf_data.svf_west,
-            "svfveg.tif": svf_data.svf_veg,
-            "svfNveg.tif": svf_data.svf_veg_north,
-            "svfEveg.tif": svf_data.svf_veg_east,
-            "svfSveg.tif": svf_data.svf_veg_south,
-            "svfWveg.tif": svf_data.svf_veg_west,
-            "svfaveg.tif": svf_data.svf_aveg,
-            "svfNaveg.tif": svf_data.svf_aveg_north,
-            "svfEaveg.tif": svf_data.svf_aveg_east,
-            "svfSaveg.tif": svf_data.svf_aveg_south,
-            "svfWaveg.tif": svf_data.svf_aveg_west,
-        }
+        # Reuse cache artifacts from _compute_and_cache_svf to avoid re-running
+        # large single-threaded SVF/shadow serialization.
+        from solweig.cache import pixel_size_tag
 
-        svf_zip_path = os.path.join(output_dir, "svfs.zip")
-        with tempfile.TemporaryDirectory() as tmpdir:
-            for filename, arr in svf_files.items():
-                self.save_georeferenced_output(arr, os.path.join(tmpdir, filename), gt, crs)
-            with zipfile.ZipFile(svf_zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                for filename in svf_files:
-                    zf.write(os.path.join(tmpdir, filename), filename)
-        feedback.pushInfo("Saved svfs.zip")
+        cache_dir = Path(output_dir) / "svf" / pixel_size_tag(pixel_size)
+        cache_zip = cache_dir / "svfs.zip"
+        cache_shadow = cache_dir / "shadowmats.npz"
+        cache_shadow_memmaps = cache_dir / "shadow_memmaps"
+        svf_zip_path = Path(output_dir) / "svfs.zip"
+        shadow_path = Path(output_dir) / "shadowmats.npz"
 
-        # Save shadow matrices
-        sm = surface.shadow_matrices
-        shmat_u8 = np.array(sm._shmat_u8)
-        vegshmat_u8 = np.array(sm._vegshmat_u8)
-        vbshmat_u8 = np.array(sm._vbshmat_u8)
-        shadow_path = os.path.join(output_dir, "shadowmats.npz")
-        np.savez_compressed(
-            shadow_path,
-            shadowmat=shmat_u8,
-            vegshadowmat=vegshmat_u8,
-            vbshmat=vbshmat_u8,
-            patch_count=np.array(sm.patch_count),
-        )
-        feedback.pushInfo("Saved shadowmats.npz")
+        copied_zip = False
+        if cache_zip.exists():
+            shutil.copy2(cache_zip, svf_zip_path)
+            feedback.pushInfo(f"Copied svfs.zip from cache: {svf_zip_path}")
+            copied_zip = True
+        else:
+            feedback.pushInfo("SVF cache zip not found; generating svfs.zip from in-memory arrays")
+
+        if not copied_zip:
+            svf_data = surface.svf
+            svf_files = {
+                "svf.tif": svf_data.svf,
+                "svfN.tif": svf_data.svf_north,
+                "svfE.tif": svf_data.svf_east,
+                "svfS.tif": svf_data.svf_south,
+                "svfW.tif": svf_data.svf_west,
+                "svfveg.tif": svf_data.svf_veg,
+                "svfNveg.tif": svf_data.svf_veg_north,
+                "svfEveg.tif": svf_data.svf_veg_east,
+                "svfSveg.tif": svf_data.svf_veg_south,
+                "svfWveg.tif": svf_data.svf_veg_west,
+                "svfaveg.tif": svf_data.svf_aveg,
+                "svfNaveg.tif": svf_data.svf_aveg_north,
+                "svfEaveg.tif": svf_data.svf_aveg_east,
+                "svfSaveg.tif": svf_data.svf_aveg_south,
+                "svfWaveg.tif": svf_data.svf_aveg_west,
+            }
+            with tempfile.TemporaryDirectory() as tmpdir:
+                for filename, arr in svf_files.items():
+                    self.save_georeferenced_output(arr, os.path.join(tmpdir, filename), gt, crs)
+                with zipfile.ZipFile(str(svf_zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
+                    for filename in svf_files:
+                        zf.write(os.path.join(tmpdir, filename), filename)
+            feedback.pushInfo("Saved svfs.zip")
+
+        copied_shadow = False
+        if cache_shadow.exists():
+            shutil.copy2(cache_shadow, shadow_path)
+            feedback.pushInfo(f"Copied shadowmats.npz from cache: {shadow_path}")
+            copied_shadow = True
+        elif cache_shadow_memmaps.exists() and (cache_shadow_memmaps / "metadata.json").exists():
+            feedback.pushInfo(
+                f"Using shadow memmap cache (skipping shadowmats.npz export for large grid): {cache_shadow_memmaps}"
+            )
+            copied_shadow = True
+        else:
+            feedback.pushInfo("Shadow cache not found; generating shadowmats.npz from in-memory arrays")
+
+        if not copied_shadow:
+            sm = surface.shadow_matrices
+            shmat_u8 = np.array(sm._shmat_u8)
+            vegshmat_u8 = np.array(sm._vegshmat_u8)
+            vbshmat_u8 = np.array(sm._vbshmat_u8)
+            np.savez_compressed(
+                str(shadow_path),
+                shadowmat=shmat_u8,
+                vegshadowmat=vegshmat_u8,
+                vbshmat=vbshmat_u8,
+                patch_count=np.array(sm.patch_count),
+            )
+            feedback.pushInfo("Saved shadowmats.npz")
 
         # Save metadata last (acts as a completion marker)
         metadata = {

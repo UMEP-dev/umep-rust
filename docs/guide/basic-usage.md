@@ -44,7 +44,7 @@ print(f"Max Tmrt: {result.tmrt.max():.1f}°C")
 | Field | Description |
 |-------|-------------|
 | `tmrt` | Mean radiant temperature grid (°C) |
-| `shadow` | Shadow fraction (0=sun, 1=shade) |
+| `shadow` | Shadow fraction (1=sunlit, 0=shaded) |
 | `kdown` | Downwelling shortwave radiation (W/m²) |
 | `kup` | Upwelling shortwave radiation (W/m²) |
 | `ldown` | Downwelling longwave radiation (W/m²) |

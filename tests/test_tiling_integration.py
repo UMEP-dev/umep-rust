@@ -568,6 +568,42 @@ class TestTimeseriesTiledIntegration:
 
         assert results == []
 
+    def test_timeseries_tiled_return_results_false_requests_tmrt_only(self, small_surface, location, weather_pair):
+        """Streaming mode should request only Tmrt from tiled per-tile calculations."""
+        from solweig import SolweigResult, calculate_timeseries_tiled
+
+        captured: list[set[str] | None] = []
+
+        def _fake_calculate(**kwargs):
+            captured.append(kwargs.get("_requested_outputs"))
+            shape = kwargs["surface"].dsm.shape
+            return SolweigResult(
+                tmrt=np.zeros(shape, dtype=np.float32),
+                shadow=None,
+                kdown=None,
+                kup=None,
+                ldown=None,
+                lup=None,
+                utci=None,
+                pet=None,
+                state=None,
+            )
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr("solweig.api.calculate", _fake_calculate)
+        try:
+            results = calculate_timeseries_tiled(
+                surface=small_surface,
+                weather_series=weather_pair,
+                location=location,
+                return_results=False,
+            )
+        finally:
+            monkeypatch.undo()
+
+        assert results == []
+        assert captured and all(req == {"tmrt"} for req in captured)
+
     def test_timeseries_tiled_precreates_tile_surfaces_once(self, small_surface, location, weather_pair):
         """Tile surfaces should be extracted once per tile, not once per timestep."""
         from unittest.mock import patch

@@ -123,7 +123,7 @@ def compute_gvf(
         human: Human parameters (height, posture)
         tg: Ground temperature deviation from air temperature (K)
         tg_wall: Wall temperature deviation from air temperature (K)
-        shadow: Combined shadow fraction (0=sun, 1=shadow)
+        shadow: Combined shadow fraction (1=sunlit, 0=shaded)
         wallsun: Wall sun exposure (for wall temperature)
         alb_grid: Albedo per pixel (0-1)
         emis_grid: Emissivity per pixel (0-1)
@@ -221,9 +221,9 @@ def compute_gvf(
         gvf_simple = 1.0 - svf
 
         # Ground temperature with shadow effect
-        # Convention: shadow=0 for sunlit, shadow=1 for shaded
+        # Convention: shadow=1 for sunlit, shadow=0 for shaded
         # Sunlit areas get full ground temperature deviation; shaded areas get none
-        tg_with_shadow = tg * (1.0 - shadow)
+        tg_with_shadow = tg * shadow
 
         # Upwelling longwave: Stefan-Boltzmann law for ground emission
         # Lup = emissivity × SBC × T^4

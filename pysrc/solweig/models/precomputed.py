@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 
-from ..cache import CacheMetadata
+from ..cache import CacheMetadata, pixel_size_tag
 from ..solweig_logging import get_logger
 
 if TYPE_CHECKING:
@@ -562,6 +563,52 @@ class ShadowArrays:
             _n_patches=patch_count,
         )
 
+    @classmethod
+    def from_memmap(cls, directory: str | Path, mode: Literal["r", "r+", "c"] = "r") -> ShadowArrays:
+        """
+        Load bitpacked shadow matrices from a memmap directory.
+
+        Expected files:
+            - metadata.json (shape, patch_count, file names)
+            - shmat.dat
+            - vegshmat.dat
+            - vbshmat.dat
+        """
+        directory = Path(directory)
+        if not directory.exists():
+            raise FileNotFoundError(f"Shadow memmap directory not found: {directory}")
+
+        metadata_path = directory / "metadata.json"
+        if not metadata_path.exists():
+            raise FileNotFoundError(f"Shadow memmap metadata not found: {metadata_path}")
+
+        with metadata_path.open("r", encoding="utf-8") as f:
+            meta = json.load(f)
+
+        shape_raw = meta.get("shape")
+        if not isinstance(shape_raw, (list, tuple)) or len(shape_raw) != 3:
+            raise ValueError(f"Invalid shadow memmap shape metadata in {metadata_path}: {shape_raw}")
+        shape = tuple(int(v) for v in shape_raw)
+        patch_count = int(meta.get("patch_count", 153))
+
+        sh_file = meta.get("shadowmat_file", "shmat.dat")
+        veg_file = meta.get("vegshadowmat_file", "vegshmat.dat")
+        vb_file = meta.get("vbshmat_file", "vbshmat.dat")
+
+        sh_path = directory / sh_file
+        veg_path = directory / veg_file
+        vb_path = directory / vb_file
+        for path in (sh_path, veg_path, vb_path):
+            if not path.exists():
+                raise FileNotFoundError(f"Expected shadow memmap file not found: {path}")
+
+        return cls(
+            _shmat_u8=np.memmap(sh_path, dtype=np.uint8, mode=mode, shape=shape),
+            _vegshmat_u8=np.memmap(veg_path, dtype=np.uint8, mode=mode, shape=shape),
+            _vbshmat_u8=np.memmap(vb_path, dtype=np.uint8, mode=mode, shape=shape),
+            _n_patches=patch_count,
+        )
+
 
 @dataclass
 class PrecomputedData:
@@ -651,6 +698,30 @@ class PrecomputedData:
         svf_arrays = None
         shadow_arrays = None
 
+        def _load_svf_from_dir(base: Path) -> SvfArrays | None:
+            memmap_dir = base / "memmap"
+            svf_zip = base / "svfs.zip"
+            if memmap_dir.exists() and (memmap_dir / "svf.npy").exists():
+                logger.info(f"  Loaded SVF memmap cache from {memmap_dir}")
+                return SvfArrays.from_memmap(memmap_dir)
+            if svf_zip.exists():
+                logger.info(f"  Loaded SVF zip from {svf_zip}")
+                return SvfArrays.from_zip(str(svf_zip))
+            return None
+
+        def _load_shadow_from_dir(base: Path) -> ShadowArrays | None:
+            shadow_npz = base / "shadowmats.npz"
+            if shadow_npz.exists():
+                logger.info(f"  Loaded shadow matrices from {shadow_npz}")
+                return ShadowArrays.from_npz(str(shadow_npz))
+
+            shadow_memmap_dir = base / "shadow_memmaps"
+            metadata = shadow_memmap_dir / "metadata.json"
+            if shadow_memmap_dir.exists() and metadata.exists():
+                logger.info(f"  Loaded shadow memmaps from {shadow_memmap_dir}")
+                return ShadowArrays.from_memmap(shadow_memmap_dir)
+            return None
+
         # Load walls if directory provided
         if walls_dir is not None:
             walls_path = Path(walls_dir)
@@ -672,21 +743,51 @@ class PrecomputedData:
         # Load SVF if directory provided
         if svf_dir is not None:
             svf_path = Path(svf_dir)
-            svf_zip = svf_path / "svfs.zip"
+            svf_arrays = _load_svf_from_dir(svf_path)
+            shadow_arrays = _load_shadow_from_dir(svf_path)
 
-            if svf_zip.exists():
-                svf_arrays = SvfArrays.from_zip(str(svf_zip))
+            # Fallback: look for pixel-size-keyed cache under svf/<tag>/ when
+            # caller points at a prepared surface directory root.
+            if svf_arrays is None or shadow_arrays is None:
+                candidate_dirs: list[Path] = []
+                meta_path = svf_path / "metadata.json"
+                if meta_path.exists():
+                    try:
+                        with meta_path.open("r", encoding="utf-8") as f:
+                            meta = json.load(f)
+                        px = meta.get("pixel_size")
+                        if px is not None:
+                            candidate_dirs.append(svf_path / "svf" / pixel_size_tag(float(px)))
+                    except Exception:
+                        pass
+
+                svf_root = svf_path / "svf"
+                if svf_root.exists():
+                    for child in svf_root.iterdir():
+                        if child.is_dir():
+                            candidate_dirs.append(child)
+
+                seen: set[Path] = set()
+                for candidate in candidate_dirs:
+                    if candidate in seen:
+                        continue
+                    seen.add(candidate)
+                    if svf_arrays is None:
+                        svf_arrays = _load_svf_from_dir(candidate)
+                    if shadow_arrays is None:
+                        shadow_arrays = _load_shadow_from_dir(candidate)
+                    if svf_arrays is not None and shadow_arrays is not None:
+                        break
+
+            if svf_arrays is None:
+                logger.debug(f"  SVF not found in {svf_path}")
+            else:
                 logger.info(f"  Loaded SVF data: {svf_arrays.svf.shape}")
-            else:
-                logger.debug(f"  SVF not found: {svf_zip}")
 
-            # Load shadow matrices (optional - for anisotropic sky)
-            shadow_npz = svf_path / "shadowmats.npz"
-            if shadow_npz.exists():
-                shadow_arrays = ShadowArrays.from_npz(str(shadow_npz))
-                logger.info("  Loaded shadow matrices for anisotropic sky")
-            else:
+            if shadow_arrays is None:
                 logger.debug("  No shadow matrices found (anisotropic sky will be slower)")
+            else:
+                logger.info("  Loaded shadow matrices for anisotropic sky")
 
         return cls(
             wall_height=wall_height_arr,

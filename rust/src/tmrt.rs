@@ -73,6 +73,44 @@ pub(crate) fn compute_tmrt_pure(
     is_standing: bool,
     use_anisotropic_sky: bool,
 ) -> Array2<f32> {
+    let kside_dirs_sum = &kside_n + &kside_e + &kside_s + &kside_w;
+    let lside_dirs_sum = &lside_n + &lside_e + &lside_s + &lside_w;
+
+    compute_tmrt_from_dir_sums_pure(
+        kdown,
+        kup,
+        ldown,
+        lup,
+        kside_dirs_sum.view(),
+        lside_dirs_sum.view(),
+        kside_total,
+        lside_total,
+        abs_k,
+        abs_l,
+        is_standing,
+        use_anisotropic_sky,
+    )
+}
+
+/// Tmrt kernel using pre-summed directional side components.
+///
+/// This avoids carrying four directional arrays through the pipeline when only
+/// their sum is needed by the final Tmrt equation.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_tmrt_from_dir_sums_pure(
+    kdown: ArrayView2<f32>,
+    kup: ArrayView2<f32>,
+    ldown: ArrayView2<f32>,
+    lup: ArrayView2<f32>,
+    kside_dirs_sum: ArrayView2<f32>,
+    lside_dirs_sum: ArrayView2<f32>,
+    kside_total: ArrayView2<f32>,
+    lside_total: ArrayView2<f32>,
+    abs_k: f32,
+    abs_l: f32,
+    is_standing: bool,
+    use_anisotropic_sky: bool,
+) -> Array2<f32> {
     let shape = kdown.dim();
 
     // Select view factors based on posture
@@ -103,39 +141,24 @@ pub(crate) fn compute_tmrt_pure(
             let kup_val = kup[[row, col]];
             let ldown_val = ldown[[row, col]];
             let lup_val = lup[[row, col]];
-            let kside_n_val = kside_n[[row, col]];
-            let kside_e_val = kside_e[[row, col]];
-            let kside_s_val = kside_s[[row, col]];
-            let kside_w_val = kside_w[[row, col]];
-            let lside_n_val = lside_n[[row, col]];
-            let lside_e_val = lside_e[[row, col]];
-            let lside_s_val = lside_s[[row, col]];
-            let lside_w_val = lside_w[[row, col]];
+            let kside_dirs_sum_val = kside_dirs_sum[[row, col]];
+            let lside_dirs_sum_val = lside_dirs_sum[[row, col]];
             let kside_total_val = kside_total[[row, col]];
             let lside_total_val = lside_total[[row, col]];
 
-            // Compute absorbed radiation
-            let k_absorbed = if use_anisotropic_sky {
-                abs_k
-                    * (kside_total_val * f_cyl
-                        + (kdown_val + kup_val) * f_up
-                        + (kside_n_val + kside_e_val + kside_s_val + kside_w_val) * f_side)
-            } else {
-                abs_k
-                    * (kside_total_val * f_cyl
-                        + (kdown_val + kup_val) * f_up
-                        + (kside_n_val + kside_e_val + kside_s_val + kside_w_val) * f_side)
-            };
+            // Compute absorbed shortwave radiation (same formula for both sky models)
+            let k_absorbed = abs_k
+                * (kside_total_val * f_cyl
+                    + (kdown_val + kup_val) * f_up
+                    + kside_dirs_sum_val * f_side);
 
             let l_absorbed = if use_anisotropic_sky {
                 abs_l
                     * ((ldown_val + lup_val) * f_up
                         + lside_total_val * f_cyl
-                        + (lside_n_val + lside_e_val + lside_s_val + lside_w_val) * f_side)
+                        + lside_dirs_sum_val * f_side)
             } else {
-                abs_l
-                    * ((ldown_val + lup_val) * f_up
-                        + (lside_n_val + lside_e_val + lside_s_val + lside_w_val) * f_side)
+                abs_l * ((ldown_val + lup_val) * f_up + lside_dirs_sum_val * f_side)
             };
 
             // Total absorbed radiation (Sstr)
