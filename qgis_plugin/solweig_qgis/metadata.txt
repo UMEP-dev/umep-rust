@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta26
+version=0.1.0-beta30
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
