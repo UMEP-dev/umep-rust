@@ -1,0 +1,91 @@
+name: Build QGIS Plugin
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version for the release"
+        required: true
+        default: "0.1.0"
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  build-plugin:
+    name: Build QGIS Plugin
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            # Extract version from tag (e.g., v0.1.0 -> 0.1.0)
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build plugin package
+        run: python qgis_plugin/build_plugin.py --version ${{ steps.version.outputs.version }}
+
+      - name: Validate plugin ZIP
+        run: |
+          cd qgis_plugin
+          ZIP=$(ls solweig-qgis-*.zip | head -1)
+          echo "Validating $ZIP..."
+          unzip -l "$ZIP" | tee /tmp/bundle_contents.txt
+
+          # Check essential files exist
+          for file in metadata.txt __init__.py provider.py icon.png; do
+            if grep -q "solweig_qgis/$file" /tmp/bundle_contents.txt; then
+              echo "  OK: $file found"
+            else
+              echo "  MISSING: $file"
+              exit 1
+            fi
+          done
+
+          echo "Plugin validation passed."
+
+      - name: Upload plugin package
+        uses: actions/upload-artifact@v4
+        with:
+          name: qgis-plugin
+          path: qgis_plugin/solweig-qgis-*.zip
+
+  create-release:
+    name: Create Release
+    needs: build-plugin
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download plugin
+        uses: actions/download-artifact@v4
+        with:
+          name: qgis-plugin
+          path: artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

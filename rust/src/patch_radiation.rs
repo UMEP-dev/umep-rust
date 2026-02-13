@@ -6,7 +6,6 @@ use std::f32::consts::PI;
 
 // Vectorized functions removed as they were unused.
 
-
 pub fn longwave_from_sky_pixel(
     lsky_side: f32,
     lsky_down: f32,
@@ -40,7 +39,6 @@ pub fn longwave_from_sky_pixel(
 }
 
 // Vectorized functions removed as they were unused.
-
 
 pub fn longwave_from_veg_pixel(
     steradian: f32,
@@ -83,7 +81,6 @@ pub fn longwave_from_veg_pixel(
 }
 
 // Vectorized functions removed as they were unused.
-
 
 pub fn longwave_from_buildings_pixel(
     steradian: f32,
@@ -150,7 +147,6 @@ pub fn longwave_from_buildings_pixel(
 
 // Vectorized functions removed as they were unused.
 
-
 pub fn longwave_from_buildings_wall_scheme_pixel(
     voxel_table: ndarray::ArrayView2<f32>,
     voxel_map_val: usize,
@@ -202,7 +198,6 @@ pub fn longwave_from_buildings_wall_scheme_pixel(
 }
 
 // Vectorized functions removed as they were unused.
-
 
 pub fn reflected_longwave_pixel(
     steradian: f32,
