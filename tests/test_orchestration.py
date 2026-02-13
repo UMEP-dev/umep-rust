@@ -680,9 +680,10 @@ class TestCalculateBufferDistance:
 
 
 class TestValidateTileSize:
-    """Tests for validate_tile_size() in tiling.py."""
+    """Tests for validate_tile_size() — tile_size is core (excluding overlap)."""
 
-    def test_valid_size_passes(self):
+    def test_valid_core_passes(self):
+        """Core size that fits with buffer within resource limit passes unchanged."""
         adjusted, warning = validate_tile_size(800, buffer_pixels=50, pixel_size=1.0)
         assert adjusted == 800
         assert warning is None
@@ -693,18 +694,23 @@ class TestValidateTileSize:
         assert warning is not None
         assert "below minimum" in warning
 
-    def test_above_maximum_adjusted(self):
-        max_side = compute_max_tile_side(context="solweig")
-        adjusted, warning = validate_tile_size(max_side + 5000, buffer_pixels=50, pixel_size=1.0)
-        assert adjusted == max_side
+    def test_core_plus_buffer_exceeds_limit(self):
+        """Core is reduced so core + 2*buffer fits within resource limit."""
+        max_full = compute_max_tile_side(context="solweig")
+        buffer_pixels = 50
+        # Request core that with buffer would exceed limit
+        adjusted, warning = validate_tile_size(max_full, buffer_pixels=buffer_pixels, pixel_size=1.0)
+        assert adjusted == max_full - 2 * buffer_pixels
         assert warning is not None
-        assert "above maximum" in warning
+        assert "exceeds resource limit" in warning
 
-    def test_core_area_too_small(self):
-        """Large buffer with small tile forces increase to ensure core area."""
-        # buffer=200px, tile=256 → core = 256 - 400 = -144 (too small)
-        adjusted, warning = validate_tile_size(256, buffer_pixels=200, pixel_size=1.0)
-        assert adjusted >= 2 * 200 + 128  # At least 528
+    def test_large_buffer_keeps_minimum_core(self):
+        """When buffer nearly exhausts resources, core stays at MIN_TILE_SIZE."""
+        max_full = compute_max_tile_side(context="solweig")
+        # Buffer so large that max_core < MIN_TILE_SIZE
+        huge_buffer = (max_full - MIN_TILE_SIZE) // 2 + 100
+        adjusted, warning = validate_tile_size(800, buffer_pixels=huge_buffer, pixel_size=1.0)
+        assert adjusted == MIN_TILE_SIZE
         assert warning is not None
 
     def test_exact_minimum(self):
@@ -712,10 +718,12 @@ class TestValidateTileSize:
         assert adjusted == MIN_TILE_SIZE
         assert warning is None
 
-    def test_exact_maximum(self):
-        max_side = compute_max_tile_side(context="solweig")
-        adjusted, warning = validate_tile_size(max_side, buffer_pixels=10, pixel_size=1.0)
-        assert adjusted == max_side
+    def test_small_buffer_allows_large_core(self):
+        """With small buffer, core can use nearly all of the resource limit."""
+        max_full = compute_max_tile_side(context="solweig")
+        max_core = max_full - 2 * 10
+        adjusted, warning = validate_tile_size(max_core, buffer_pixels=10, pixel_size=1.0)
+        assert adjusted == max_core
         assert warning is None
 
 
