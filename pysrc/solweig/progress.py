@@ -102,13 +102,8 @@ class ProgressReporter:
             self._qgis_feedback = feedback
             return
 
-        # Auto-detect: prefer QGIS if available in environment
-        if _QGIS_AVAILABLE and "qgis.core" in sys.modules:
-            # In QGIS but no feedback provided - log only, no progress bar
-            logger.debug(f"QGIS detected but no feedback provided for: {desc}")
-            return
-
-        # Use tqdm if available
+        # Use tqdm if available (even when qgis.core is importable — without
+        # a feedback object there's no QGIS progress bar to use)
         if _tqdm is not None:
             self._tqdm_bar = _tqdm(total=total, desc=desc)
             return

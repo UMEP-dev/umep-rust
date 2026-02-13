@@ -94,8 +94,9 @@ class SolweigLogger:
                 self._feedback.pushInfo(message)
             else:  # DEBUG
                 self._feedback.pushDebugInfo(message)
-        elif self._backend == "logging":
-            # Use Python logging
+        elif self._backend in ("logging", "qgis"):
+            # Use Python logging (also used as fallback when QGIS backend
+            # is detected but no feedback object has been set)
             logger = logging.getLogger(self.name)
             logger.log(level, message)
         else:
