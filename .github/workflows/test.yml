@@ -129,6 +129,36 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           UMEP_USE_GDAL: "1"
 
+  test-spec:
+    name: Test scientific spec/parity gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Build Rust extension
+        run: uv run maturin develop --release
+
+      - name: Verify UMEP availability for parity tests
+        run: uv run python -c "import umep"
+
+      - name: Run scientific/spec suite
+        run: uv run python -m pytest tests/spec -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
   test-gpu-gates:
     name: Test GPU gates (correctness + performance)
     runs-on: ubuntu-latest
