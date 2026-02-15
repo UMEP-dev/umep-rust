@@ -1,10 +1,15 @@
-"""
-Orchestration layer for SOLWEIG core calculation.
+"""Orchestration layer for a single SOLWEIG timestep.
 
-This module coordinates all computation components in a clean, linear flow:
-SVF resolution → Shadows → Ground temp → GVF → Thermal delay → Radiation → Tmrt
+The public entry point is :func:`calculate_core_fused`, which hands off
+the full pipeline (shadows, ground temperature, GVF, thermal delay,
+radiation, Tmrt) to a single fused Rust FFI call.  The older
+:func:`calculate_core` is retained for reference but is no longer
+invoked by the public API.
 
-Replaces the monolithic 841-line `_calculate_core()` with focused orchestration.
+Pipeline::
+
+    SVF resolution → Shadows → Ground temp → GVF
+        → Thermal delay → Radiation → Tmrt
 """
 
 from __future__ import annotations
@@ -430,14 +435,31 @@ def calculate_core_fused(
     """
     Fused SOLWEIG calculation — single Rust FFI call per daytime timestep.
 
-    Functionally identical to calculate_core() but orchestrates shadows → ground →
-    GVF → thermal delay → radiation → Tmrt entirely within Rust, eliminating
-    intermediate numpy allocations and FFI round-trips.
+    Functionally identical to calculate_core() but orchestrates shadows, ground
+    temperature, GVF, thermal delay, radiation, and Tmrt entirely within Rust,
+    eliminating intermediate numpy allocations and FFI round-trips.
 
+    This is the primary compute path used by ``calculate()``.
     Supports both isotropic and anisotropic (Perez) sky models.
 
     Args:
-        Same as calculate_core().
+        surface: Surface/terrain data (DSM, vegetation, walls, land cover).
+        location: Geographic location (latitude, longitude).
+        weather: Weather conditions with derived sun position.
+        human: Human parameters (height, posture, absorptivities).
+        precomputed: Optional pre-computed data (SVF, shadow matrices).
+        state: Optional thermal state for time-series (carries forward temperatures).
+        physics: Optional physics parameters (vegetation transmissivity, etc.).
+        materials: Optional material properties (albedo, emissivity by land cover).
+        conifer: Treat vegetation as evergreen conifers (always leaf-on).
+        wall_material: Wall material type ("brick", "concrete", "wood", "cobblestone").
+        use_anisotropic_sky: Use anisotropic (Perez) diffuse sky model.
+        max_shadow_distance_m: Maximum shadow reach in metres.
+        return_state_copy: If True, return a deep-copied thermal state.
+        requested_outputs: Set of output names to materialize (None = all).
+
+    Returns:
+        SolweigResult with Tmrt, shadow, radiation components, and updated state.
     """
     from .api import SolweigResult
     from .buffers import as_float32

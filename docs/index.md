@@ -1,52 +1,47 @@
 # SOLWEIG
 
-**High-performance urban microclimate model for Mean Radiant Temperature (Tmrt) and thermal comfort indices.**
+**Map how hot it *feels* across a city — pixel by pixel.**
 
-SOLWEIG calculates spatially distributed Tmrt, UTCI, and PET for urban environments using Digital Surface Models (DSM) and meteorological data.
+SOLWEIG computes **Mean Radiant Temperature (Tmrt)** and thermal comfort indices (**UTCI**, **PET**) for urban environments. Give it a building height model and weather data, and it produces high-resolution maps showing where people experience heat stress — and where trees, shade, and cool surfaces make a difference.
 
-## Features
+## Who is this for?
 
-- **Fast**: Rust-accelerated core algorithms with GPU support
-- **Accurate**: Validated against field measurements
-- **Easy**: Simple Python API with sensible defaults
-- **Flexible**: Works with GeoTIFFs or numpy arrays
+- **Urban planners** comparing street designs, tree planting, or cool-roof strategies
+- **Researchers** running controlled microclimate experiments at 1 m resolution
+- **Climate service providers** generating heat-risk maps for public health or events
+- **Students** learning about urban radiation and thermal comfort
 
-## Quick Example
+## The 30-second version
 
 ```python
 import solweig
-from datetime import datetime
 
-# Create surface from DSM
-surface = solweig.SurfaceData(dsm=my_dsm_array, pixel_size=1.0)
+# Load your building heights and weather
+surface = solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="cache/")
+weather_list = solweig.Weather.from_epw("weather.epw", start="2025-07-01", end="2025-07-03")
+location = solweig.Location.from_epw("weather.epw")
 
-# Define location and weather
-location = solweig.Location(latitude=57.7, longitude=12.0, utc_offset=1)
-weather = solweig.Weather(
-    datetime=datetime(2024, 7, 15, 12, 0),
-    ta=25.0,        # Air temperature (°C)
-    rh=50.0,        # Relative humidity (%)
-    global_rad=800.0  # Global radiation (W/m²)
+# Run — results saved as GeoTIFFs
+solweig.calculate_timeseries(
+    surface=surface,
+    weather_series=weather_list,
+    location=location,
+    output_dir="output/",
 )
-
-# Calculate Tmrt
-result = solweig.calculate(surface, location, weather)
-print(f"Mean Tmrt: {result.tmrt.mean():.1f}°C")
-
-# Compute thermal comfort
-utci = result.compute_utci(weather)
-print(f"Mean UTCI: {utci.mean():.1f}°C")
 ```
 
-## Installation
+That's it. Walls, sky view factors, shadows, radiation, and Tmrt are all computed automatically.
 
-```bash
-# Clone and install
-git clone https://github.com/UMEP-dev/solweig.git
-cd solweig
-uv sync                  # Install Python dependencies
-maturin develop          # Build Rust extension
-```
+## How it works
+
+SOLWEIG models the complete radiation budget experienced by a person standing outdoors:
+
+1. **Shadows** — Which pixels are shaded by buildings and trees?
+2. **Sky View Factor** — How much open sky does each point see?
+3. **Surface temperatures** — How hot are the ground and walls?
+4. **Radiation balance** — Sum shortwave (sun) and longwave (heat) from all directions
+5. **Tmrt** — Convert absorbed radiation into a single "felt temperature"
+6. **Thermal comfort** — Optionally derive UTCI or PET indices
 
 ## Documentation
 
@@ -56,17 +51,21 @@ maturin develop          # Build Rust extension
 
     ---
 
-    Install SOLWEIG and run your first calculation
+    Install SOLWEIG and run your first calculation in minutes
 
+    [:octicons-arrow-right-24: Installation](getting-started/installation.md)
     [:octicons-arrow-right-24: Quick Start](getting-started/quick-start.md)
 
 -   :material-book-open-variant:{ .lg .middle } **User Guide**
 
     ---
 
-    Learn how to use SOLWEIG for different scenarios
+    Common workflows: loading GeoTIFFs, running timeseries, thermal comfort
 
-    [:octicons-arrow-right-24: User Guide](guide/basic-usage.md)
+    [:octicons-arrow-right-24: Basic Usage](guide/basic-usage.md)
+    [:octicons-arrow-right-24: Working with GeoTIFFs](guide/geotiffs.md)
+    [:octicons-arrow-right-24: Timeseries](guide/timeseries.md)
+    [:octicons-arrow-right-24: Thermal Comfort](guide/thermal-comfort.md)
 
 -   :material-api:{ .lg .middle } **API Reference**
 
@@ -88,10 +87,12 @@ maturin develop          # Build Rust extension
 
 ## Citation
 
-If you use SOLWEIG in your research, please cite:
+If you use SOLWEIG in your research, please cite the original model paper and the UMEP platform:
 
-> Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) Urban Multi-scale Environmental Predictor (UMEP) - An integrated tool for city-based climate services. Environmental Modelling and Software 99, 70-87 [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
+1. Lindberg F, Holmer B, Thorsson S (2008) SOLWEIG 1.0 – Modelling spatial variations of 3D radiant fluxes and mean radiant temperature in complex urban settings. *International Journal of Biometeorology* 52, 697–713 [doi:10.1007/s00484-008-0162-7](https://doi.org/10.1007/s00484-008-0162-7)
+
+2. Lindberg F, Grimmond CSB, Gabey A, Huang B, Kent CW, Sun T, Theeuwes N, Järvi L, Ward H, Capel-Timms I, Chang YY, Jonsson P, Krave N, Liu D, Meyer D, Olofson F, Tan JG, Wästberg D, Xue L, Zhang Z (2018) Urban Multi-scale Environmental Predictor (UMEP) – An integrated tool for city-based climate services. *Environmental Modelling and Software* 99, 70-87 [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)
 
 ## License
 
-GNU General Public License v3.0. See [LICENSE](https://github.com/UMEP-dev/solweig/blob/main/LICENSE) for details.
+GNU Affero General Public License v3.0. See [LICENSE](https://github.com/UMEP-dev/solweig/blob/main/LICENSE) for details.

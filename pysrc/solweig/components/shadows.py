@@ -33,7 +33,7 @@ def compute_transmissivity(
     """
     Compute vegetation transmissivity based on day of year and leaf status.
 
-    This implements seasonal leaf on/off logic from configs.py EnvironData.
+    Implements seasonal leaf on/off logic for deciduous vegetation.
     During leaf-on season, vegetation transmits less light (low psi ~0.03).
     During leaf-off season (winter), bare branches transmit more light (psi ~0.5).
 
@@ -49,9 +49,9 @@ def compute_transmissivity(
         - 0.5 during leaf-off period (deciduous trees in winter)
 
     Reference:
-        configs.py EnvironData.leafon computation and psi assignment
+        Lindberg et al. (2008) - SOLWEIG vegetation transmissivity model
     """
-    # Default values matching configs.py
+    # Default values for deciduous vegetation
     transmissivity = 0.03
     transmissivity_leafoff = 0.5
     first_day = 100  # ~April 10

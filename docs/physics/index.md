@@ -84,6 +84,14 @@ Iterative solver based on human energy balance.
 
 ## References
 
-1. Lindberg F, Holmer B, Thorsson S (2008) SOLWEIG 1.0 - Modelling spatial variations of 3D radiant fluxes and mean radiant temperature in complex urban settings. Int J Biometeorol 52:697-713
+1. Lindberg F, Holmer B, Thorsson S (2008) SOLWEIG 1.0 – Modelling spatial variations of 3D radiant fluxes and mean radiant temperature in complex urban settings. *Int J Biometeorol* 52:697-713 [doi:10.1007/s00484-008-0162-7](https://doi.org/10.1007/s00484-008-0162-7)
 
-2. Lindberg F, Grimmond CSB (2011) The influence of vegetation and building morphology on shadow patterns and mean radiant temperatures in urban areas: model development and evaluation. Theor Appl Climatol 105:311-323
+2. Lindberg F, Grimmond CSB (2011) The influence of vegetation and building morphology on shadow patterns and mean radiant temperatures in urban areas: model development and evaluation. *Theor Appl Climatol* 105:311-323
+
+3. Lindberg F, Onomura S, Grimmond CSB (2016) Influence of ground surface characteristics on the mean radiant temperature in urban areas. *Int J Biometeorol* 60:1439-1452
+
+4. Lindberg F, Grimmond CSB, Martilli A (2015) Sunlit fractions on urban facets – Impact of spatial resolution and approach. *Urban Climate* 12:65-84
+
+5. Konarska J, Lindberg F, Larsson A, Thorsson S, Holmer B (2014) Transmissivity of solar radiation through crowns of single urban trees — application for outdoor thermal comfort modelling. *Theor Appl Climatol* 117:363-376
+
+6. Lindberg F, Grimmond CSB, Gabey A, et al. (2018) Urban Multi-scale Environmental Predictor (UMEP) – An integrated tool for city-based climate services. *Environ Model Softw* 99:70-87 [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020)

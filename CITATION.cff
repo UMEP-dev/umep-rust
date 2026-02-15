@@ -1,0 +1,94 @@
+cff-version: 1.2.0
+title: SOLWEIG
+message: >-
+  If you use this software, please cite both the original SOLWEIG
+  model paper and the UMEP platform paper.
+type: software
+authors:
+  - family-names: Lindberg
+    given-names: Fredrik
+    affiliation: University of Gothenburg
+  - family-names: Grimmond
+    given-names: C. Sue B.
+    affiliation: University of Reading
+  - name: UMEP Developers
+repository-code: https://github.com/UMEP-dev/solweig
+license: AGPL-3.0
+keywords:
+  - urban-microclimate
+  - mean-radiant-temperature
+  - thermal-comfort
+  - UTCI
+  - PET
+  - urban-climate
+  - SOLWEIG
+  - UMEP
+references:
+  - type: article
+    title: >-
+      SOLWEIG 1.0 – Modelling spatial variations of 3D radiant fluxes
+      and mean radiant temperature in complex urban settings
+    authors:
+      - family-names: Lindberg
+        given-names: Fredrik
+      - family-names: Holmer
+        given-names: Björn
+      - family-names: Thorsson
+        given-names: Sofia
+    journal: International Journal of Biometeorology
+    volume: 52
+    start: 697
+    end: 713
+    year: 2008
+    doi: 10.1007/s00484-008-0162-7
+  - type: article
+    title: >-
+      Urban Multi-scale Environmental Predictor (UMEP) – An integrated
+      tool for city-based climate services
+    authors:
+      - family-names: Lindberg
+        given-names: Fredrik
+      - family-names: Grimmond
+        given-names: C. Sue B.
+      - family-names: Gabey
+        given-names: Andrew
+      - family-names: Huang
+        given-names: Bei
+      - family-names: Kent
+        given-names: Christoph W.
+      - family-names: Sun
+        given-names: Ting
+      - family-names: Theeuwes
+        given-names: Natalie
+      - family-names: Järvi
+        given-names: Leena
+      - family-names: Ward
+        given-names: Helen
+      - family-names: Capel-Timms
+        given-names: Ian
+      - family-names: Chang
+        given-names: Yuanyong
+      - family-names: Jonsson
+        given-names: Per
+      - family-names: Krave
+        given-names: Niklas
+      - family-names: Liu
+        given-names: Dongwei
+      - family-names: Meyer
+        given-names: David
+      - family-names: Olofson
+        given-names: Frans
+      - family-names: Tan
+        given-names: Jianguo
+      - family-names: Wästberg
+        given-names: Dag
+      - family-names: Xue
+        given-names: Lingbo
+      - family-names: Zhang
+        given-names: Zhen
+    journal: Environmental Modelling and Software
+    volume: 99
+    start: 70
+    end: 87
+    year: 2018
+    doi: 10.1016/j.envsoft.2017.09.020

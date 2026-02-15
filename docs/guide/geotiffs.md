@@ -1,142 +1,166 @@
 # Working with GeoTIFFs
 
-SOLWEIG can load surface data directly from GeoTIFF files using the `SurfaceData.prepare()` factory method.
+Most real-world SOLWEIG projects start from GeoTIFF raster files. This guide covers loading, caching, and saving.
 
-## Basic Loading
+## Loading surface data
+
+`SurfaceData.prepare()` is the recommended way to load GeoTIFFs. It handles everything: loading, NaN filling, wall computation, SVF computation, and caching.
 
 ```python
 import solweig
 
 surface = solweig.SurfaceData.prepare(
-    dsm="data/dsm.tif",
-    working_dir="cache/",
+    dsm="data/dsm.tif",           # Required: building/terrain heights
+    working_dir="cache/",          # Required: where to cache preprocessing
+    cdsm="data/trees.tif",        # Optional: vegetation heights
+    dem="data/dem.tif",            # Optional: bare ground elevation
+    land_cover="data/lc.tif",     # Optional: surface type classification
 )
 ```
 
-This automatically:
+### Cropping to a bounding box
 
-1. Loads the DSM raster
-2. Extracts coordinate reference system (CRS)
-3. Computes wall heights and aspects
-4. Computes Sky View Factor (SVF)
-5. Caches results for future use
-
-## Adding Optional Inputs
-
-```python
-surface = solweig.SurfaceData.prepare(
-    dsm="data/dsm.tif",
-    working_dir="cache/",
-    cdsm="data/cdsm.tif",       # Vegetation heights
-    dem="data/dem.tif",         # Ground elevation
-    land_cover="data/lc.tif",   # Land cover classification
-)
-```
-
-## Explicit Extent
-
-Crop to a specific bounding box:
+Process only part of a large raster:
 
 ```python
 surface = solweig.SurfaceData.prepare(
     dsm="data/dsm.tif",
     working_dir="cache/",
     bbox=[476800, 4205850, 477200, 4206250],  # [minx, miny, maxx, maxy]
-    pixel_size=1.0,  # Resample to 1m resolution
+    pixel_size=1.0,  # Resample to 1 m resolution
 )
 ```
 
-## Location from CRS
+Coordinates are in the DSM's native CRS (e.g. UTM metres).
 
-Extract geographic coordinates from the raster CRS:
+## What gets cached
 
-```python
-surface = solweig.SurfaceData.prepare(dsm="data/dsm.tif", working_dir="cache/")
+The `working_dir` stores expensive preprocessing so subsequent runs are instant:
 
-# Extract centroid location (always specify UTC offset!)
-location = solweig.Location.from_surface(surface, utc_offset=2)
-```
-
-## Cache Management
-
-The `working_dir` caches expensive computations:
-
-```
+```text
 cache/
 ├── walls/
-│   ├── wall_hts.tif
-│   └── wall_aspects.tif
+│   ├── wall_hts.tif        # Wall heights derived from DSM
+│   └── wall_aspects.tif    # Wall compass directions
 └── svf/
     └── memmap/
-        ├── svf.npy
-        ├── svf_north.npy
-        └── ...
+        ├── svf.npy          # Total Sky View Factor
+        ├── svf_north.npy    # Directional SVF (4 cardinal directions)
+        └── ...              # 15 SVF grids total
 ```
 
-### Force Recomputation
+### Force recomputation
+
+If you change the DSM or want to regenerate everything:
 
 ```python
 surface = solweig.SurfaceData.prepare(
     dsm="data/dsm.tif",
     working_dir="cache/",
-    force_recompute=True,  # Ignore cache, recompute everything
+    force_recompute=True,
 )
 ```
 
-### Cache Validation
+SOLWEIG also validates cached data against the current DSM — if the dimensions or extent change, the cache is automatically invalidated.
 
-SOLWEIG automatically validates cached data against current inputs. If the DSM changes, the cache is invalidated and recomputed.
+## Extracting location from CRS
 
-## Saving Results
-
-Save calculation outputs as GeoTIFFs:
+When the DSM has a projected CRS (e.g. UTM), you can extract lat/lon automatically:
 
 ```python
-result = solweig.calculate(surface, location, weather)
+location = solweig.Location.from_surface(surface, utc_offset=2)
+```
 
-result.save_outputs(
+Or from the EPW file, which also includes UTC offset:
+
+```python
+location = solweig.Location.from_epw("data/weather.epw")
+```
+
+## Saving results as GeoTIFFs
+
+### During timeseries
+
+The simplest approach — results are saved as they're computed:
+
+```python
+results = solweig.calculate_timeseries(
+    surface=surface,
+    weather_series=weather_list,
+    location=location,
     output_dir="output/",
-    transform=surface.transform,
-    crs=surface.crs,
+    outputs=["tmrt", "shadow"],
 )
 ```
 
-This creates:
-- `output/tmrt.tif`
-- `output/shadow.tif`
-- etc.
+Creates files like:
 
-## NaN and NoData Handling
+```text
+output/
+├── tmrt/
+│   ├── tmrt_20250701_0000.tif
+│   ├── tmrt_20250701_0100.tif
+│   └── ...
+└── shadow/
+    ├── shadow_20250701_0000.tif
+    └── ...
+```
 
-SOLWEIG automatically handles NaN (missing) values in surface layers:
-
-- **At load time:** Only negative nodata sentinel values (e.g. -9999) are
-  converted to NaN. Zero-valued pixels are preserved as valid data.
-- **Before calculation:** `fill_nan()` is called automatically by both
-  `preprocess()` and `calculate()`. NaN pixels in DSM/CDSM/TDSM are filled
-  with the ground reference (DEM, or DSM if no DEM is provided).
-- **Noise clamping:** After filling, surface pixels within 0.1 m of the ground
-  reference are collapsed to exactly the ground value, preventing shadow and
-  SVF artefacts from resampling jitter.
-
-DEM NaN pixels are never filled — they represent truly missing ground data and
-are masked as invalid.
-
-When loading via `SurfaceData.prepare()`, this is all handled automatically.
-When constructing `SurfaceData` manually from arrays, `fill_nan()` runs inside
-`calculate()` so no extra steps are needed.
-
-## Large Rasters
-
-For rasters larger than available memory, use tiled processing:
+### Loading saved results
 
 ```python
-result = solweig.calculate_tiled(
+# Load a single output raster
+arr, transform, crs, nodata = solweig.io.load_raster("output/tmrt/tmrt_20250701_1200.tif")
+```
+
+## NaN and nodata handling
+
+SOLWEIG handles missing data automatically at every stage:
+
+**At load time:** Negative nodata sentinel values (e.g. -9999) are converted to NaN. Zero-valued pixels are preserved as valid data.
+
+**Before calculation:** NaN pixels in DSM, CDSM, and TDSM are filled with the ground reference (DEM if provided, otherwise the DSM itself). Pixels within 0.1 m of the ground reference are clamped to exactly the ground value to prevent shadow artefacts from resampling noise.
+
+DEM NaN pixels are never filled — they represent truly missing ground data.
+
+When using `SurfaceData.prepare()`, this is all handled automatically. When constructing from arrays, `fill_nan()` runs inside `calculate()`.
+
+## Rasterising vector data
+
+Convert tree polygons (GeoDataFrame) to a raster grid:
+
+```python
+import geopandas as gpd
+
+trees = gpd.read_file("trees.gpkg")
+trees = trees.to_crs(2154)  # Match DSM CRS
+
+cdsm, transform = solweig.io.rasterise_gdf(
+    trees,
+    geom_col="geometry",
+    ht_col="height",
+    bbox=[476800, 4205850, 477200, 4206250],
+    pixel_size=1.0,
+)
+
+# Optionally save to disk
+from pyproj import CRS
+solweig.io.save_raster(
+    "data/cdsm.tif", cdsm, transform.to_gdal(), CRS.from_epsg(2154).to_wkt()
+)
+```
+
+## Large rasters
+
+For rasters too large to fit in memory, SOLWEIG supports tiled processing:
+
+```python
+results = solweig.calculate_tiled(
     surface=surface,
     location=location,
     weather=weather,
-    tile_size=500,  # Process in 500×500 tiles
+    tile_size=500,  # Process in 500×500 pixel tiles
 )
 ```
 
-See [Timeseries Calculations](timeseries.md) for batch processing workflows.
+See [Timeseries](timeseries.md) for combining tiled processing with multi-timestep simulations.

@@ -90,16 +90,14 @@ def compute_radiation(
     msteg = 46.5 * (ea / ta_k)
     esky = 1 - (1 + msteg) * np.exp(-np.sqrt(1.2 + 3.0 * msteg))
 
-    # View factors (from SOLWEIG parameters - depends on posture)
+    # View factors depend on posture (standing vs sitting projection areas)
     cyl = human.posture == "standing"
     if cyl:
-        _f_up = F_UP_STANDING  # Reserved for future cylindric body model
-        _f_side = F_SIDE_STANDING  # Reserved for future cylindric body model
-        # f_cyl = F_CYL_STANDING  # Cylindrical projection factor for direct beam (not used here)
+        _f_up = F_UP_STANDING  # noqa: F841
+        _f_side = F_SIDE_STANDING  # noqa: F841
     else:
-        _f_up = F_UP_SITTING  # Reserved for future cylindric body model  # noqa: F841
-        _f_side = F_SIDE_SITTING  # Reserved for future cylindric body model  # noqa: F841
-        # f_cyl = 0.2
+        _f_up = F_UP_SITTING  # noqa: F841
+        _f_side = F_SIDE_SITTING  # noqa: F841
 
     # Shortwave radiation components
     sin_alt = np.sin(np.radians(weather.sun_altitude))

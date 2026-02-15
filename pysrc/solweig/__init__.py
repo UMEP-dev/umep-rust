@@ -1,10 +1,10 @@
-"""
-SOLWEIG - High-performance urban microclimate model.
+"""SOLWEIG - High-performance urban microclimate model.
 
 A Python package with Rust-accelerated algorithms for computing mean radiant
-temperature (Tmrt) and other urban climate parameters.
+temperature (Tmrt) and thermal comfort indices (UTCI, PET) in complex urban
+environments.
 
-## Modern API
+Quick start::
 
     import solweig
     from datetime import datetime
@@ -12,14 +12,11 @@ temperature (Tmrt) and other urban climate parameters.
     result = solweig.calculate(
         surface=solweig.SurfaceData(dsm=my_dsm_array),
         location=solweig.Location(latitude=57.7, longitude=12.0),
-        weather=solweig.Weather(
-            datetime=datetime(2024, 7, 15, 12, 0),
-            ta=25, rh=50, global_rad=800
-        ),
+        weather=solweig.Weather(datetime=datetime(2025, 7, 15, 12, 0), ta=25, rh=50, global_rad=800),
     )
-    print(f"Tmrt: {result.tmrt.mean():.1f}°C")
+    print(f"Tmrt: {result.tmrt.mean():.1f} C")
 
-## Time Series
+Time series::
 
     results = solweig.calculate_timeseries(
         surface=surface,
@@ -27,7 +24,7 @@ temperature (Tmrt) and other urban climate parameters.
         location=location,
     )
 
-## Utilities
+I/O helpers::
 
     # Load raster data
     dsm, transform, crs, nodata = solweig.io.load_raster("dsm.tif")

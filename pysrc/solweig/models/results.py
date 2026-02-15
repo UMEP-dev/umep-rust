@@ -1,4 +1,10 @@
-"""Result data models."""
+"""Result container returned by SOLWEIG calculations.
+
+Defines :class:`SolweigResult`, which holds the output grids (Tmrt,
+radiation components, shadow mask) and provides convenience methods
+for computing thermal comfort indices (UTCI, PET) and saving outputs
+to GeoTIFF.
+"""
 
 from __future__ import annotations
 
@@ -33,7 +39,7 @@ class SolweigResult:
         tmrt: Mean Radiant Temperature grid (°C).
         utci: Universal Thermal Climate Index grid (°C). Optional.
         pet: Physiological Equivalent Temperature grid (°C). Optional.
-        shadow: Shadow mask (1=sunlit, 0=shaded).
+        shadow: Shadow fraction (1.0=sunlit, 0.0=fully shaded, float).
         kdown: Downwelling shortwave radiation (W/m²).
         kup: Upwelling shortwave radiation (W/m²).
         ldown: Downwelling longwave radiation (W/m²).
@@ -86,12 +92,12 @@ class SolweigResult:
             # With surface metadata (recommended when using from_geotiff)
             >>> surface, precomputed = SurfaceData.from_geotiff("dsm.tif", svf_dir="svf/")
             >>> result = solweig.calculate(surface, location, weather, precomputed=precomputed)
-            >>> result.to_geotiff("output/", timestamp=weather.dt, surface=surface)
+            >>> result.to_geotiff("output/", timestamp=weather.datetime, surface=surface)
 
             # Without surface metadata (explicit transform/CRS)
             >>> result.to_geotiff(
             ...     "output/",
-            ...     timestamp=datetime(2023, 7, 15, 12, 0),
+            ...     timestamp=datetime(2025, 7, 15, 12, 0),
             ...     outputs=["tmrt", "utci", "pet"],
             ...     transform=[0, 1, 0, 0, 0, -1],
             ...     crs_wkt="EPSG:32633",
@@ -260,65 +266,3 @@ class SolweigResult:
             if rh is None:
                 raise ValueError("rh is required when ta is provided as a float")
             return compute_pet_grid(self.tmrt, ta, rh, wind if wind is not None else 1.0, human)
-
-
-@dataclass
-class TileSpec:
-    """
-    Specification for a single tile with overlap regions.
-
-    Attributes:
-        row_start, row_end: Core tile row bounds (without overlap).
-        col_start, col_end: Core tile column bounds (without overlap).
-        row_start_full, row_end_full: Full tile row bounds (with overlap).
-        col_start_full, col_end_full: Full tile column bounds (with overlap).
-        overlap_top, overlap_bottom: Vertical overlap in pixels.
-        overlap_left, overlap_right: Horizontal overlap in pixels.
-    """
-
-    row_start: int
-    row_end: int
-    col_start: int
-    col_end: int
-    row_start_full: int
-    row_end_full: int
-    col_start_full: int
-    col_end_full: int
-    overlap_top: int
-    overlap_bottom: int
-    overlap_left: int
-    overlap_right: int
-
-    @property
-    def core_shape(self) -> tuple[int, int]:
-        """Shape of core tile (without overlap)."""
-        return (self.row_end - self.row_start, self.col_end - self.col_start)
-
-    @property
-    def full_shape(self) -> tuple[int, int]:
-        """Shape of full tile (with overlap)."""
-        return (self.row_end_full - self.row_start_full, self.col_end_full - self.col_start_full)
-
-    @property
-    def core_slice(self) -> tuple[slice, slice]:
-        """Slices for extracting core from full tile result."""
-        return (
-            slice(self.overlap_top, self.overlap_top + self.core_shape[0]),
-            slice(self.overlap_left, self.overlap_left + self.core_shape[1]),
-        )
-
-    @property
-    def write_slice(self) -> tuple[slice, slice]:
-        """Slices for writing core to global output."""
-        return (
-            slice(self.row_start, self.row_end),
-            slice(self.col_start, self.col_end),
-        )
-
-    @property
-    def read_slice(self) -> tuple[slice, slice]:
-        """Slices for reading full tile from global input."""
-        return (
-            slice(self.row_start_full, self.row_end_full),
-            slice(self.col_start_full, self.col_end_full),
-        )

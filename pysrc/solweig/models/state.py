@@ -1,4 +1,10 @@
-"""State management for SOLWEIG calculations."""
+"""Thermal state and tile specification models.
+
+:class:`ThermalState` carries surface temperature history between
+timesteps (ground and wall thermal inertia via TsWaveDelay).
+:class:`TileSpec` describes the geometry of a single tile used by the
+large-raster tiling engine.
+"""
 
 from __future__ import annotations
 

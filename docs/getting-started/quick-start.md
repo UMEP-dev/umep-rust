@@ -1,273 +1,205 @@
-# Quick Start Guide
+# Quick Start
 
-Get up and running with SOLWEIG in minutes.
+This guide walks you through your first SOLWEIG calculation — from raw inputs to a Tmrt map.
 
-## Installation
+## What you'll do
 
-```bash
-# From source (development)
-git clone https://github.com/UMEP-dev/solweig.git
-cd solweig
-pip install -e .
-maturin develop  # Build Rust extension
+1. Create a surface with buildings
+2. Define where and when
+3. Calculate Mean Radiant Temperature
+4. Interpret the results
+
+## Option A: From numpy arrays (no files needed)
+
+Use this when you want to experiment quickly or don't have GeoTIFF data yet.
+
+```python
+import numpy as np
+import solweig
+from datetime import datetime
+
+# --- 1. Create a surface ---
+# A 200×200 m flat area at 2 m elevation, with a 15 m tall building in the centre
+dsm = np.full((200, 200), 2.0, dtype=np.float32)
+dsm[80:120, 80:120] = 15.0  # 40×40 m building
+
+surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)  # 1 pixel = 1 metre
+
+# --- 2. Define location and weather ---
+location = solweig.Location(
+    latitude=48.8,      # Paris
+    longitude=2.3,
+    utc_offset=1,       # Central European Time (UTC+1)
+)
+
+weather = solweig.Weather(
+    datetime=datetime(2025, 7, 15, 14, 0),  # 2pm, July 15
+    ta=32.0,            # Air temperature (°C)
+    rh=40.0,            # Relative humidity (%)
+    global_rad=850.0,   # Global horizontal irradiance (W/m²)
+)
+
+# --- 3. Calculate ---
+result = solweig.calculate(surface, location, weather)
+
+# --- 4. Inspect results ---
+print(f"Mean Tmrt:   {result.tmrt.mean():.1f}°C")
+print(f"Sunlit Tmrt: {result.tmrt[result.shadow > 0.5].mean():.1f}°C")
+print(f"Shaded Tmrt: {result.tmrt[result.shadow < 0.5].mean():.1f}°C")
 ```
 
-## Basic Workflow
+!!! note "First run is slow"
+    The first `calculate()` call computes Sky View Factors, which is expensive (~60 s for a 200×200 grid). Subsequent calls on the same surface reuse the cached SVF and run in under a second.
 
-SOLWEIG calculates Mean Radiant Temperature (Tmrt) and thermal comfort indices (UTCI, PET) from urban surface data and weather conditions.
+## Option B: From GeoTIFF files (real-world data)
 
-### Step 1: Prepare Surface Data
+This is the typical workflow for real projects. You need:
 
-Use `SurfaceData.prepare()` to load GeoTIFFs and auto-compute walls/SVF:
+- A **DSM** GeoTIFF (Digital Surface Model — building/terrain heights)
+- An **EPW** weather file (standard format, downloadable from climate databases)
 
 ```python
 import solweig
 
-# Load DSM and optional vegetation, compute walls/SVF automatically
+# --- 1. Load and prepare surface ---
+# Walls, sky view factors, and NaN handling are all automatic
 surface = solweig.SurfaceData.prepare(
     dsm="data/dsm.tif",
-    working_dir="cache/",       # Walls/SVF cached here for reuse
-    cdsm="data/cdsm.tif",       # Optional: vegetation heights
-    bbox=[476800, 4205850, 477200, 4206250],  # Optional: crop extent
-    pixel_size=1.0,             # Optional: resolution in meters
+    working_dir="cache/",        # Preprocessing cached here for reuse
+    cdsm="data/trees.tif",       # Optional: vegetation canopy heights
 )
-```
 
-**What `prepare()` does:**
-
-- Loads and validates DSM (required) and optional CDSM/DEM/land cover
-- Fills NaN in surface layers with the ground reference (DEM or DSM)
-- Computes wall heights and aspects (cached to `working_dir/walls/`)
-- Computes Sky View Factor (cached to `working_dir/svf/`)
-- Aligns all rasters to common extent and resolution
-
-**Performance:** First run computes walls/SVF (slow). Subsequent runs reuse cached data (fast).
-
-### Step 2: Load Weather Data
-
-Load weather from an EPW file:
-
-```python
-# Load 3 days of weather data
+# --- 2. Load weather and location from EPW ---
 weather_list = solweig.Weather.from_epw(
     "data/weather.epw",
-    start="2023-07-01",
-    end="2023-07-03",
+    start="2025-07-01",          # Date range to simulate
+    end="2025-07-03",
 )
+location = solweig.Location.from_epw("data/weather.epw")
 
-print(f"Loaded {len(weather_list)} timesteps")
-```
+print(f"Location: {location.latitude:.1f}°N, {location.longitude:.1f}°E")
+print(f"Loaded {len(weather_list)} hourly timesteps")
 
-### Step 3: Calculate Tmrt
-
-```python
-# Calculate timeseries with auto-save
+# --- 3. Run timeseries ---
+# Results saved as GeoTIFFs; thermal state carried between timesteps
 results = solweig.calculate_timeseries(
     surface=surface,
     weather_series=weather_list,
-    output_dir="output/",           # Auto-saves Tmrt rasters
-    outputs=["tmrt", "shadow"],     # Which outputs to save
+    location=location,
+    output_dir="output/",
+    outputs=["tmrt", "shadow"],
 )
 
-print(f"Processed {len(results)} timesteps")
-print(f"Mean Tmrt: {results[0].tmrt.mean():.1f}°C")
+print(f"Done — {len(results)} timesteps saved to output/")
 ```
 
-### Step 4: Post-process Thermal Comfort (Optional)
+### What `prepare()` does behind the scenes
 
-UTCI and PET are computed separately for better performance:
+When you call `SurfaceData.prepare()`, it automatically:
+
+1. Loads the DSM (and optional CDSM, DEM, land cover)
+2. Fills NaN/nodata values using the ground reference
+3. Computes **wall heights and aspects** from the DSM edges
+4. Computes **Sky View Factors** (15 directional grids)
+5. Caches everything to `working_dir/` so the next run is instant
+
+## Adding thermal comfort
+
+Tmrt tells you how much radiation a person absorbs, but thermal comfort also depends on air temperature, humidity, and wind. UTCI and PET combine all of these.
 
 ```python
-# Compute UTCI (fast polynomial, ~1 second)
-n_utci = solweig.compute_utci(
+# From a single-timestep result:
+utci = result.compute_utci(weather)
+print(f"Mean UTCI: {utci.mean():.1f}°C")
+
+# From saved timeseries files (batch):
+solweig.compute_utci(
     tmrt_dir="output/",
     weather_series=weather_list,
     output_dir="output_utci/",
 )
-
-# Compute PET (slower iterative solver, optional)
-# n_pet = solweig.compute_pet(
-#     tmrt_dir="output/",
-#     weather_series=weather_list,
-#     output_dir="output_pet/",
-# )
 ```
 
-## Complete Example
+| UTCI range | Meaning |
+| ---------- | ------- |
+| > 46°C | Extreme heat stress |
+| 38–46°C | Very strong heat stress |
+| 32–38°C | Strong heat stress |
+| 26–32°C | Moderate heat stress |
+| 9–26°C | No thermal stress |
+| < 9°C | Cold stress categories |
 
-See `demos/athens-demo.py` in the repository for a complete working example.
+## Where to get input data
 
-```python
-import solweig
-from pathlib import Path
+### DSM (Digital Surface Model)
 
-# Setup paths
-input_path = Path("demos/data/athens")
-output_path = Path("temp/athens")
-output_path.mkdir(parents=True, exist_ok=True)
+A raster grid where each pixel contains the height in metres (including buildings and terrain). Common sources:
 
-# Step 1: Prepare surface (walls/SVF auto-computed and cached)
-surface = solweig.SurfaceData.prepare(
-    dsm=str(input_path / "DSM.tif"),
-    working_dir=str(output_path / "working"),
-    cdsm=str(output_path / "CDSM.tif"),  # Optional vegetation
-)
+- **LiDAR point clouds** processed to raster (national mapping agencies often provide these)
+- **Photogrammetry** from drone surveys
+- **OpenStreetMap building footprints** extruded to heights
 
-# Step 2: Load weather
-weather_list = solweig.Weather.from_epw(
-    str(input_path / "athens_2023.epw"),
-    start="2023-07-01",
-    end="2023-07-01",
-)
+### EPW (EnergyPlus Weather)
 
-# Step 3: Calculate
-results = solweig.calculate_timeseries(
-    surface=surface,
-    weather_series=weather_list,
-    output_dir=str(output_path / "output"),
-)
+Hourly weather data in a standard format. Free sources:
 
-print(f"Done! Processed {len(results)} timesteps")
-```
+- [Climate.OneBuilding.Org](https://climate.onebuilding.org/) — global coverage
+- [PVGIS](https://re.jrc.ec.europa.eu/pvg_tools/en/) — European Commission tool
 
-## Single Timestep Calculation
-
-For quick single-timestep calculations without file I/O:
+You can also download an EPW directly from PVGIS (no API key needed):
 
 ```python
-import numpy as np
-from datetime import datetime
-import solweig
-
-# Create surface from arrays (no files needed)
-dsm = np.ones((200, 200), dtype=np.float32) * 10.0
-dsm[50:100, 50:100] = 25.0  # Add a building
-
-surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)
-
-# IMPORTANT: Always specify UTC offset for correct sun position calculations
-location = solweig.Location(
-    latitude=37.98,    # Athens, Greece
+# Download weather data for any location
+epw_path = solweig.download_epw(
+    latitude=37.98,
     longitude=23.73,
-    utc_offset=2,      # Eastern European Time (UTC+2)
+    output_path="athens.epw",
 )
 
-weather = solweig.Weather(
-    datetime=datetime(2024, 7, 15, 12, 0),
-    ta=30.0,      # Air temperature (°C)
-    rh=50.0,      # Relative humidity (%)
-    global_rad=800.0,  # Global radiation (W/m²)
-)
-
-# Calculate (SVF computed on first call, cached for subsequent calls)
-result = solweig.calculate(surface, location, weather)
-print(f"Tmrt: {result.tmrt.mean():.1f}°C")
-
-# Compute thermal comfort indices from the result
-utci = result.compute_utci(weather)  # Fast polynomial
-pet = result.compute_pet(weather)    # Slower iterative solver
-print(f"UTCI: {utci.mean():.1f}°C, PET: {pet.mean():.1f}°C")
+# Then load it
+weather_list = solweig.Weather.from_epw(epw_path)
+location = solweig.Location.from_epw(epw_path)
 ```
 
-### Location from GeoTIFF
+!!! note "Data attribution"
+    PVGIS weather data is derived from ERA5 reanalysis and contains modified Copernicus Climate Change Service information. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.
 
-When loading data from GeoTIFFs, you can extract the location automatically:
+### CDSM (Canopy Digital Surface Model)
 
-```python
-surface = solweig.SurfaceData.prepare(dsm="data/dsm.tif", working_dir="cache/")
-
-# Auto-extract location from CRS (requires explicit UTC offset!)
-location = solweig.Location.from_surface(surface, utc_offset=2)
-
-# Warning: If you omit utc_offset, it defaults to 0 with a warning
-# This can cause incorrect sun position calculations!
-```
-
-## Key Classes
-
-| Class | Purpose |
-|---|---|
-| `SurfaceData` | Terrain data (DSM, CDSM, walls, SVF) |
-| `Location` | Geographic coordinates (lat, lon, UTC offset) |
-| `Weather` | Weather conditions (temp, humidity, radiation) |
-| `HumanParams` | Human body parameters (optional customization) |
-| `SolweigResult` | Calculation output (Tmrt, shadow, radiation) |
-
-## Common Options
-
-### Custom Human Parameters
+Vegetation canopy heights, either from LiDAR or by rasterising tree survey data:
 
 ```python
-result = solweig.calculate(
-    surface=surface,
-    location=location,
-    weather=weather,
-    human=solweig.HumanParams(
-        abs_k=0.7,        # Shortwave absorption (0-1)
-        abs_l=0.97,       # Longwave absorption (0-1)
-        posture="standing",  # or "sitting"
-        weight=75,        # kg
-        height=1.80,      # m
-    ),
+import geopandas as gpd
+
+trees = gpd.read_file("trees.gpkg")
+cdsm, transform = solweig.io.rasterise_gdf(
+    trees, "geometry", "height",
+    bbox=[minx, miny, maxx, maxy],
+    pixel_size=1.0,
 )
 ```
 
-### Anisotropic Sky Model
+## Key classes at a glance
 
-```python
-results = solweig.calculate_timeseries(
-    surface=surface,
-    weather_series=weather_list,
-    use_anisotropic_sky=True,  # More accurate but slower
-)
-```
+| Class | What it holds |
+| ----- | ------------- |
+| `SurfaceData` | DSM, optional vegetation/DEM/land cover, preprocessed walls and SVF |
+| `Location` | Latitude, longitude, altitude, UTC offset |
+| `Weather` | Air temperature, humidity, radiation for one timestep |
+| `HumanParams` | Body parameters for Tmrt/PET (optional — sensible defaults provided) |
+| `SolweigResult` | Output grids: Tmrt, shadow, radiation components |
 
-## Input Validation
+## Complete working demos
 
-Validate inputs before expensive calculations:
+The repository includes full end-to-end demos you can run directly:
 
-```python
-try:
-    # Preflight check - catches errors before SVF computation
-    warnings = solweig.validate_inputs(surface, location, weather)
-    for w in warnings:
-        print(f"Warning: {w}")
+- **[demos/athens-demo.py](https://github.com/UMEP-dev/solweig/blob/main/demos/athens-demo.py)** — Full workflow: rasterise tree vectors, load GeoTIFFs, run a multi-day timeseries, post-process UTCI. The best starting point for real projects.
+- **[demos/solweig_gbg_test.py](https://github.com/UMEP-dev/solweig/blob/main/demos/solweig_gbg_test.py)** — Gothenburg test data: surface preparation, SVF caching, and timeseries calculation.
 
-    result = solweig.calculate(surface, location, weather)
-except solweig.GridShapeMismatch as e:
-    print(f"Grid mismatch: {e.field} expected {e.expected}, got {e.got}")
-except solweig.MissingPrecomputedData as e:
-    print(f"Missing data: {e}")
-```
+## Next steps
 
-## Common Issues
-
-### NaN pixels in output
-
-NaN values in DSM, CDSM, or TDSM are automatically filled with the ground
-reference (DEM, or DSM if no DEM is provided) before calculation. If you see
-NaN in the output, it means the DSM itself has NaN at those pixels and no DEM
-was provided to fill them. Provide a DEM to maximize valid coverage.
-
-### "SVF data not found"
-
-SVF is computed automatically on first run. If using `SurfaceData.prepare()`, ensure `working_dir` is writable.
-
-### Slow first calculation
-
-First `calculate()` call computes SVF (expensive). Subsequent calls reuse cached SVF and are ~200× faster.
-
-### GPU not available
-
-The package automatically falls back to CPU. Check status:
-
-```python
-print(f"GPU available: {solweig.is_gpu_available()}")
-print(f"Backend: {solweig.get_compute_backend()}")
-```
-
-## Next Steps
-
-- See `demos/athens-demo.py` in the repository for a complete example
-- Check the [Physics](../physics/index.md) section for detailed documentation
-- Run `pytest tests/` to verify installation
+- [Basic Usage](../guide/basic-usage.md) — Vegetation, height conventions, custom parameters, validation
+- [Working with GeoTIFFs](../guide/geotiffs.md) — File loading, caching, saving results
+- [Timeseries](../guide/timeseries.md) — Multi-day simulations with thermal state
+- [Thermal Comfort](../guide/thermal-comfort.md) — UTCI and PET in depth
+- [API Reference](../api/index.md) — All classes and functions

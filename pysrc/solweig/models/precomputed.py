@@ -1,4 +1,11 @@
-"""Precomputed data models (SVF, shadow matrices)."""
+"""Precomputed preprocessing data (SVF arrays and shadow matrices).
+
+Defines :class:`SvfArrays` (15 directional sky view factor grids),
+:class:`ShadowArrays` (bitpacked shadow matrices for the anisotropic
+sky model), and :class:`PrecomputedData` (a convenience wrapper that
+bundles both).  These can be loaded from the ``svfs.zip`` /
+``shadowmats.npz`` files produced by :meth:`SurfaceData.prepare`.
+"""
 
 from __future__ import annotations
 

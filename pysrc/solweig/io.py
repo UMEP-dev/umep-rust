@@ -1,3 +1,10 @@
+"""Raster I/O and EPW weather file handling.
+
+Provides functions for reading and writing GeoTIFF rasters, parsing
+EnergyPlus Weather (EPW) files, and downloading TMY data from PVGIS.
+Automatically selects between rasterio and GDAL backends (see ``_compat``).
+"""
+
 from __future__ import annotations
 
 import logging
@@ -1104,6 +1111,12 @@ def download_epw(
     Uses the EU Joint Research Centre's PVGIS API (no API key required).
     Coverage is near-global (all continents except polar regions),
     using ERA5 reanalysis data.
+
+    The downloaded data contains modified Copernicus Climate Change Service
+    information. Neither the European Commission nor ECMWF is responsible
+    for any use that may be made of the Copernicus information or data it
+    contains. See https://cds.climate.copernicus.eu/disclaimer for the full
+    licence terms.
 
     Args:
         latitude: Latitude in decimal degrees (-90 to 90).

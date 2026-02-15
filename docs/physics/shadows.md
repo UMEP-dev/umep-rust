@@ -63,3 +63,4 @@ The shadow calculation produces:
 ## References
 
 - Lindberg, F., Holmer, B., & Thorsson, S. (2008). SOLWEIG 1.0–Modelling spatial variations of 3D radiant fluxes and mean radiant temperature in complex urban settings. *International Journal of Biometeorology*, 52(7), 697-713.
+- Konarska, J., Lindberg, F., Larsson, A., Thorsson, S., & Holmer, B. (2014). Transmissivity of solar radiation through crowns of single urban trees—application for outdoor thermal comfort modelling. *Theoretical and Applied Climatology*, 117, 363-376.

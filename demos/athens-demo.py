@@ -10,7 +10,19 @@ The simplified API automatically handles:
 - CRS validation and extraction
 - NaN filling in DSM/CDSM/TDSM with ground reference (DEM or DSM)
 
-For config file-driven workflows, see the legacy API at the bottom.
+Legacy config file-driven workflows (parametersforsolweig.json) are
+supported via ``ModelConfig.from_json()``.
+
+Data sources
+------------
+- DSM/DEM: Derived from LiDAR data, Hellenic Cadastre (https://www.ktimatologio.gr/)
+- Tree vectors (trees.gpkg): Derived from Athens Urban Atlas
+  (https://land.copernicus.eu/local/urban-atlas) and geodata.gov.gr
+- EPW weather (athens_2023.epw): Generated using Copernicus Climate Change
+  Service information [2025] via PVGIS (https://re.jrc.ec.europa.eu/pvg_tools/en/).
+  Contains modified Copernicus Climate Change Service information; neither the
+  European Commission nor ECMWF is responsible for any use that may be made of
+  the Copernicus information or data it contains.
 """
 
 from pathlib import Path

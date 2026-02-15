@@ -1,25 +1,22 @@
-"""
-Simplified SOLWEIG API
+"""Public SOLWEIG API.
 
-This module provides a clean, minimal API for SOLWEIG calculations.
-It wraps the complex internal machinery with simple dataclasses that:
-- Take minimal user input
-- Auto-compute derived values (sun position, diffuse fraction, etc.)
-- Provide sensible defaults
+This module re-exports all user-facing symbols and provides the top-level
+:func:`calculate` and :func:`validate_inputs` entry points.  Internal
+machinery (sun position, radiation split, SVF resolution, etc.) is handled
+automatically — callers only need to supply surface data, location, and
+weather observations.
 
-Example:
+Example::
+
     import solweig
     from datetime import datetime
 
     result = solweig.calculate(
         surface=solweig.SurfaceData(dsm=my_dsm_array),
         location=solweig.Location(latitude=57.7, longitude=12.0),
-        weather=solweig.Weather(
-            datetime=datetime(2024, 7, 15, 12, 0),
-            ta=25.0, rh=50.0, global_rad=800.0
-        ),
+        weather=solweig.Weather(datetime=datetime(2025, 7, 15, 12, 0), ta=25.0, rh=50.0, global_rad=800.0),
     )
-    print(f"Tmrt: {result.tmrt.mean():.1f}°C")
+    print(f"Tmrt: {result.tmrt.mean():.1f} C")
 """
 
 from __future__ import annotations

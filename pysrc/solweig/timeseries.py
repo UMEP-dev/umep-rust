@@ -1,4 +1,11 @@
-"""Time series calculation with thermal state management."""
+"""Time-series SOLWEIG calculation with thermal state management.
+
+Provides :func:`calculate_timeseries`, a convenience wrapper around
+:func:`~solweig.api.calculate` that iterates over a list of
+:class:`~solweig.Weather` objects, carrying thermal state (ground and
+wall temperatures) forward between timesteps.  Large rasters are
+transparently routed to the tiled processing path.
+"""
 
 from __future__ import annotations
 

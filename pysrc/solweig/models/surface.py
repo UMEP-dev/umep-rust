@@ -1,4 +1,11 @@
-"""Surface and terrain data models."""
+"""Surface and terrain data model.
+
+Defines :class:`SurfaceData`, the primary input container for SOLWEIG
+calculations.  Holds the DSM and optional rasters (CDSM, DEM, TDSM,
+land cover, walls, SVF).  The :meth:`SurfaceData.prepare` class method
+loads GeoTIFFs from disk, aligns extents, and computes or caches
+walls and sky view factors automatically.
+"""
 
 from __future__ import annotations
 

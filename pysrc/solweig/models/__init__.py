@@ -1,12 +1,21 @@
 """Data models for SOLWEIG calculations.
 
-This package contains all data model classes organized by domain:
-- state: ThermalState, TileSpec
-- surface: SurfaceData
-- weather: Location, Weather
-- precomputed: SvfArrays, ShadowArrays, PrecomputedData
-- config: ModelConfig, HumanParams
-- results: SolweigResult
+Modules
+-------
+state
+    ``ThermalState`` (thermal inertia carry-forward) and ``TileSpec``
+    (tile geometry for large-raster processing).
+surface
+    ``SurfaceData`` — DSM, CDSM, DEM, land cover, walls, and SVF.
+weather
+    ``Location`` and ``Weather`` dataclasses.
+precomputed
+    ``SvfArrays``, ``ShadowArrays``, ``PrecomputedData`` — cached
+    preprocessing results loaded from disk.
+config
+    ``ModelConfig`` and ``HumanParams`` — run-time settings.
+results
+    ``SolweigResult`` — output grids (Tmrt, radiation, shadow).
 """
 
 from .config import HumanParams, ModelConfig

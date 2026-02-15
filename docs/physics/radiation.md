@@ -66,4 +66,7 @@ Where $w_i$ are direction-dependent weighting factors.
 ## References
 
 - Lindberg, F., Holmer, B., & Thorsson, S. (2008). SOLWEIG 1.0. *International Journal of Biometeorology*, 52(7), 697-713.
+- Lindberg, F., Onomura, S., & Grimmond, C. S. B. (2016). Influence of ground surface characteristics on the mean radiant temperature in urban areas. *International Journal of Biometeorology*, 60(9), 1439-1452.
 - Reindl, D. T., Beckman, W. A., & Duffie, J. A. (1990). Diffuse fraction correlations. *Solar Energy*, 45(1), 1-7.
+- Perez, R., Seals, R., & Michalsky, J. (1993). All-weather model for sky luminance distribution. *Solar Energy*, 50(3), 235-245.
+- Jonsson, P., Eliasson, I., Holmer, B., & Grimmond, C. S. B. (2006). Longwave incoming radiation in the Tropics: results from field work in three African cities. *Theoretical and Applied Climatology*, 85, 185-201.

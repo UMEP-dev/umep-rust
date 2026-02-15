@@ -62,9 +62,11 @@ def detect_building_mask(
         Building mask where 0=building pixels, 1=ground pixels.
 
     Detection strategy:
-        1. If land_cover provided: Use ID 2 (buildings) directly
-        2. Elif wall_height provided: Dilate wall pixels + detect elevated areas
-        3. Else: Assume all ground (no buildings)
+        1. If land_cover provided: Use ID 2 (buildings) directly.
+        2. Elif wall_height provided: Dilate wall pixels to fill building
+           interiors, then combine with pixels elevated >2 m above the
+           10th-percentile ground level (catches rooftops).
+        3. Else: Assume all ground (no buildings).
     """
     if land_cover is not None:
         # Use land cover directly: ID 2 = buildings

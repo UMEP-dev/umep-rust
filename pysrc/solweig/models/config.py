@@ -1,4 +1,9 @@
-"""Model configuration classes."""
+"""Model configuration and human-body parameter classes.
+
+Defines :class:`ModelConfig` (run-time settings such as sky model,
+tiling, and shadow distance) and :class:`HumanParams` (posture,
+absorption coefficients, and PET body parameters).
+"""
 
 from __future__ import annotations
 
@@ -24,24 +29,30 @@ class ModelConfig:
     Pure configuration - no paths or data.
 
     Attributes:
-        use_anisotropic_sky: Use anisotropic sky model. Default False.
+        use_anisotropic_sky: Use Perez anisotropic sky model for diffuse
+            radiation. Default True. Requires precomputed shadow matrices.
         human: Human body parameters for Tmrt calculations.
         material_params: Optional material properties from JSON file.
         outputs: Which outputs to save in timeseries calculations.
-        max_shadow_distance_m: Maximum shadow reach in meters. Default 500.0.
-            Caps shadow ray computation distance and serves as tile overlap buffer
-            for automatic tiled processing of large rasters. At low sun angles (3°),
-            a 26m building casts a 500m shadow — taller buildings are capped.
+            Default ``["tmrt"]``.
+        physics: Physics parameters (vegetation, posture geometry). Optional.
+        materials: Material properties (albedo, emissivity). Optional.
+        max_shadow_distance_m: Maximum shadow reach in metres. Default 500.0.
+            Caps shadow ray computation distance and serves as tile overlap
+            buffer for automatic tiled processing. At low sun angles (3 deg),
+            a 26 m building casts a 500 m shadow; taller buildings are capped.
         tile_workers: Number of workers for tiled orchestration. If None,
             picks an adaptive default based on CPU count.
-        tile_queue_depth: Extra queued tile tasks beyond active workers. If None,
-            defaults to one queue slot per worker when prefetching is enabled.
+        tile_queue_depth: Extra queued tile tasks beyond active workers.
+            If None, defaults to one queue slot per worker when prefetching
+            is enabled.
         prefetch_tiles: Whether to prefetch tile tasks beyond active workers.
             If None, runtime chooses automatically based on memory pressure.
 
     Note:
-        UTCI and PET are now computed via post-processing functions (compute_utci, compute_pet)
-        rather than during the main calculation loop for better performance.
+        UTCI and PET are computed via post-processing functions
+        (``compute_utci``, ``compute_pet``) rather than during the main
+        calculation loop.
 
     Examples:
         Basic usage with defaults:
@@ -73,20 +84,22 @@ class ModelConfig:
     prefetch_tiles: bool | None = None
 
     def __post_init__(self):
-        """Initialize default HumanParams if not provided."""
-        # Defer import to avoid forward reference issues
-        if self.human is None:
-            # HumanParams is defined later in this module
-            pass  # Will be instantiated when HumanParams is available
+        """Validate configuration fields.
+
+        Note: ``human`` is intentionally left as None here.
+        Default ``HumanParams()`` is instantiated by ``calculate()``
+        and ``calculate_timeseries()`` when no human params are provided.
+        """
+        pass
 
     @classmethod
     def defaults(cls) -> ModelConfig:
         """
-        Standard configuration for most users.
+        Create a ModelConfig with recommended defaults.
 
         Returns:
-            ModelConfig with recommended defaults:
-            - Anisotropic sky enabled
+            ModelConfig with ``use_anisotropic_sky=True`` and all other
+            fields at their dataclass defaults.
         """
         return cls(
             use_anisotropic_sky=True,

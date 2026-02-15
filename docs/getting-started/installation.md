@@ -1,51 +1,57 @@
 # Installation
 
-## Requirements
-
-- Python 3.10+
-- Rust toolchain (for building from source)
-
-## From Source (Recommended)
+## Install from PyPI
 
 ```bash
-# Clone the repository
-git clone https://github.com/UMEP-dev/solweig.git
-cd solweig
+pip install solweig
+```
 
-# Install Python dependencies with uv
-uv sync
+Verify it worked:
 
-# Build the Rust extension
-maturin develop
-
-# Verify installation
+```bash
 python -c "import solweig; print(solweig.__version__)"
 ```
 
-## Dependencies
+## Install from source (for development)
 
-SOLWEIG has minimal dependencies:
+If you want to modify the code or contribute:
 
-| Package | Purpose |
-|---------|---------|
-| `numpy` | Array operations |
-| `rasterio` | GeoTIFF I/O (optional, for file-based workflows) |
-| `affine` | Geospatial transforms |
-| `pyproj` | Coordinate reference systems |
+- **Python 3.10+**
+- **Rust toolchain** — needed to compile the high-performance core ([install Rust](https://rustup.rs/))
+- **uv** — fast Python package manager ([install uv](https://docs.astral.sh/uv/getting-started/installation/))
 
-## GPU Acceleration
+```bash
+git clone https://github.com/UMEP-dev/solweig.git
+cd solweig
+uv sync              # Install Python dependencies
+maturin develop      # Compile Rust extension and link it
+```
 
-SOLWEIG automatically uses GPU acceleration for shadow calculations when available.
+## Optional dependencies
+
+SOLWEIG works with just numpy arrays, but file-based workflows benefit from these extras:
+
+| Package | What it enables |
+| ------- | --------------- |
+| `rasterio` | Loading/saving GeoTIFF rasters (installed by default) |
+| `geopandas` | Rasterising vector data (e.g. tree polygons to a canopy grid) |
+| `affine` | Geospatial coordinate transforms (installed by default) |
+| `pyproj` | CRS handling and coordinate conversion (installed by default) |
+
+If you only work with numpy arrays, `rasterio` and `geopandas` are not needed.
+
+## GPU acceleration
+
+SOLWEIG automatically uses GPU acceleration (via wgpu/Metal/Vulkan) when available. No extra setup is needed.
 
 ```python
 import solweig
 
-# Check GPU status
 print(f"GPU available: {solweig.is_gpu_available()}")
-print(f"Backend: {solweig.get_compute_backend()}")
+print(f"Backend: {solweig.get_compute_backend()}")  # "gpu" or "cpu"
 ```
 
-To disable GPU acceleration:
+If no GPU is found, it falls back to CPU transparently. To force CPU mode:
 
 ```python
 solweig.disable_gpu()
@@ -53,26 +59,28 @@ solweig.disable_gpu()
 
 ## Troubleshooting
 
-### "maturin: command not found"
+### `maturin: command not found`
 
-Install maturin first:
+Install it via uv or pip:
 
 ```bash
+uv tool install maturin
+# or
 pip install maturin
 ```
 
 ### Build errors on macOS
 
-Ensure you have the Xcode command line tools:
+Ensure Xcode command line tools are installed:
 
 ```bash
 xcode-select --install
 ```
 
-### Missing rasterio
+### `import solweig` fails after `maturin develop`
 
-If you only use numpy arrays (not GeoTIFFs), rasterio is optional. To install it:
+Make sure you're using the same Python environment that `uv sync` created. If using uv:
 
 ```bash
-pip install rasterio
+uv run python -c "import solweig; print('OK')"
 ```

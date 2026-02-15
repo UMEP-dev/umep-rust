@@ -1,4 +1,10 @@
-"""Weather and location data models."""
+"""Weather and location data models.
+
+Defines :class:`Location` (geographic coordinates and UTC offset) and
+:class:`Weather` (per-timestep meteorological observations).  Derived
+fields such as sun position and the direct/diffuse radiation split are
+computed lazily via :meth:`Weather.compute_derived`.
+"""
 
 from __future__ import annotations
 
@@ -239,10 +245,13 @@ class Weather:
             If provided with measured_direct_rad, these override the computed values.
 
     Auto-computed (after calling compute_derived()):
-        sun_altitude: Sun altitude angle in degrees.
-        sun_azimuth: Sun azimuth angle in degrees.
-        direct_rad: Direct beam radiation in W/m² (from measured or computed).
-        diffuse_rad: Diffuse radiation in W/m² (from measured or computed).
+        sun_altitude: Sun altitude angle in degrees. Initial: 0.0.
+        sun_azimuth: Sun azimuth angle in degrees. Initial: 0.0.
+        sun_zenith: Sun zenith angle in degrees. Initial: 90.0.
+        direct_rad: Direct beam radiation in W/m². Initial: 0.0.
+        diffuse_rad: Diffuse radiation in W/m². Initial: 0.0.
+        clearness_index: Clearness index (0-1). Initial: 1.0.
+        altmax: Maximum sun altitude for the day in degrees. Initial: 45.0.
     """
 
     datetime: dt
@@ -333,7 +342,6 @@ class Weather:
                 self.altmax = self.precomputed_altmax
             else:
                 # Calculate maximum sun altitude for the day (iterate in 15-min intervals)
-                # This matches the method in configs.py:EnvironData
                 from datetime import timedelta
 
                 ymd = self.datetime.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -436,7 +444,7 @@ class Weather:
             # With specific datetime
             weather = Weather.from_values(
                 ta=30, rh=60, global_rad=900,
-                datetime=datetime(2024, 7, 15, 14, 0)
+                datetime=datetime(2025, 7, 15, 14, 0)
             )
         """
         if datetime is None:
