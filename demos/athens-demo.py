@@ -5,7 +5,7 @@ Demo: Athens SOLWEIG - Simplified API
 This demo shows how to use the solweig package with the new simplified API.
 The simplified API automatically handles:
 - Wall height and aspect computation from DSM
-- Sky View Factor (SVF) calculation on-the-fly
+- Sky View Factor (SVF) preparation and caching via ``SurfaceData.prepare()``
 - Extent intersection and resampling
 - CRS validation and extraction
 - NaN filling in DSM/CDSM/TDSM with ground reference (DEM or DSM)
@@ -69,7 +69,8 @@ solweig.io.save_raster(
 # Step 1: Prepare surface data
 # - CRS automatically extracted from DSM
 # - NaN in DSM/CDSM/TDSM filled with ground reference (DEM or DSM)
-# - Walls and SVF computed and cached to working_dir if not provided
+# - During prepare(): walls/SVF are computed and cached to working_dir if not already cached
+# - During calculate*(): SVF must already be present on the surface/precomputed data
 # - Extent and resolution handled automatically
 # - Resampled data saved to working_dir for inspection
 surface = solweig.SurfaceData.prepare(
@@ -99,7 +100,7 @@ results = solweig.calculate_timeseries(
     surface=surface,
     weather_series=weather_list,
     location=location,
-    use_anisotropic_sky=True,  # Uses SVF (computed automatically if needed)
+    use_anisotropic_sky=True,  # Uses precomputed SVF from prepare()
     conifer=False,  # Use seasonal leaf on/off (set True for evergreen trees)
     output_dir=str(output_dir),
     outputs=["tmrt", "shadow"],

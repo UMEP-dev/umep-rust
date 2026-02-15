@@ -36,24 +36,23 @@ def resolve_svf(
     psi: float | None = None,
 ) -> tuple[SvfBundle, bool]:
     """
-    Resolve SVF data from available sources or compute on-the-fly.
+    Resolve SVF data from available precomputed sources.
 
-    Checks three sources in priority order:
+    Checks two sources in priority order:
     1. surface.svf (cached/prepared) - fastest
     2. precomputed.svf (legacy) - fast
-    3. Compute fresh using skyview.calculate_svf - slower
 
     Args:
         surface: Surface data (may contain cached SVF)
         precomputed: Pre-computed data (may contain SVF)
-        dsm: Digital Surface Model (for fresh computation)
-        cdsm: Canopy DSM (for fresh computation if use_veg=True)
-        tdsm: Trunk DSM (for fresh computation if use_veg=True)
+        dsm: Digital Surface Model (reserved for compatibility; not used here)
+        cdsm: Canopy DSM (reserved for compatibility; not used here)
+        tdsm: Trunk DSM (reserved for compatibility; not used here)
         pixel_size: Grid resolution in meters
-        use_veg: Whether to include vegetation in SVF calculation
-        max_height: Maximum building height for SVF computation
+        use_veg: Whether vegetation is active (kept for signature compatibility)
+        max_height: Maximum building height (reserved for compatibility; not used here)
         psi: Vegetation transmissivity (optional, for svfbuveg calculation)
-             If None, uses preliminary calculation that needs later adjustment
+             Reserved for compatibility; not used here.
 
     Returns:
         Tuple of (SvfBundle, needs_psi_adjustment):
@@ -61,9 +60,9 @@ def resolve_svf(
             - needs_psi_adjustment: True if svfbuveg needs recalculation with psi
 
     Note:
-        When loading from cached/precomputed sources, svfbuveg already includes
-        transmissivity adjustment, so needs_psi_adjustment=False.
-        When computing fresh, svfbuveg is preliminary and needs_psi_adjustment=True.
+        SVF is required input to runtime calculation and must be prepared ahead
+        of time (e.g. with surface.compute_svf() or SurfaceData.prepare()).
+        This function does not compute SVF.
     """
     # Import here to avoid circular dependency
 

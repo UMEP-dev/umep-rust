@@ -629,9 +629,12 @@ class PrecomputedData:
     - Optimizing performance by pre-computing once
 
     Attributes:
-        wall_height: Pre-computed wall height grid (meters). If None, computed on-the-fly.
-        wall_aspect: Pre-computed wall aspect grid (degrees, 0=N). If None, computed on-the-fly.
-        svf: Pre-computed SVF arrays. If None, SVF is computed on-the-fly.
+        wall_height: Pre-computed wall height grid (meters). If None, wall height
+            can be prepared from DSM via SurfaceData.prepare().
+        wall_aspect: Pre-computed wall aspect grid (degrees, 0=N). If None, wall aspect
+            can be prepared from DSM via SurfaceData.prepare().
+        svf: Pre-computed SVF arrays. Required for calculate(); if None,
+            calculate() raises MissingPrecomputedData.
         shadow_matrices: Pre-computed anisotropic shadow matrices.
             If None, isotropic sky model is used.
 
@@ -670,7 +673,7 @@ class PrecomputedData:
         Prepare preprocessing data from directories.
 
         Loads preprocessing files if they exist. If files don't exist,
-        the corresponding data will be None and computed on-the-fly during calculation.
+        the corresponding data will be None.
 
         All parameters are optional.
 
@@ -695,7 +698,7 @@ class PrecomputedData:
             # Prepare only SVF
             precomputed = PrecomputedData.prepare(svf_dir="preprocessed/svf")
 
-            # Nothing prepared (all computed on-the-fly)
+            # Nothing prepared (SVF must be provided before calculate())
             precomputed = PrecomputedData.prepare()
         """
         from .. import io

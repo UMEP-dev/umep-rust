@@ -30,7 +30,11 @@ solweig.calculate_timeseries(
 )
 ```
 
-That's it. Walls, sky view factors, shadows, radiation, and Tmrt are all computed automatically.
+That's it. `SurfaceData.prepare()` computes/caches walls and SVF; then `calculate_timeseries()` computes shadows, radiation, and Tmrt.
+
+!!! note "SVF Rule"
+    `calculate()` / `calculate_timeseries()` require SVF to already be available on `surface` (or via `precomputed.svf`).
+    Use `SurfaceData.prepare(...)` for automatic SVF preparation/caching, or call `surface.compute_svf()` explicitly for in-memory/manual surfaces.
 
 ## How it works
 

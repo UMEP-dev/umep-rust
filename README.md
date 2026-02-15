@@ -46,6 +46,8 @@ dsm = np.full((200, 200), 2.0, dtype=np.float32)
 dsm[80:120, 80:120] = 15.0
 
 surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)
+# SVF is required before calculate(); compute once and reuse
+surface.compute_svf()
 
 location = solweig.Location(latitude=48.8, longitude=2.3, utc_offset=1)  # Paris
 weather = solweig.Weather(
@@ -66,7 +68,7 @@ print(f"Shaded Tmrt: {result.tmrt[result.shadow < 0.5].mean():.0f}°C")
 ```python
 import solweig
 
-# 1. Load surface — walls and sky view factors computed and cached automatically
+# 1. Load surface — prepare() computes and caches walls/SVF when missing
 surface = solweig.SurfaceData.prepare(
     dsm="data/dsm.tif",
     cdsm="data/trees.tif",       # Optional: vegetation canopy heights

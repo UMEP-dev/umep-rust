@@ -24,6 +24,8 @@ dsm = np.full((200, 200), 2.0, dtype=np.float32)
 dsm[80:120, 80:120] = 15.0  # 40×40 m building
 
 surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)  # 1 pixel = 1 metre
+# SVF is required before calculate(); compute once and reuse on this surface
+surface.compute_svf()
 
 # --- 2. Define location and weather ---
 location = solweig.Location(
@@ -48,8 +50,8 @@ print(f"Sunlit Tmrt: {result.tmrt[result.shadow > 0.5].mean():.1f}°C")
 print(f"Shaded Tmrt: {result.tmrt[result.shadow < 0.5].mean():.1f}°C")
 ```
 
-!!! note "First run is slow"
-    The first `calculate()` call computes Sky View Factors, which is expensive (~60 s for a 200×200 grid). Subsequent calls on the same surface reuse the cached SVF and run in under a second.
+!!! note "SVF is explicit"
+    `calculate()` requires SVF to already be available. For array-based workflows, call `surface.compute_svf()` once before the first calculation. For GeoTIFF workflows, `SurfaceData.prepare()` computes/caches SVF for you.
 
 ## Option B: From GeoTIFF files (real-world data)
 
@@ -93,6 +95,8 @@ results = solweig.calculate_timeseries(
 print(f"Done — {len(results)} timesteps saved to output/")
 ```
 
+If disk space is limited, you can omit `output_dir`, aggregate in memory, and save only final summary products. See [Timeseries](../guide/timeseries.md#choose-an-output-strategy).
+
 ### What `prepare()` does behind the scenes
 
 When you call `SurfaceData.prepare()`, it automatically:
@@ -128,6 +132,128 @@ solweig.compute_utci(
 | 26–32°C | Moderate heat stress |
 | 9–26°C | No thermal stress |
 | < 9°C | Cold stress categories |
+
+## Common setup patterns
+
+Use these patterns when your input data and workflow differ from the basic examples above.
+
+### Surface setup patterns
+
+#### Pattern 1: GeoTIFF workflow (recommended)
+
+```python
+surface = solweig.SurfaceData.prepare(
+    dsm="data/dsm.tif",
+    cdsm="data/trees.tif",      # Optional
+    dem="data/dem.tif",         # Optional
+    working_dir="cache/",
+)
+```
+
+`prepare()` computes/caches walls and SVF automatically.
+
+#### Pattern 2: In-memory arrays with absolute heights
+
+```python
+import numpy as np
+
+dsm_abs = np.array(...)         # Absolute elevation (e.g., m above sea level)
+cdsm_abs = np.array(...)        # Optional canopy elevation (absolute)
+
+surface = solweig.SurfaceData(
+    dsm=dsm_abs,
+    cdsm=cdsm_abs,              # Optional
+    dsm_relative=False,
+    cdsm_relative=False,
+    pixel_size=1.0,
+)
+surface.compute_svf()           # Required before calculate()
+```
+
+#### Pattern 3: In-memory arrays with relative heights
+
+```python
+import numpy as np
+
+dsm_rel = np.array(...)         # Height above ground
+cdsm_rel = np.array(...)        # Optional canopy height above ground
+dem = np.array(...)             # Ground elevation
+
+surface = solweig.SurfaceData(
+    dsm=dsm_rel,
+    dem=dem,
+    cdsm=cdsm_rel,              # Optional
+    dsm_relative=True,
+    cdsm_relative=True,
+    pixel_size=1.0,
+)
+surface.preprocess()            # Converts relative -> absolute
+surface.compute_svf()           # Required before calculate()
+```
+
+### Weather setup patterns
+
+#### Pattern 1: Existing EPW file
+
+```python
+weather_list = solweig.Weather.from_epw(
+    "data/weather.epw",
+    start="2025-07-01",
+    end="2025-07-03",
+)
+```
+
+#### Pattern 2: Download EPW, then load
+
+```python
+epw_path = solweig.download_epw(
+    latitude=37.98,
+    longitude=23.73,
+    output_path="athens.epw",
+)
+weather_list = solweig.Weather.from_epw(epw_path)
+```
+
+#### Pattern 3: Manually create one timestep
+
+```python
+from datetime import datetime
+
+weather = solweig.Weather(
+    datetime=datetime(2025, 7, 15, 14, 0),
+    ta=32.0,
+    rh=40.0,
+    global_rad=850.0,
+    wind_speed=2.0,             # Optional but useful for UTCI/PET
+)
+```
+
+### Location setup patterns
+
+#### Pattern 1: From EPW metadata (recommended with EPW weather)
+
+```python
+location = solweig.Location.from_epw("data/weather.epw")
+```
+
+#### Pattern 2: From surface CRS
+
+```python
+location = solweig.Location.from_surface(surface, utc_offset=1)
+```
+
+#### Pattern 3: Manual coordinates
+
+```python
+location = solweig.Location(
+    latitude=48.8,
+    longitude=2.3,
+    utc_offset=1,
+)
+```
+
+!!! warning "Always set `utc_offset` correctly"
+    UTC offset directly affects sun position timing and therefore shadows and Tmrt.
 
 ## Where to get input data
 

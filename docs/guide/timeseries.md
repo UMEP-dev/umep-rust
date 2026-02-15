@@ -78,6 +78,85 @@ output/
 
 When `output_dir` is set, arrays are freed after saving to conserve memory.
 
+## Choose an output strategy
+
+### Strategy A: Stream to disk during computation
+
+Use this for long runs and limited RAM.
+
+```python
+results = solweig.calculate_timeseries(
+    surface=surface,
+    location=location,
+    weather_series=weather_list,
+    output_dir="output/",
+    outputs=["tmrt", "shadow"],
+)
+```
+
+- Pros: low memory use, immediate GeoTIFF outputs, restart-friendly
+- Cons: more disk I/O and storage
+
+### Strategy B: Keep in memory, aggregate, save selected outputs manually
+
+Use this when disk space is tight and you only need summary products.
+
+```python
+import numpy as np
+import solweig
+
+sum_tmrt = None
+count_tmrt = None
+max_tmrt = None
+
+# Process in chunks to keep memory bounded
+for i in range(0, len(weather_list), 24):
+    chunk = weather_list[i : i + 24]
+    results = solweig.calculate_timeseries(
+        surface=surface,
+        location=location,
+        weather_series=chunk,
+        # No output_dir -> keep arrays in memory
+    )
+
+    for result in results:
+        tmrt = result.tmrt.astype(np.float32)
+        valid = np.isfinite(tmrt)
+
+        if sum_tmrt is None:
+            sum_tmrt = np.zeros_like(tmrt, dtype=np.float64)
+            count_tmrt = np.zeros_like(tmrt, dtype=np.uint32)
+            max_tmrt = np.full_like(tmrt, -np.inf, dtype=np.float32)
+
+        sum_tmrt[valid] += tmrt[valid]
+        count_tmrt[valid] += 1
+        max_tmrt = np.maximum(max_tmrt, np.nan_to_num(tmrt, nan=-np.inf))
+
+# Build aggregated products
+mean_tmrt = np.divide(
+    sum_tmrt,
+    np.maximum(count_tmrt, 1),
+    dtype=np.float64,
+).astype(np.float32)
+mean_tmrt[count_tmrt == 0] = np.nan
+max_tmrt[~np.isfinite(max_tmrt)] = np.nan
+
+# Save only final products
+solweig.SolweigResult(tmrt=mean_tmrt).to_geotiff(
+    output_dir="summary/",
+    outputs=["tmrt"],
+    surface=surface,
+)
+solweig.SolweigResult(tmrt=max_tmrt).to_geotiff(
+    output_dir="summary_max/",
+    outputs=["tmrt"],
+    surface=surface,
+)
+```
+
+- Pros: minimal disk usage, flexible custom products
+- Cons: you must manage aggregation logic explicitly
+
 ## Post-processing thermal comfort
 
 Compute UTCI or PET from saved Tmrt files without re-running the main calculation:
@@ -124,13 +203,13 @@ for chunk_start in range(0, len(weather_list), 24):
 
 ## Performance
 
-| Grid size | First timestep (SVF) | Subsequent timesteps | 72 timesteps |
+| Grid size | Surface prep (SVF) | Per timestep | 72 timesteps |
 | --------- | -------------------- | -------------------- | ------------ |
 | 100x100 | ~5 s | ~10 ms | ~1 s |
 | 200x200 | ~67 s | ~20 ms | ~2 s |
 | 500x500 | ~10 min | ~100 ms | ~8 s |
 
-The first timestep is dominated by SVF computation. Use `SurfaceData.prepare()` with a persistent `working_dir` to avoid recomputing SVF on every run.
+SVF is prepared explicitly (via `SurfaceData.prepare()` or `surface.compute_svf()`). Use a persistent `working_dir` with `prepare()` to avoid recomputing SVF on every run.
 
 ## Run metadata
 

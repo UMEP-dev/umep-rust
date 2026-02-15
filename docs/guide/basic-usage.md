@@ -21,6 +21,8 @@ dsm = np.full((200, 200), 2.0, dtype=np.float32)
 dsm[80:120, 80:120] = 15.0  # A building
 
 surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)
+# SVF is required before calculate(); compute once for this surface
+surface.compute_svf()
 ```
 
 **From GeoTIFF files:**
@@ -111,6 +113,13 @@ results = solweig.calculate_timeseries(
 ```
 
 `calculate_timeseries` automatically carries **thermal state** between timesteps — ground and wall temperatures from one hour affect the next. This matters for accuracy; avoid looping over `calculate()` manually.
+
+Two common output patterns:
+
+1. Stream outputs to disk as they are computed (`output_dir=...`) for long runs and low RAM.
+2. Keep outputs in memory (no `output_dir`), aggregate manually, and save only final products to minimize disk usage.
+
+See [Timeseries](timeseries.md#choose-an-output-strategy) for full examples of both patterns.
 
 ## Understanding the output
 
@@ -262,7 +271,7 @@ NaN values in DSM/CDSM are automatically filled with the ground reference (DEM, 
 
 ### Slow first calculation
 
-The first `calculate()` call computes SVF, which is the most expensive step. Subsequent calls on the same surface reuse cached SVF and are ~200x faster. For production, use `SurfaceData.prepare()` with a persistent `working_dir`.
+SVF must be prepared before `calculate()`. For in-memory array workflows, call `surface.compute_svf()` once and reuse the surface. For production file workflows, use `SurfaceData.prepare()` with a persistent `working_dir` so SVF is cached and reused across runs.
 
 ### GPU not detected
 

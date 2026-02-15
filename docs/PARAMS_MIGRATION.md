@@ -14,7 +14,7 @@ The new API simplifies this:
 1. **Direct parameters** - Key model options as function arguments
 2. **Bundled defaults** - Common physical constants in `default_params.json`
 3. **Custom params** - Optional JSON file for landcover-specific properties
-4. **Automatic computation** - Many values computed on-the-fly
+4. **Automatic preparation** - Many expensive values are prepared/cached via `SurfaceData.prepare()`
 
 ---
 
@@ -51,9 +51,9 @@ The new API simplifies this:
 
 | Old API (config.ini)     | New API                           | Status      | Notes |
 |--------------------------|-----------------------------------|-------------|-------|
-| Pre-generate walls       | Automatic + cached                | ✅ AUTO     | Generated on first run, cached to working_dir |
-| Pre-generate SVF         | Automatic + cached                | ✅ AUTO     | Generated on first run, cached to working_dir |
-| Pre-generate shadowmats  | Automatic + cached                | ✅ AUTO     | Only if use_anisotropic_sky=True |
+| Pre-generate walls       | Automatic + cached                | ✅ AUTO     | Generated during `SurfaceData.prepare()`, cached to working_dir |
+| Pre-generate SVF         | Automatic + cached                | ✅ AUTO     | Generated during `SurfaceData.prepare()`, cached to working_dir |
+| Pre-generate shadowmats  | Automatic + cached                | ✅ AUTO     | Generated during preparation when anisotropic data is requested |
 | Wall limit (1.0m)        | Hardcoded default                 | ✅ AUTO     | No user control needed |
 
 ---
@@ -118,9 +118,9 @@ These require **custom params file** with landcover definitions:
 
 ---
 
-## Automatic Computations
+## Automatic Computations and Preparation
 
-The following values were previously required inputs but are now **computed automatically**:
+The following values were previously required inputs but are now **computed automatically** or **prepared/cached automatically during `SurfaceData.prepare()`**:
 
 | Parameter                  | Old API                  | New API          | Notes |
 |----------------------------|--------------------------|------------------|-------|
@@ -128,9 +128,9 @@ The following values were previously required inputs but are now **computed auto
 | Max DSM height             | Manual specification     | Auto from DSM    | Computed: `surface.max_height = dsm.max()` |
 | Direct/diffuse radiation split | Pre-computed        | Auto from clearness | Reindl model |
 | Location (lat/lon)         | Manual or from EPW       | Auto from CRS    | `Location.from_surface(surface)` |
-| Shadow matrices            | Pre-computed NPZ files   | Auto-generated   | Cached to working_dir |
-| Wall heights/aspects       | Pre-computed TIF files   | Auto-generated   | Cached to working_dir |
-| Sky View Factor            | Pre-computed ZIP files   | Auto-generated   | Cached to working_dir |
+| Shadow matrices            | Pre-computed NPZ files   | Auto-generated   | Prepared/cached during surface preparation |
+| Wall heights/aspects       | Pre-computed TIF files   | Auto-generated   | Prepared/cached during surface preparation |
+| Sky View Factor            | Pre-computed ZIP files   | Auto-generated   | Prepared via `SurfaceData.prepare()` (or `surface.compute_svf()`) before `calculate*()` |
 
 ---
 

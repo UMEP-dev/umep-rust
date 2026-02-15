@@ -25,9 +25,9 @@ dz = (ds × step × tan(α)) / scale      # Height gain per step
 - ds = path length correction for diagonal movement
 
 ### Shadow Condition
-A pixel is in shadow if any obstacle along the ray to the sun is tall enough:
+A pixel is sunlit if no obstacle along the ray to the sun is tall enough:
 ```
-shadow[y,x] = 1  if  propagated_height > DSM[y,x]
+sunlit[y,x] = 1  if  propagated_height <= DSM[y,x]
             = 0  otherwise
 ```
 
@@ -60,7 +60,7 @@ shadow[y,x] = 1  if  propagated_height > DSM[y,x]
 
 2. **Flat terrain = no shadows**
    - When: DSM is uniform (no elevation differences)
-   - Then: shadow mask is all zeros
+   - Then: sunlit mask is all ones
    - Reason: No obstacles to cast shadows
 
 3. **Binary shadow values**
@@ -161,7 +161,7 @@ veg_shadow = 1.0                    if ray passes only through trunk (solid)
 The combined shadow (building + vegetation):
 
 ```text
-total_shadow = building_shadow × (1 - veg_shadow × (1 - transmissivity))
+combined_sunlit = bldg_sh - (1 - veg_sh) × (1 - transmissivity)
 ```
 
 ## References

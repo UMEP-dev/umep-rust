@@ -486,7 +486,7 @@ def calculate_core_fused(
     pixel_size = surface.pixel_size
 
     # Valid pixel mask (True where all layers have finite data)
-    # Computed once by SurfaceData.prepare(), or derived from DSM on-the-fly
+    # Computed once by SurfaceData.prepare(), or derived from DSM if missing
     valid_mask = surface.valid_mask
     valid_source = valid_mask if valid_mask is not None else surface.dsm
     valid_mask_key = (id(valid_source), valid_source.shape)

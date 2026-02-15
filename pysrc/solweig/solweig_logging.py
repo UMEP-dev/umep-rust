@@ -12,7 +12,7 @@ Usage:
     logger = get_logger(__name__)
     logger.info("Surface data loaded: 400×400 pixels")
     logger.debug(f"Using {len(weather_list)} timesteps")
-    logger.warning("SVF not provided, will compute on-the-fly (slow)")
+    logger.warning("SVF not provided; calculate() will raise MissingPrecomputedData")
 """
 
 from __future__ import annotations

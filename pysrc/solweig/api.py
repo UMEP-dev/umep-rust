@@ -1,10 +1,10 @@
 """Public SOLWEIG API.
 
 This module re-exports all user-facing symbols and provides the top-level
-:func:`calculate` and :func:`validate_inputs` entry points.  Internal
-machinery (sun position, radiation split, SVF resolution, etc.) is handled
-automatically — callers only need to supply surface data, location, and
-weather observations.
+:func:`calculate` and :func:`validate_inputs` entry points. Internal
+machinery (sun position, radiation split, etc.) is handled automatically,
+while SVF must be prepared ahead of time (for example via
+``SurfaceData.prepare()`` or ``surface.compute_svf()``).
 
 Example::
 

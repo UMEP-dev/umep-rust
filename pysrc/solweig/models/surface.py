@@ -190,11 +190,12 @@ class SurfaceData:
             IDs: 0=paved, 1=asphalt, 2=buildings, 5=grass, 6=bare_soil, 7=water.
             When provided, albedo and emissivity are derived from land cover.
         wall_height: Preprocessed wall heights (meters). Optional.
-            If not provided, computed on-the-fly from DSM.
+            If not provided, computed during preparation from DSM.
         wall_aspect: Preprocessed wall aspects (degrees, 0=N). Optional.
-            If not provided, computed on-the-fly from DSM.
+            If not provided, computed during preparation from DSM.
         svf: Preprocessed Sky View Factor arrays. Optional.
-            If not provided, computed on-the-fly.
+            If not provided, must be prepared explicitly before calculate()
+            (e.g. via SurfaceData.prepare() or compute_svf()).
         shadow_matrices: Preprocessed shadow matrices for anisotropic sky. Optional.
         pixel_size: Pixel size in meters. Default 1.0.
         trunk_ratio: Ratio for auto-generating TDSM from CDSM. Default 0.25.
@@ -984,7 +985,7 @@ class SurfaceData:
                 logger.warning(
                     f"  ⚠ SVF shape {preprocess_data['svf_data'].svf.shape} doesn't match target shape "
                     f"{dsm_arr.shape} - SVF resampling not yet implemented. "
-                    f"SVF will be recomputed on-the-fly if needed."
+                    f"SVF cache will be dropped; recompute via SurfaceData.prepare() or compute_svf()."
                 )
                 preprocess_data["svf_data"] = None
                 preprocess_data["shadow_data"] = None
