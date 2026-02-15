@@ -17,9 +17,9 @@ from solweig.rustalgos import pet
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 # Tolerance for PET calculations
-# PET uses iterative solver, so some numerical differences are expected
-RTOL = 0.01  # 1% relative tolerance
-ATOL = 0.1  # 0.1°C absolute tolerance
+# PET uses iterative solver; max observed: single 1.0e-2, grid 2.2e-2
+RTOL = 0.005  # 0.5% relative tolerance
+ATOL = 0.05  # 0.05°C absolute tolerance
 
 
 @pytest.fixture(scope="module")

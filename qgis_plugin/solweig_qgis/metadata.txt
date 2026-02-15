@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta39
+version=0.1.0-beta40
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,6 +42,8 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta40
+    - Tighten golden test tolerances: SVF non-veg from 2% to 1e-5, wall temp to 1e-5, Tmrt to 1e-4, PET to 0.05°C, ground temp to 1e-3
     0.1.0-beta39
     - Fix nighttime Tmrt: use full longwave radiation balance via Rust pipeline instead of simplified Tmrt=Ta shortcut
     - Delete deprecated Python physics (Kup_veg_2015a, Perez_v3, sunlit_shaded_patches); production uses Rust exclusively

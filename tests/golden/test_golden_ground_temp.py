@@ -18,9 +18,9 @@ from solweig.rustalgos import ground
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
-# Tolerance for ground temperature calculations
+# Tolerance for ground temperature calculations (max observed diff ~3.05e-5)
 RTOL = 1e-4
-ATOL = 0.1  # 0.1 units (W/m² for Lup)
+ATOL = 1e-3
 
 
 @pytest.fixture(scope="module")

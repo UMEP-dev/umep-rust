@@ -4,13 +4,9 @@ Golden Regression Tests for Sky View Factor (SVF) Calculations
 These tests compare the Rust SVF algorithm implementation against
 pre-computed golden fixtures generated from the UMEP Python module.
 
-KNOWN DIFFERENCE: The UMEP Python svfForProcessing153 uses shadowingfunction_20
-internally, while Rust uses shadowingfunction_wallheight_23. This causes small
-numerical differences (~1% max) in some SVF components. See CHANGES.md for details.
-
-Test strategy:
-- South/West SVF: Strict tolerance (1e-5) - should match exactly
-- North/East/Total/Veg SVF: Relaxed tolerance (0.02) - known ~1% difference
+All non-vegetation SVF components match to within ~2e-6 (float32 precision).
+Vegetation SVF has a known ~1.1% max difference due to different shadow
+algorithm internals (shadowingfunction_20 vs shadowingfunction_wallheight_23).
 """
 
 from pathlib import Path
@@ -23,14 +19,13 @@ pytestmark = pytest.mark.slow
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
-# Tolerance for components that match exactly (South, West)
+# All non-vegetation SVF components match within ~2e-6 (f32 precision)
 STRICT_RTOL = 1e-5
 STRICT_ATOL = 1e-5
 
-# Relaxed tolerance for components with known differences (North, East, Total, Veg)
-# Max observed difference is ~1.1%, so 2% tolerance is reasonable
-RELAXED_RTOL = 0.02
-RELAXED_ATOL = 0.02
+# Vegetation SVF: max observed diff ~1.09e-2; use 1.5% margin
+VEG_RTOL = 0.015
+VEG_ATOL = 0.015
 
 
 @pytest.fixture(scope="module")
@@ -75,54 +70,40 @@ def svf_result(input_data):
 
 
 class TestGoldenSvf:
-    """Golden tests for SVF calculations.
-
-    Note: Some tests use relaxed tolerance due to known differences
-    between UMEP Python (shadowingfunction_20) and Rust (shadowingfunction_23).
-    See CHANGES.md for details.
-    """
+    """Golden tests for SVF calculations."""
 
     def test_svf_total_matches_golden(self, svf_result, svf_golden):
-        """Total SVF should match golden fixture within relaxed tolerance.
-
-        Known difference: ~1% due to different shadow algorithms.
-        """
+        """Total SVF should match golden fixture (max diff ~2e-6)."""
         np.testing.assert_allclose(
             np.array(svf_result.svf),
             svf_golden["svf"],
-            rtol=RELAXED_RTOL,
-            atol=RELAXED_ATOL,
-            err_msg="Total SVF differs from golden fixture beyond 2% tolerance",
+            rtol=STRICT_RTOL,
+            atol=STRICT_ATOL,
+            err_msg="Total SVF differs from golden fixture",
         )
 
     def test_svf_north_matches_golden(self, svf_result, svf_golden):
-        """North SVF should match golden fixture within relaxed tolerance.
-
-        Known difference: ~1% due to different shadow algorithms.
-        """
+        """North SVF should match golden fixture (max diff ~1.3e-6)."""
         np.testing.assert_allclose(
             np.array(svf_result.svf_north),
             svf_golden["svf_north"],
-            rtol=RELAXED_RTOL,
-            atol=RELAXED_ATOL,
-            err_msg="North SVF differs from golden fixture beyond 2% tolerance",
+            rtol=STRICT_RTOL,
+            atol=STRICT_ATOL,
+            err_msg="North SVF differs from golden fixture",
         )
 
     def test_svf_east_matches_golden(self, svf_result, svf_golden):
-        """East SVF should match golden fixture within relaxed tolerance.
-
-        Known difference: ~1% due to different shadow algorithms.
-        """
+        """East SVF should match golden fixture (max diff ~1.3e-6)."""
         np.testing.assert_allclose(
             np.array(svf_result.svf_east),
             svf_golden["svf_east"],
-            rtol=RELAXED_RTOL,
-            atol=RELAXED_ATOL,
-            err_msg="East SVF differs from golden fixture beyond 2% tolerance",
+            rtol=STRICT_RTOL,
+            atol=STRICT_ATOL,
+            err_msg="East SVF differs from golden fixture",
         )
 
     def test_svf_south_matches_golden(self, svf_result, svf_golden):
-        """South SVF should match golden fixture exactly."""
+        """South SVF should match golden fixture (max diff ~1.3e-6)."""
         np.testing.assert_allclose(
             np.array(svf_result.svf_south),
             svf_golden["svf_south"],
@@ -132,7 +113,7 @@ class TestGoldenSvf:
         )
 
     def test_svf_west_matches_golden(self, svf_result, svf_golden):
-        """West SVF should match golden fixture exactly."""
+        """West SVF should match golden fixture (max diff ~1.3e-6)."""
         np.testing.assert_allclose(
             np.array(svf_result.svf_west),
             svf_golden["svf_west"],
@@ -142,16 +123,13 @@ class TestGoldenSvf:
         )
 
     def test_svf_veg_matches_golden(self, svf_result, svf_golden):
-        """Vegetation SVF should match golden fixture within relaxed tolerance.
-
-        Known difference: ~1% due to different shadow algorithms.
-        """
+        """Vegetation SVF should match golden fixture (max diff ~1.1e-2)."""
         np.testing.assert_allclose(
             np.array(svf_result.svf_veg),
             svf_golden["svf_veg"],
-            rtol=RELAXED_RTOL,
-            atol=RELAXED_ATOL,
-            err_msg="Vegetation SVF differs from golden fixture beyond 2% tolerance",
+            rtol=VEG_RTOL,
+            atol=VEG_ATOL,
+            err_msg="Vegetation SVF differs from golden fixture beyond 1.5% tolerance",
         )
 
 

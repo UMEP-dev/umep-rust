@@ -20,9 +20,9 @@ from solweig.rustalgos import ground
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
-# Tolerance for wall temperature calculations
-RTOL = 1e-3
-ATOL = 0.05  # 0.05°C
+# Tolerance for wall temperature calculations (all diffs are exactly 0.0)
+RTOL = 1e-5
+ATOL = 1e-5
 
 
 @pytest.fixture(scope="module")
@@ -133,7 +133,7 @@ class TestGoldenWallTemperature:
             ci_tg,
             wall_temp_expected["ci_tg"],
             rtol=RTOL,
-            atol=0.01,
+            atol=ATOL,
             err_msg="Clearness index (CI_Tg) differs from golden fixture",
         )
 

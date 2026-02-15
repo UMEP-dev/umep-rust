@@ -18,9 +18,9 @@ from solweig.rustalgos import tmrt
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
-# Tolerance for Tmrt calculations
+# Tolerance for Tmrt calculations (max observed diff ~3.05e-5)
 RTOL = 1e-4
-ATOL = 0.01  # 0.01°C
+ATOL = 1e-4
 
 
 @pytest.fixture(scope="module")
