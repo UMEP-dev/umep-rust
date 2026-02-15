@@ -200,6 +200,7 @@ def _run_plugin_case(tiled: bool, anisotropic: bool) -> None:
             tile_workers=None,
             tile_queue_depth=None,
             prefetch_tiles=None,
+            materials=None,
             feedback=feedback,
         )
 

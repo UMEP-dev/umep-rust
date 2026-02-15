@@ -601,6 +601,135 @@ def create_physics_from_parameters(
     return physics
 
 
+def build_materials_from_lc_mapping(
+    parameters: dict[str, Any],
+    context: QgsProcessingContext,
+    param_handler: Any,
+    feedback: QgsProcessingFeedback,
+) -> Any:  # Returns types.SimpleNamespace
+    """
+    Build a materials namespace from QGIS land cover mapping parameters.
+
+    Priority (highest first):
+        1. CUSTOM_MATERIALS_FILE — loads a full JSON override.
+        2. LC_MATERIALS matrix table — per-code properties
+           (Code, Name, Albedo, Emissivity, TgK, Tstart, TmaxLST).
+        3. Bundled UMEP defaults.
+
+    Args:
+        parameters: Algorithm parameters dict.
+        context: Processing context.
+        param_handler: Algorithm instance (for parameterAs* methods).
+        feedback: Processing feedback for logging.
+
+    Returns:
+        SimpleNamespace compatible with ``solweig.calculate(materials=...)``.
+    """
+    try:
+        from solweig.loaders import load_params
+    except ImportError as e:
+        raise QgsProcessingException("SOLWEIG library not found. Please install solweig package.") from e
+
+    # Custom JSON takes priority over everything
+    custom_path = param_handler.parameterAsFile(parameters, "CUSTOM_MATERIALS_FILE", context)
+    if custom_path:
+        feedback.pushInfo(f"Using custom materials file: {custom_path}")
+        return load_params(custom_path)
+
+    # Load bundled defaults as base
+    materials = load_params()
+
+    # Apply material properties from the table
+    _apply_lc_materials(parameters, context, param_handler, materials, feedback)
+
+    return materials
+
+
+def _apply_lc_materials(
+    parameters: dict[str, Any],
+    context: QgsProcessingContext,
+    param_handler: Any,
+    materials: Any,
+    feedback: QgsProcessingFeedback,
+) -> None:
+    """Parse LC_MATERIALS matrix and set material properties in-place.
+
+    Each row has 7 values: Code, Name, Albedo, Emissivity, TgK, Tstart, TmaxLST.
+    A surface type name is registered in ``materials.Names.Value`` for each code
+    so the standard lookup chain resolves correctly.
+    """
+    raw = parameters.get("LC_MATERIALS")
+    if not raw:
+        return
+
+    # QgsProcessingParameterMatrix stores values as a flat list
+    flat: list[str] = [
+        str(v)
+        for v in (
+            param_handler.parameterAsMatrix(parameters, "LC_MATERIALS", context)
+            if hasattr(param_handler, "parameterAsMatrix")
+            else raw
+        )
+    ]
+    n_cols = 7  # Code, Name, Albedo, Emissivity, TgK, Tstart, TmaxLST
+    if len(flat) < n_cols:
+        return
+
+    prop_sections = ["Albedo.Effective", "Emissivity", "Ts_deg", "Tstart", "TmaxLST"]
+
+    for row_start in range(0, len(flat) - n_cols + 1, n_cols):
+        row = flat[row_start : row_start + n_cols]
+        try:
+            code = int(float(row[0]))
+        except (ValueError, TypeError):
+            continue
+
+        name = row[1].strip() if row[1].strip() else f"LC_{code}"
+
+        # Parse the 5 property columns
+        values: list[float | None] = []
+        for cell in row[2:]:
+            cell = cell.strip() if isinstance(cell, str) else str(cell).strip()
+            if not cell:
+                values.append(None)
+            else:
+                try:
+                    values.append(float(cell))
+                except (ValueError, TypeError):
+                    values.append(None)
+
+        if all(v is None for v in values):
+            continue
+
+        # Register the type name for this code
+        type_name = f"LC_{code}_{name.replace(' ', '_')}"
+        setattr(materials.Names.Value, str(code), type_name)
+
+        # Resolve base values from the UMEP default for this code (if any)
+        # so that empty cells inherit sensible defaults
+        default_name = getattr(materials.Names.Value, str(code), None)
+        if default_name == type_name:
+            default_name = "Cobble_stone_2014a"  # fallback
+
+        for i, section_path in enumerate(prop_sections):
+            parts = section_path.split(".")
+            ns = materials
+            for part in parts:
+                ns = getattr(ns, part, ns)
+            ns = getattr(ns, "Value", ns)
+
+            base_val = getattr(ns, default_name, None) if default_name else None
+            final_val = values[i] if values[i] is not None else base_val
+            if final_val is not None:
+                setattr(ns, type_name, final_val)
+
+        feedback.pushInfo(
+            f"  LC code {code} ({name}): "
+            f"albedo={values[0]}, emis={values[1]}, TgK={values[2]}, "
+            f"Tstart={values[3]}, TmaxLST={values[4]}"
+        )
+
+
 def load_weather_from_epw(
     epw_path: str,
     start_dt: Any | None,  # QDateTime, datetime, or None

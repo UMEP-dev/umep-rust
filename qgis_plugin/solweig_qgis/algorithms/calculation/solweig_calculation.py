@@ -27,6 +27,7 @@ from qgis.core import (
 )
 
 from ...utils.converters import (
+    build_materials_from_lc_mapping,
     create_human_params_from_parameters,
     create_location_from_parameters,
     create_physics_from_parameters,
@@ -47,6 +48,27 @@ from ...utils.parameters import (
     add_weather_parameters,
 )
 from ..base import SolweigAlgorithmBase
+
+
+def _apply_saved_surface_settings(
+    prepared_dir: str,
+    parameters: dict,
+    feedback: QgsProcessingFeedback,
+) -> None:
+    """Use ``parametersforsolweig.json`` saved during surface preparation.
+
+    If the prepared surface directory contains a ``parametersforsolweig.json``
+    and the user has not supplied a custom materials file, point the
+    ``CUSTOM_MATERIALS_FILE`` parameter at it so that ``build_materials_from_lc_mapping``
+    picks it up automatically.
+    """
+    params_path = os.path.join(prepared_dir, "parametersforsolweig.json")
+    if os.path.exists(params_path):
+        # Only apply if the user hasn't explicitly provided a custom file
+        custom = parameters.get("CUSTOM_MATERIALS_FILE")
+        if not custom:
+            parameters["CUSTOM_MATERIALS_FILE"] = params_path
+            feedback.pushInfo("Using saved parametersforsolweig.json from prepared surface")
 
 
 class SolweigCalculationAlgorithm(SolweigAlgorithmBase):
@@ -298,6 +320,9 @@ GeoTIFF files organised into subfolders of the output directory:
         prepared_dir = self.parameterAsFile(parameters, "PREPARED_SURFACE_DIR", context)
         surface = load_prepared_surface(prepared_dir, feedback)
 
+        # Apply saved settings from surface preparation as parameter defaults
+        _apply_saved_surface_settings(prepared_dir, parameters, feedback)
+
         if feedback.isCanceled():
             return {}
 
@@ -353,6 +378,7 @@ GeoTIFF files organised into subfolders of the output directory:
         # Step 4: Get options
         human = create_human_params_from_parameters(parameters)
         physics = create_physics_from_parameters(parameters)
+        materials = build_materials_from_lc_mapping(parameters, context, self, feedback)
         use_anisotropic_sky = self.parameterAsBool(parameters, "USE_ANISOTROPIC_SKY", context)
         conifer = self.parameterAsBool(parameters, "CONIFER", context)
         max_shadow_distance_m = self.parameterAsDouble(parameters, "MAX_SHADOW_DISTANCE", context)
@@ -455,6 +481,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 output_dir,
                 selected_outputs,
                 max_shadow_distance_m,
+                materials,
                 feedback,
             )
         else:
@@ -474,6 +501,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 tile_workers,
                 tile_queue_depth,
                 prefetch_tiles,
+                materials,
                 feedback,
             )
 
@@ -551,6 +579,7 @@ GeoTIFF files organised into subfolders of the output directory:
         output_dir,
         selected_outputs,
         max_shadow_distance_m,
+        materials,
         feedback,
     ) -> list:
         """Run single timestep with standard processing."""
@@ -567,6 +596,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 use_anisotropic_sky=use_anisotropic_sky,
                 conifer=conifer,
                 physics=physics,
+                materials=materials,
                 max_shadow_distance_m=max_shadow_distance_m,
             )
         except Exception as e:
@@ -611,6 +641,7 @@ GeoTIFF files organised into subfolders of the output directory:
         tile_workers,
         tile_queue_depth,
         prefetch_tiles,
+        materials,
         feedback,
     ) -> tuple[int, dict]:
         """Run multi-timestep timeseries with per-timestep progress.
@@ -647,6 +678,7 @@ GeoTIFF files organised into subfolders of the output directory:
                 use_anisotropic_sky=use_anisotropic_sky,
                 conifer=conifer,
                 physics=physics,
+                materials=materials,
                 max_shadow_distance_m=max_shadow_distance_m,
                 tile_workers=tile_workers,
                 tile_queue_depth=tile_queue_depth,

@@ -14,6 +14,7 @@ from qgis.core import (
     QgsProcessingParameterEnum,
     QgsProcessingParameterFile,
     QgsProcessingParameterFolderDestination,
+    QgsProcessingParameterMatrix,
     QgsProcessingParameterNumber,
     QgsProcessingParameterRasterDestination,
     QgsProcessingParameterRasterLayer,
@@ -501,6 +502,62 @@ def add_vegetation_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     )
     leaf_end.setFlags(leaf_end.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
     algorithm.addParameter(leaf_end)
+
+
+def add_land_cover_mapping_parameters(algorithm: QgsProcessingAlgorithm) -> None:
+    """Add land cover material properties table (advanced).
+
+    Creates a pre-populated matrix table mapping integer land cover codes to
+    surface material properties.  Defaults match the UMEP standard.  Users can
+    edit values in-place, add rows for additional codes, or provide a full
+    custom ``parametersforsolweig.json`` file.
+
+    Parameters added:
+        LC_MATERIALS: Matrix table (Code, Name, Albedo, Emissivity, TgK, Tstart, TmaxLST)
+        CUSTOM_MATERIALS_FILE: Optional custom materials JSON (overrides table)
+    """
+    from qgis.core import QgsProcessingParameterDefinition
+
+    # UMEP standard defaults as flat list (7 columns per row)
+    # fmt: off
+    umep_defaults = [
+        0, "Paved",     0.20, 0.95, 0.37, -3.41, 15.0,
+        1, "Asphalt",   0.18, 0.95, 0.58, -9.78, 15.0,
+        2, "Buildings", 0.18, 0.95, 0.58, -9.78, 15.0,
+        5, "Grass",     0.16, 0.94, 0.21, -3.38, 14.0,
+        6, "Bare soil", 0.25, 0.94, 0.33, -3.01, 14.0,
+        7, "Water",     0.05, 0.98, 0.00,  0.00, 12.0,
+    ]
+    # fmt: on
+
+    materials = QgsProcessingParameterMatrix(
+        "LC_MATERIALS",
+        algorithm.tr("Land cover material properties"),
+        headers=[
+            "Code",
+            "Name",
+            "Albedo",
+            "Emissivity",
+            "TgK (Ts_deg)",
+            "Tstart",
+            "TmaxLST",
+        ],
+        hasFixedNumberRows=False,
+        numberRows=6,
+        defaultValue=umep_defaults,
+        optional=True,
+    )
+    materials.setFlags(materials.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    algorithm.addParameter(materials)
+
+    custom_file = QgsProcessingParameterFile(
+        "CUSTOM_MATERIALS_FILE",
+        algorithm.tr("Custom materials JSON (overrides table)"),
+        extension="json",
+        optional=True,
+    )
+    custom_file.setFlags(custom_file.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    algorithm.addParameter(custom_file)
 
 
 def add_output_tmrt_parameter(algorithm: QgsProcessingAlgorithm) -> None:

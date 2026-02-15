@@ -31,7 +31,11 @@ from qgis.core import (
 )
 
 from ...utils.converters import _align_layer, _load_optional_raster, load_raster_from_layer
-from ...utils.parameters import add_surface_parameters
+from ...utils.parameters import (
+    add_land_cover_mapping_parameters,
+    add_surface_parameters,
+    add_vegetation_parameters,
+)
 from ..base import SolweigAlgorithmBase
 
 
@@ -131,6 +135,12 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
 
         wall_limit.setFlags(wall_limit.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
         self.addParameter(wall_limit)
+
+        # --- Vegetation (advanced) ---
+        add_vegetation_parameters(self)
+
+        # --- Land cover mapping (advanced) ---
+        add_land_cover_mapping_parameters(self)
 
         # Output directory
         self.addParameter(
@@ -521,6 +531,28 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
                 patch_count=np.array(sm.patch_count),
             )
             feedback.pushInfo("Saved shadowmats.npz")
+
+        # Save UMEP-compatible parametersforsolweig.json with user's LC mapping,
+        # vegetation settings, and any matrix overrides applied.
+        from ...utils.converters import build_materials_from_lc_mapping
+
+        materials = build_materials_from_lc_mapping(parameters, context, self, feedback)
+        # Apply vegetation settings into the materials namespace
+        ts = materials.Tree_settings.Value
+        ts.Transmissivity = parameters.get("TRANSMISSIVITY", 0.03)
+        ts.Transmissivity_leafoff = parameters.get("TRANSMISSIVITY_LEAFOFF", 0.5)
+        ts.First_day_leaf = int(parameters.get("LEAF_START", 97))
+        ts.Last_day_leaf = int(parameters.get("LEAF_END", 300))
+
+        try:
+            from solweig.utils import namespace_to_dict
+
+            params_path = os.path.join(output_dir, "parametersforsolweig.json")
+            with open(params_path, "w") as f:
+                json.dump(namespace_to_dict(materials), f, indent=2)
+            feedback.pushInfo("Saved parametersforsolweig.json (UMEP-compatible)")
+        except ImportError:
+            pass
 
         # Save metadata last (acts as a completion marker)
         metadata = {
