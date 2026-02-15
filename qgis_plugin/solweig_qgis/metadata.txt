@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=3.28
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta41
+version=0.1.0-beta42
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -42,171 +42,93 @@ experimental=True
 deprecated=False
 
 changelog=
+    0.1.0-beta42
+    - Remove percent symbol from changelog (fixes ini-style metadata parsing)
     0.1.0-beta41
-    - Add configurable land cover materials table to Surface Preparation: pre-populated matrix (Code, Name, Albedo, Emissivity, TgK, Tstart, TmaxLST) with UMEP defaults, editable per-code
-    - Save land cover and vegetation settings as UMEP-compatible parametersforsolweig.json during surface preparation
-    - Calculation algorithm auto-loads saved parametersforsolweig.json from prepared surface directory
-    - Remove redundant LC material parameters from calculation dialog (surface preparation is now single source of truth)
+    - Configurable land cover materials table in Surface Preparation with UMEP defaults
+    - Save/load UMEP-compatible parametersforsolweig.json from surface directory
     0.1.0-beta40
-    - Tighten golden test tolerances: SVF non-veg from 2% to 1e-5, wall temp to 1e-5, Tmrt to 1e-4, PET to 0.05°C, ground temp to 1e-3
+    - Tighten golden test tolerances (SVF, wall temp, Tmrt, PET, ground temp)
     0.1.0-beta39
-    - Fix nighttime Tmrt: use full longwave radiation balance via Rust pipeline instead of simplified Tmrt=Ta shortcut
-    - Delete deprecated Python physics (Kup_veg_2015a, Perez_v3, sunlit_shaded_patches); production uses Rust exclusively
-    - Remove deprecated calculate_core(); all paths use fused Rust pipeline
+    - Fix nighttime Tmrt: full longwave radiation balance via Rust pipeline
+    - Remove deprecated Python physics; all paths use fused Rust pipeline
     0.1.0-beta38
-    - SVF is now explicit: calculate() requires SVF to be prepared ahead of time (via SurfaceData.prepare() or surface.compute_svf())
-    - Fix shadow spec convention: documentation now uses sunlit=1 matching the actual Rust/Python implementation
-    - Add deterministic CPU fixture for shadow property tests
-    - Expand quick-start with common setup patterns (surface, weather, location)
-    - Add output strategy guide (stream-to-disk vs in-memory aggregation)
-    - Update all docs and docstrings to reflect explicit SVF preparation
+    - SVF must be prepared before calculate(); fix shadow spec convention
+    - Documentation and quick-start improvements
     0.1.0-beta37
-    - Fix integer raster (e.g. int16 DSM) crash on NaN assignment in load_raster
-    - Rename coerce_f64_to_f32 → ensure_float32 (breaking); consolidate via as_float32()
+    - Fix integer raster crash on NaN assignment; rename coerce_f64_to_f32 to ensure_float32
     0.1.0-beta36
-    - GPU shadow-to-bitpack shader with atomicOr for thread-safe packing
-    - Anisotropic sky GPU cleanup: remove dead lside_dirs pass and unused buffers
-    - SVF core API tests and tiling headroom improvements
-    - Fix Python 3.9 isinstance compatibility in precomputed loading
-    - Fix QGIS surface preprocessing help text formatting
-    - Surface model type-safety fixes (memmap flush, ones init)
+    - GPU shadow-to-bitpack shader; anisotropic sky GPU cleanup
+    - SVF core API tests; Python 3.9 fix; surface model type-safety fixes
     0.1.0-beta35
     - Fall back to Python logging/tqdm when QGIS is importable but inactive
     0.1.0-beta34
     - Use local relief for max_height; harden NaN handling; fix SVF tile-size context
     0.1.0-beta33
-    - GPU and processing performance improvements
-    - Pixel-size-keyed SVF/wall cache paths for multi-resolution support
-    - Async output writing and streaming timeseries mode
-    0.1.0-beta32
-    - Bump v0.1.0-beta32
-    0.1.0-beta31
-    - Bump v0.1.0-beta31
+    - GPU and processing performance improvements; multi-resolution SVF/wall cache
+    0.1.0-beta32 - Bump
+    0.1.0-beta31 - Bump
     0.1.0-beta30
-    - Reuse precomputed SVF and shadow matrices in tiled timeseries by loading once and slicing per tile
-    - Avoid per-timestep tile surface re-extraction in QGIS tiled timeseries (reuse pre-sliced tile inputs across all timesteps)
-    - Prevent fallback SVF recomputation when precomputed.svf is available but surface.svf is missing
+    - Reuse precomputed SVF and shadow matrices in tiled timeseries
     0.1.0-beta29
-    - Configurable tile orchestration: tile_workers, tile_queue_depth, prefetch_tiles params on calculate_tiled, calculate_timeseries_tiled, and calculate_timeseries (with ModelConfig integration)
-    - Backpressure-controlled tile dispatch: bounded inflight limit prevents memory spikes from unbounded task submission
-    - Memory-aware prefetch auto-selection: _resolve_prefetch_default enables prefetch only when estimated inflight bytes fit within 50 percent of usable RAM
-    - Adaptive worker count: defaults to max(2, min(6, cpu_count // 2)), capped at tile count, with validation (tile_workers < 1 raises ValueError)
-    - Telemetry instrumentation: mean tile turnaround time and max queue depth logged per dispatch cycle
-    - Config serialization: tile_workers, tile_queue_depth, prefetch_tiles round-trip through ModelConfig save/load
+    - Configurable tile orchestration (workers, queue depth, prefetch)
+    - Backpressure-controlled dispatch; memory-aware prefetch; adaptive worker count
     0.1.0-beta28
-    - Optimize tiled timeseries: pre-create tile surfaces before timestep loop (eliminates N_timesteps × N_tiles redundant copies, preserves GVF cache + buffer pool across timesteps)
-    - Parallel tile execution via ThreadPoolExecutor (Rust releases GIL during compute_timestep, allowing Python prep to overlap with Rust compute)
-    - Add clarifying comments to GPU resource model explaining dual-constraint design (GPU staging vs RAM working memory)
-    - Add tiled+anisotropic parity test verifying shadow matrix slicing produces matching results
+    - Optimized tiled timeseries; parallel tile execution via ThreadPoolExecutor
     0.1.0-beta27
-    - Fix 4 tiling bugs: remove forced pipelining split, fix tile-size semantics, enable anisotropic sky in tiled mode, fix overlap buffer elevation
-    - Remove MIN_PIPELINING_SIDE (512px) threshold that forced 4-tile splitting on medium rasters — tiling now only triggers when resource limits require it
-    - Fix tile-size semantics: validate_tile_size now correctly checks core + 2*overlap against resource limit (previously checked core only, so actual tiles could exceed GPU/RAM)
-    - Enable anisotropic sky in tiled mode: shadow matrices are now spatially sliced per tile (previously silently dropped, falling back to isotropic)
-    - Fix overlap buffer using absolute DSM elevation instead of relative building height (e.g. 10m ground + 5m building used 15m instead of 5m)
-    - Free result arrays after writing to disk in timeseries mode (previously retained all timestep arrays in memory even with output_dir set)
+    - Fix 4 tiling bugs (pipelining split, tile-size semantics, anisotropic sky, overlap buffer)
+    - Free result arrays after writing to disk in timeseries mode
     0.1.0-beta26
-    - Apply vegetation transmissivity (psi) to isotropic diffuse SVF: drad, Kup, and Kdown now account for light passing through canopy (previously treated as fully opaque)
-    - Add configurable leaf-off transmissivity to physics defaults (was hardcoded to 0.5)
-    - Expose vegetation parameters in QGIS: transmissivity (leaf-on/off), seasonal leaf dates — all as advanced options
+    - Vegetation transmissivity for diffuse SVF; configurable leaf-off transmissivity
+    - Expose vegetation parameters in QGIS (transmissivity, seasonal leaf dates)
     0.1.0-beta25
-    - Fix GVF shadow convention inversion: simplified (no-walls) path now correctly attenuates ground temperature in shaded areas instead of sunlit areas
-    - Fix CDSM/TDSM below-threshold clamping: near-ground vegetation now clamps to base elevation instead of absolute zero
-    - Fix state mutation in thermal delay: copy state before mutating to prevent cross-timestep contamination
-    - Fix nighttime result NaN propagation: NaN pixels in DSM now propagate to nighttime Tmrt output
-    - Fix division by zero in diffuse fraction at sunrise/sunset (sin(altitude) ≈ 0)
-    - Fix log(0) crash in clearness index when sun is exactly at horizon
-    - Fix TMY date filter for month-crossing ranges (e.g. Dec→Jan)
-    - Fix altmax not floored at 0 for polar winter (negative max sun altitude)
-    - Fix missing conifer/precomputed parameters in single-tile fallback path
-    - Mark non-fused calculate_core() as deprecated in favour of Rust pipeline
+    - Fix multiple bugs: GVF shadow inversion, CDSM/TDSM clamping, thermal delay state mutation, nighttime NaN propagation, diffuse fraction division by zero, clearness index log(0), TMY date filter, polar winter altmax, missing conifer params
     0.1.0-beta24
-    - Skip tiling for nighttime timesteps: compute nighttime result on full grid in one pass instead of iterating all tiles
-    - Nighttime timesteps now complete in milliseconds instead of processing N tiles with GPU pipeline overhead
+    - Skip tiling for nighttime timesteps (single-pass full grid)
     0.1.0-beta23
-    - Fix EPW hour-24 timestamp bug: hour 24 now correctly maps to midnight of the next day instead of 00:00 of the same day
-    - Fix hardcoded Gothenburg lat/lon defaults: EPW download and SOLWEIG calculation now default to the map canvas centre (WGS 84)
+    - Fix EPW hour-24 timestamp bug; fix hardcoded Gothenburg lat/lon defaults
     0.1.0-beta22
-    - GPU pipelining: auto-split rasters >= 512px into at least 4 tiles (2x2) for sustained GPU utilisation
-    - Previously, height-aware buffer could cause medium rasters to fit in a single tile, leaving the GPU idle during CPU-only pipeline steps
-    - Add opt-in timing instrumentation (SOLWEIG_TIMING=1) to measure per-step CPU/GPU breakdown and GPU duty cycle
-    - Timing covers both Rust pipeline steps (shadow, ground temp, GVF, thermal delay, radiation, Tmrt) and Python tile overhead (extract, FFI, merge)
+    - GPU pipelining for sustained utilisation; opt-in timing instrumentation
     0.1.0-beta21
-    - Height-aware tile buffer: compute overlap from tallest DSM pixel via calculate_buffer_distance() instead of always using max_shadow_distance_m (500m default)
-    - Short buildings (e.g. 10m) now get ~191m buffer instead of 500m, reducing tile count and overlap waste
-    - Fix stale log line in calculate_tiled() that reported max_shadow_distance_m instead of actual buffer
-    - Remove shadowed logger in calculate_tiled()
+    - Height-aware tile buffer (reduces tile count for short buildings)
     0.1.0-beta20
-    - QGIS progress monitor now shows current timestamp and tile during timeseries runs
-    - Auto-tile large rasters in QGIS timeseries path (was previously untiled, risking OOM)
-    - Resource-aware tile sizing: query real GPU buffer limits (wgpu adapter) and system RAM instead of hardcoded 256 MiB / 2500 px constants
-    - Expose gpu_limits() from Rust to Python (solweig.get_gpu_limits())
-    - Larger tile sizes on capable hardware (fewer tiles = less overhead)
+    - QGIS progress monitor for timeseries; auto-tile large rasters
+    - Resource-aware tile sizing from real GPU/RAM limits
     0.1.0-beta19
-    - Fix import sorting and unused imports (ruff formatting)
+    - Fix import sorting (ruff formatting)
     0.1.0-beta18
-    - Enable anisotropic sky model by default (use_anisotropic_sky=True)
-    - Port Perez sky luminance model to Rust (eliminates Python round-trip)
-    - Fix bitpacked shadow matrix extraction in pipeline (was reading packed bytes as patch values)
-    - Fix veg shadow initialization: no-vegetation surfaces no longer attenuate diffuse radiation
-    - Release GIL during compute_timestep for better multi-threaded performance
-    - Add steradians caching on ShadowArrays
-    - Add 38 new tests: bitpacking round-trip, diffsh formula, Perez parity, end-to-end anisotropic pipeline
+    - Enable anisotropic sky by default; port Perez model to Rust
+    - Fix bitpacked shadow extraction; fix veg shadow init; release GIL
     0.1.0-beta17
-    - Install solweig with --no-deps in QGIS to avoid replacing bundled numpy (fixes gdal_array ABI mismatch crash)
+    - Install solweig with --no-deps in QGIS (fixes gdal_array ABI crash)
     0.1.0-beta16
-    - Catch all exceptions (not just ImportError) when importing solweig, so the upgrade prompt still appears when an old version crashes on import (e.g. rasterio incompatibility)
+    - Catch all exceptions on import so upgrade prompt still appears
     0.1.0-beta15
-    - Force GDAL backend via UMEP_USE_GDAL env var before importing solweig (fixes rasterio detection in QGIS)
+    - Force GDAL backend via env var (fixes rasterio detection in QGIS)
     0.1.0-beta14
-    - Gate QGIS plugin build workflow on passing tests before release
-    - Fix test_gdal_backend_env_variable reload failure in CI
+    - Gate plugin build on passing tests; fix CI test reload failure
     0.1.0-beta13
-    - Add Location.from_epw() for automatic lat/lon/timezone extraction from EPW files
-    - Enable anisotropic sky model in tiled mode (was previously blocked)
-    - Fix SVF cache not reused across runs (pixel_size missing from cache metadata)
-    - Fix SVF cache validation when loaded from zip format
-    - Clean up stale SVF zip/npz files when cache is invalidated
-    - Enforce release-mode Rust builds in CI and test suite (RELEASE_BUILD flag)
-    - Fix test instability from QGIS mock module contamination
+    - Add Location.from_epw(); enable anisotropic sky in tiled mode
+    - Fix SVF cache reuse and validation; enforce release-mode Rust builds
     0.1.0-beta12
     - CI: create GitHub Release with wheels on tag push
     0.1.0-beta11
-    - Fix PyPI upload: include LICENSE file in sdist (maturin include directive)
+    - Fix PyPI upload: include LICENSE in sdist
     0.1.0-beta10
-    - Auto-fill NaN in DSM/CDSM/TDSM with DEM ground reference (fill_nan)
-    - Clamp near-ground noise (< 0.1 m tolerance) to avoid shadow/SVF artefacts
-    - QGIS plugin uses SurfaceData library methods for masking/cropping (single source of truth)
-    - Only honor negative nodata sentinel values at raster load time
+    - Auto-fill NaN with DEM ground reference; clamp near-ground noise
     0.1.0-beta9
-    - Fix numpy dtype crash in QGIS: rasterio is no longer imported in OSGeo4W environments
-    - Consolidate geospatial backend detection into shared _compat module
+    - Fix numpy dtype crash in QGIS; consolidate backend detection
     0.1.0-beta8
-    - Fix plugin not appearing in Processing Toolbox when solweig library is missing
-    - Defer install prompt so it no longer blocks provider registration
+    - Fix plugin not appearing in Processing Toolbox; defer install prompt
     0.1.0-beta7
-    - Publish workflow gates on passing tests before building wheels
+    - Publish workflow gates on passing tests
     0.1.0-beta6
-    - Auto-detect outdated solweig library and prompt to upgrade
-    - Plugin version synced automatically from pyproject.toml
+    - Auto-detect outdated library and prompt to upgrade
     0.1.0-beta5
-    - Fixed CI: simplified QGIS plugin build workflow (removed stale --universal flag)
-    - CI: tags no longer trigger redundant test/docs workflows
+    - CI fixes: simplified build workflow; tags no longer trigger redundant workflows
     0.1.0-beta4
-    - Solweig library installed via pip (auto-prompted on first use)
-    - EPW download uses QgsNetworkAccessManager (proxy support)
-    - Removed bundled binaries for QGIS Plugin Repository compliance
+    - Library installed via pip (auto-prompted); EPW proxy support; remove bundled binaries
     0.1.0-beta1 - First public beta
-    - Memory optimizations for QGIS timeseries (~3 GB savings)
-    - Cancellable wall aspect and SVF computations
-    - Input height validation warnings (DSM/CDSM sanity checks)
-    - Surface preprocessing algorithm
-    - Anisotropic sky model with Rust acceleration
-    - GPU-accelerated shadow computation
+    - Tmrt and thermal comfort; SVF preprocessing; anisotropic sky; GPU shadows
     0.1.0-alpha1 - Internal alpha
-    - Single timestep Tmrt calculation
-    - Timeseries Tmrt calculation with thermal state
-    - SVF preprocessing
-    - UTCI and PET post-processing
-    - EPW weather file import
-    - Tiled processing for large rasters
+    - Single timestep and timeseries Tmrt; SVF; UTCI/PET; EPW import; tiled processing
