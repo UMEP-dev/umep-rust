@@ -69,9 +69,6 @@ if hasattr(results_mod, "SolweigResult"):
     orig_to_geotiff = results_mod.SolweigResult.to_geotiff
     results_mod.SolweigResult.to_geotiff = _timed("io:geotiff_write", orig_to_geotiff)
 
-# Patch nighttime result
-comp._nighttime_result = _timed("py:nighttime", comp._nighttime_result)
-
 # Patch Python physics used in radiation (requires UMEP)
 from solweig.components import radiation as rad_mod  # noqa: E402
 

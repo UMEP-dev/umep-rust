@@ -139,8 +139,11 @@ class TestCalculateTimeseries:
 
         assert len(results) == 3
         for r in results:
-            # At night, Tmrt should be near air temperature
-            assert np.nanmax(np.abs(r.tmrt - 15.0)) < 5.0
+            # At night, Tmrt is computed from full longwave balance. Under open
+            # sky (SVF~1) the cold sky pulls Tmrt below Ta, typically by 5-10 C.
+            valid = r.tmrt[np.isfinite(r.tmrt)]
+            assert np.all(valid < 15.0 + 2.0), "Night Tmrt should not exceed Ta by much"
+            assert np.all(valid > -10.0), "Night Tmrt should not be unreasonably cold"
 
     def test_day_night_transition(self, flat_surface, location):
         """Handles transition from night to day."""

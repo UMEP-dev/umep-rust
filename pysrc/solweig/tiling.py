@@ -1252,8 +1252,6 @@ def calculate_timeseries_tiled(
         None if progress_callback is not None else ProgressReporter(total=total_work, desc="SOLWEIG tiled timeseries")
     )
 
-    from .computation import _nighttime_result
-
     # Pre-create tile data once — surfaces and precomputed data don't change
     # between timesteps. This eliminates N_timesteps × N_tiles redundant copies
     # and allows GVF geometry cache + buffer pool to persist across timesteps.
@@ -1266,68 +1264,6 @@ def calculate_timeseries_tiled(
     try:
         with ThreadPoolExecutor(max_workers=n_workers) as executor:
             for t_idx, weather in enumerate(weather_series):
-                # Nighttime shortcut: skip tiling entirely when sun is below horizon
-                if weather.sun_altitude <= 0:
-                    night_result = _nighttime_result(surface, weather, state, effective_materials, copy_state=False)
-                    if night_result.state is not None:
-                        state = night_result.state
-
-                    result = SolweigResult(
-                        tmrt=night_result.tmrt,
-                        shadow=night_result.shadow,
-                        kdown=night_result.kdown,
-                        kup=night_result.kup,
-                        ldown=night_result.ldown,
-                        lup=night_result.lup,
-                        utci=None,
-                        pet=None,
-                        state=None,
-                    )
-
-                    _valid = result.tmrt[np.isfinite(result.tmrt)]
-                    if _valid.size > 0:
-                        _tmrt_sum += _valid.sum()
-                        _tmrt_count += _valid.size
-                        _tmrt_max = max(_tmrt_max, float(_valid.max()))
-                        _tmrt_min = min(_tmrt_min, float(_valid.min()))
-
-                    if _writer is not None:
-                        _writer.submit(
-                            timestamp=weather.datetime,
-                            arrays=collect_output_arrays(result, effective_outputs or ["tmrt"]),
-                        )
-                    elif output_dir is not None:
-                        result.to_geotiff(
-                            output_dir=output_dir,
-                            timestamp=weather.datetime,
-                            outputs=effective_outputs,
-                            surface=surface,
-                        )
-
-                    if not return_results:
-                        # Free large arrays once data is persisted or caller requested streaming mode.
-                        result.tmrt = None  # type: ignore[assignment]
-                        result.shadow = None
-                        result.kdown = None
-                        result.kup = None
-                        result.ldown = None
-                        result.lup = None
-                    if return_results:
-                        results.append(result)
-                    processed_steps += 1
-
-                    # Advance progress by all tiles for this timestep
-                    step = (t_idx + 1) * n_tiles
-                    if progress_callback is not None:
-                        progress_callback(step, total_work)
-                    elif _progress is not None:
-                        _progress.update(n_tiles)
-
-                    elapsed = time.time() - start_time
-                    rate = (t_idx + 1) / elapsed if elapsed > 0 else 0
-                    logger.info(f"  Timestep {t_idx + 1}/{n_steps} nighttime ({rate:.2f} steps/s)")
-                    continue
-
                 # Initialize output arrays for this timestep
                 tmrt_out = np.full((rows, cols), np.nan, dtype=np.float32)
                 shadow_out = np.full((rows, cols), np.nan, dtype=np.float32) if need_shadow else None

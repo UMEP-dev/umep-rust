@@ -90,8 +90,7 @@ This document outlines the development priorities for SOLWEIG.
   - `tests/test_qgis_converters.py`: 25 tests (HumanParams, Weather, Location, EPW)
   - `tests/test_qgis_base.py`: 15 tests (grid validation, output paths, georeferenced save)
   - Fixed osgeo mock pollution (split install/install_osgeo to prevent cross-test contamination)
-- ✅ **Orchestration unit tests (F.1)** - 57 tests for computation internals
-  - `_nighttime_result()`: 13 tests (Tmrt=Ta, longwave physics, state reset)
+- ✅ **Orchestration unit tests (F.1)** - computation internals
   - `_apply_thermal_delay()`: 7 tests (state transitions, Rust FFI mock, day/night flags)
   - `_precompute_weather()`: 5 tests (altmax caching, multi-day, derived computation)
   - ThermalState/TileSpec: 11 tests, tiling helpers: 21 tests

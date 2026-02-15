@@ -15,8 +15,7 @@ import numpy as np
 import pytest
 import solweig
 from solweig.bundles import GvfBundle, LupBundle
-from solweig.computation import _apply_thermal_delay, _nighttime_result
-from solweig.constants import KELVIN_OFFSET, SBC
+from solweig.computation import _apply_thermal_delay
 from solweig.models.state import ThermalState, TileSpec
 from solweig.tiling import (
     MAX_BUFFER_M,
@@ -38,14 +37,6 @@ from solweig.tiling import (
 @pytest.fixture()
 def small_shape():
     return (10, 10)
-
-
-@pytest.fixture()
-def surface_10x10():
-    """Minimal SurfaceData for nighttime tests."""
-    from conftest import make_mock_svf
-
-    return solweig.SurfaceData(dsm=np.ones((10, 10), dtype=np.float32) * 5.0, svf=make_mock_svf((10, 10)))
 
 
 @pytest.fixture()
@@ -84,125 +75,6 @@ def _make_weather(*, ta: float = 20.0, sun_altitude: float = -5.0, is_daytime: b
     w.sun_altitude = sun_altitude
     w.is_daytime = is_daytime
     return w
-
-
-# ---------------------------------------------------------------------------
-# _nighttime_result
-# ---------------------------------------------------------------------------
-
-
-class TestNighttimeResult:
-    """Tests for _nighttime_result() in computation.py."""
-
-    def test_tmrt_equals_ta(self, surface_10x10):
-        """Nighttime Tmrt should equal air temperature everywhere."""
-        weather = _make_weather(ta=15.0)
-        result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
-        np.testing.assert_allclose(result.tmrt, 15.0)
-
-    def test_shadow_all_zero(self, surface_10x10):
-        """Shadow follows convention 1=sunlit even at night (no beam shadows)."""
-        weather = _make_weather(ta=20.0)
-        result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
-        assert result.shadow is not None
-        np.testing.assert_array_equal(result.shadow, 1.0)
-
-    def test_shortwave_zero(self, surface_10x10):
-        """Kdown and Kup should be 0 at night (no solar radiation)."""
-        weather = _make_weather(ta=20.0)
-        result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
-        assert result.kdown is not None
-        assert result.kup is not None
-        np.testing.assert_array_equal(result.kdown, 0.0)
-        np.testing.assert_array_equal(result.kup, 0.0)
-
-    def test_longwave_positive(self, surface_10x10):
-        """Ldown and Lup should be positive (thermal emission)."""
-        weather = _make_weather(ta=20.0)
-        result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
-        assert result.ldown is not None
-        assert result.lup is not None
-        assert np.all(result.ldown > 0)
-        assert np.all(result.lup > 0)
-
-    def test_ldown_stefan_boltzmann(self, surface_10x10):
-        """Ldown follows Stefan-Boltzmann law with sky emissivity ~0.95."""
-        ta = 20.0
-        weather = _make_weather(ta=ta)
-        result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
-        assert result.ldown is not None
-        expected = SBC * 0.95 * (ta + KELVIN_OFFSET) ** 4
-        np.testing.assert_allclose(result.ldown, expected, rtol=1e-5)
-
-    def test_lup_uses_surface_emissivity(self, surface_10x10):
-        """Lup uses surface emissivity from land cover properties."""
-        ta = 25.0
-        weather = _make_weather(ta=ta)
-        result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
-        assert result.lup is not None
-        # Default emissivity is 0.95
-        expected = SBC * 0.95 * (ta + KELVIN_OFFSET) ** 4
-        np.testing.assert_allclose(result.lup, expected, rtol=1e-5)
-
-    def test_output_shapes(self, surface_10x10):
-        """All output arrays match surface DSM shape."""
-        weather = _make_weather(ta=20.0)
-        result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
-        assert result.tmrt.shape == (10, 10)
-        assert result.shadow is not None and result.shadow.shape == (10, 10)
-        assert result.kdown is not None and result.kdown.shape == (10, 10)
-        assert result.kup is not None and result.kup.shape == (10, 10)
-        assert result.ldown is not None and result.ldown.shape == (10, 10)
-        assert result.lup is not None and result.lup.shape == (10, 10)
-
-    def test_output_dtype_float32(self, surface_10x10):
-        """All output arrays are float32."""
-        weather = _make_weather(ta=20.0)
-        result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
-        assert result.tmrt.dtype == np.float32
-        assert result.shadow is not None and result.shadow.dtype == np.float32
-        assert result.kdown is not None and result.kdown.dtype == np.float32
-        assert result.ldown is not None and result.ldown.dtype == np.float32
-        assert result.lup is not None and result.lup.dtype == np.float32
-
-    def test_state_none_when_no_input_state(self, surface_10x10):
-        """Output state is None when no input state provided."""
-        weather = _make_weather(ta=20.0)
-        result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
-        assert result.state is None
-
-    def test_state_resets_for_morning(self, surface_10x10, state_10x10):
-        """Nighttime resets firstdaytime=1.0 and timeadd=0.0 for next morning."""
-        state_10x10.firstdaytime = 0.0  # Was daytime before
-        state_10x10.timeadd = 42.0  # Had accumulated time
-        weather = _make_weather(ta=20.0)
-        result = _nighttime_result(surface_10x10, weather, state=state_10x10, materials=None)
-        assert result.state is not None
-        assert result.state.firstdaytime == 1.0
-        assert result.state.timeadd == 0.0
-
-    def test_state_output_is_copy(self, surface_10x10, state_10x10):
-        """Output state is a deep copy (mutating it doesn't affect input)."""
-        weather = _make_weather(ta=20.0)
-        result = _nighttime_result(surface_10x10, weather, state=state_10x10, materials=None)
-        assert result.state is not None
-        result.state.firstdaytime = 99.0
-        assert state_10x10.firstdaytime == 1.0  # Input state unchanged
-
-    def test_utci_pet_are_none(self, surface_10x10):
-        """UTCI and PET should be None (computed separately)."""
-        weather = _make_weather(ta=20.0)
-        result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
-        assert result.utci is None
-        assert result.pet is None
-
-    def test_cold_temperature(self, surface_10x10):
-        """Works correctly with below-freezing temperatures."""
-        weather = _make_weather(ta=-10.0)
-        result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
-        np.testing.assert_allclose(result.tmrt, -10.0)
-        assert result.ldown is not None
-        assert np.all(result.ldown > 0)  # Still positive (thermal emission)
 
 
 # ---------------------------------------------------------------------------

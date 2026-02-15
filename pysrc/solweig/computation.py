@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from .bundles import LupBundle
-from .constants import KELVIN_OFFSET, SBC
 from .rustalgos import ground as ground_rust
 
 _OUT_SHADOW = 1 << 0
@@ -33,74 +32,6 @@ if TYPE_CHECKING:
 
     from .api import HumanParams, Location, PrecomputedData, SolweigResult, SurfaceData, ThermalState, Weather
     from .bundles import GvfBundle
-
-
-def _nighttime_result(
-    surface: SurfaceData,
-    weather: Weather,
-    state: ThermalState | None,
-    materials: SimpleNamespace | None,
-    copy_state: bool = True,
-) -> SolweigResult:
-    """
-    Compute simplified nighttime result when sun is below horizon.
-
-    At night:
-    - Tmrt ≈ Ta (no solar radiation)
-    - Shadow = 0 (everything shaded)
-    - Kdown = Kup = 0 (no shortwave)
-    - Ldown/Lup from atmospheric and surface emission only
-
-    Args:
-        surface: Surface data (for emissivity grid)
-        weather: Weather data (for air temperature)
-        state: Optional thermal state (resets for morning)
-        materials: Material properties (for emissivity)
-        copy_state: If True, copy state before mutation. If False, mutate in-place.
-
-    Returns:
-        SolweigResult with nighttime values
-    """
-    # Import here to avoid circular dependency
-    from .api import SolweigResult
-
-    rows, cols = surface.dsm.shape
-
-    # Get emissivity grid for nighttime longwave
-    _, emis_grid, _, _, _ = surface.get_land_cover_properties(materials)
-
-    # Nighttime: Tmrt ≈ Ta (simplified, no solar heating)
-    # Preserve NaN from DSM to mark invalid pixels (consistent with daytime path)
-    nan_mask = np.isnan(surface.dsm)
-    tmrt = np.full((rows, cols), weather.ta, dtype=np.float32)
-    tmrt[nan_mask] = np.nan
-    # Night convention: no direct-beam shadows are cast below horizon, so shadow=1.
-    shadow = np.ones((rows, cols), dtype=np.float32)  # 1 = sunlit (night convention)
-
-    # Nighttime longwave: Lup = SBC × emis × Ta⁴
-    ta_k = weather.ta + KELVIN_OFFSET
-    lup_night = SBC * emis_grid * np.power(ta_k, 4)
-    # Ldown from sky with typical nighttime emissivity ~0.95
-    ldown_night = np.full((rows, cols), SBC * 0.95 * np.power(ta_k, 4), dtype=np.float32)
-
-    # Update thermal state for nighttime (copy first, then mutate)
-    output_state = None
-    if state is not None:
-        output_state = state.copy() if copy_state else state
-        output_state.firstdaytime = 1.0  # Reset for morning
-        output_state.timeadd = 0.0  # Reset time accumulator
-
-    return SolweigResult(
-        tmrt=tmrt,
-        shadow=shadow,
-        kdown=np.zeros((rows, cols), dtype=np.float32),
-        kup=np.zeros((rows, cols), dtype=np.float32),
-        ldown=ldown_night.astype(np.float32),
-        lup=lup_night.astype(np.float32),
-        utci=None,
-        pet=None,
-        state=output_state,
-    )
 
 
 def _apply_thermal_delay(
@@ -256,10 +187,6 @@ def calculate_core_fused(
     # Ensure derived weather fields are computed (sun position, radiation split)
     if not weather._derived_computed:
         weather.compute_derived(location)
-
-    # Early exit for nighttime
-    if weather.sun_altitude <= 0:
-        return _nighttime_result(surface, weather, state, materials, copy_state=return_state_copy)
 
     # === Precompute (stays in Python) ===
 

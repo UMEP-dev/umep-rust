@@ -619,10 +619,16 @@ class TestCalculateIntegration:
 
         result = calculate(surface, location, weather)
 
-        # At night, Tmrt should be close to air temperature
-        assert np.allclose(result.tmrt, 15.0, atol=1.0)
-        # At night, convention is 1 = sunlit (no direct-beam shadows cast)
-        assert np.all(result.shadow == 1.0)
+        # At night, Tmrt is computed from full longwave balance (no shortwave).
+        # Under open sky (SVF~1) the cold sky pulls Tmrt well below Ta — typically
+        # ~5-10 C lower. This matches UMEP behaviour; the old Python shortcut
+        # (Tmrt=Ta) was wrong.
+        valid = result.tmrt[np.isfinite(result.tmrt)]
+        assert np.all(valid < 15.0), "Night Tmrt should be below Ta under open sky"
+        assert np.all(valid > -5.0), "Night Tmrt should not be unreasonably cold"
+        # Shortwave must be zero at night
+        assert result.kdown is not None and np.allclose(result.kdown[np.isfinite(result.kdown)], 0.0, atol=1e-3)
+        assert result.kup is not None and np.allclose(result.kup[np.isfinite(result.kup)], 0.0, atol=1e-3)
 
     def test_explicit_anisotropic_requires_shadow_matrices(self):
         """Explicit anisotropic request must fail without shadow matrices."""
