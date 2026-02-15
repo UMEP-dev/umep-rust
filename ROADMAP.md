@@ -37,7 +37,7 @@ This document outlines the development priorities for SOLWEIG.
 | 19  | Field-data validation                     | H       | HIGH - scientific credibility      | In Progress |
 | 20  | POI Mode                                  | C       | HIGH - 10-100x speedup             | Deferred    |
 
-**Current status:** Phases A, B, D, E, F.1, G.2, G.3.1, H.1 complete. 335+ tests total (323 quick + 12 validation + slow tests). JSON parameter integration done (bundled UMEP JSON as single source of truth, material-specific wall params). Next: Montpellier Tmrt validation, POI mode.
+**Current status:** Phases A, B, D, E, F.1, G.2, G.3.1–G.3.2, H.1, H.2 complete. 612+ tests total. Perez sky luminance fully ported to Rust (`crate::perez::perez_v3()`). GPU acceleration covers shadows, SVF (pipelined dispatch via `svf_accumulation.wgsl`), and anisotropic sky (`anisotropic_sky.wgsl`). Fused Rust pipeline (`pipeline.compute_timestep`) handles all per-timestep computation in a single FFI call. Next: POI mode.
 
 ### Recently Completed
 
@@ -166,7 +166,7 @@ This document outlines the development priorities for SOLWEIG.
 - api.py reduced from 3,976 → 403 lines (-89.9%)
 - 6,100 lines of legacy code deleted
 - models.py split into models/ package (6 modules, ~3,080 lines)
-- 332 tests passing (including spec, golden, and benchmark tests)
+- 612+ tests passing (including spec, golden, benchmark, and validation tests)
 - 100% parity with reference UMEP implementation
 
 ---
@@ -372,16 +372,20 @@ When prioritized, this phase would enable 10-100× speedup for point-based calcu
 - `tmrt.rs` (240 lines) - Mean radiant temperature integration
 - Internal helpers: `sun.rs`, `patch_radiation.rs`, `emissivity_models.rs`, `sunlit_shaded_patches.rs`
 
-**GPU status:** Only `shadowing.rs` has GPU support (wgpu compute shader, 346 lines WGSL). Falls back to CPU automatically.
+**GPU status:** Three GPU-accelerated paths via wgpu compute shaders. All fall back to CPU automatically.
 
-**Python physics** (`physics/`, 2,518 lines) - still in Python:
+- `shadowing.rs` — ray-marching shadows (`shadow_propagation.wgsl`)
+- `skyview.rs` — SVF accumulation with pipelined dispatch (`svf_accumulation.wgsl`)
+- `aniso_gpu.rs` — anisotropic sky longwave (`anisotropic_sky.wgsl`)
 
-- `sun_position.py` (1,061 lines) - ASTM solar position algorithm
-- `Perez_v3.py` (313 lines) - Anisotropic sky luminance
-- `cylindric_wedge.py` (109 lines) - Diffuse radiation geometry
-- `morphology.py` (188 lines) - Binary dilation (scipy replacement)
-- `wallalgorithms.py` (158 lines) - Wall height/aspect detection
-- Scalars: `clearnessindex_2013b.py`, `diffusefraction.py`, `daylen.py`, etc.
+**Python physics** (`physics/`) — reference implementations retained for readability and validation:
+
+- `sun_position.py` (1,061 lines) - ASTM solar position algorithm (kept in Python: once per timestep, scalar)
+- `Perez_v3.py` (313 lines) - Reference only; production uses `crate::perez::perez_v3()` in Rust
+- `cylindric_wedge.py` (109 lines) - Reference only; production uses `crate::sky::cylindric_wedge()` in Rust
+- `morphology.py` (188 lines) - Reference only; production uses `crate::morphology` in Rust
+- `wallalgorithms.py` (158 lines) - Wall height/aspect detection (setup, not per-timestep)
+- Scalars: `clearnessindex_2013b.py`, `diffusefraction.py`, `daylen.py`, etc. (kept in Python: once per timestep)
 
 ### G.1 Principled Rust/Python Boundary
 
@@ -405,7 +409,7 @@ When prioritized, this phase would enable 10-100× speedup for point-based calcu
 | **P0**   | `cylindric_wedge()`              | Python (109 lines)               | Yes, always            | 3-5×             | Low    |
 | **P0**   | Anisotropic patch summation loop | Python (5 lines in radiation.py) | Yes (aniso mode)       | 5-10×            | Low    |
 | **P1**   | ~~`binary_dilation()`~~          | Rust (morphology.rs)             | No (setup)             | 2.5× (measured)  | ✅ Done |
-| **P2**   | `Perez_v3()`                     | Python (313 lines)               | Yes (aniso mode)       | 2-3×             | Medium |
+| **P2**   | ~~`Perez_v3()`~~                 | Rust (`crate::perez::perez_v3`)  | Yes (aniso mode)       | 2-3×             | ✅ Done  |
 | **P3**   | `wallalgorithms.py`              | Python (158 lines)               | No (setup)             | 3-5×             | Medium |
 | Keep     | `sun_position.py`                | Python (1,061 lines)             | Once/timestep (scalar) | Negligible       | —      |
 | Keep     | `clearnessindex_2013b.py`        | Python (88 lines)                | Once/timestep (scalar) | Negligible       | —      |
@@ -452,17 +456,12 @@ When prioritized, this phase would enable 10-100× speedup for point-based calcu
 - Expected benefit: Eliminate per-call allocation overhead
 - Risk: Low (architectural change, no algorithm changes)
 
-**Phase G.3.2: GPU-Accelerated SVF** (HIGH priority, HIGH effort)
+**Phase G.3.2: GPU-Accelerated SVF** ✅ Complete
 
-- Problem: SVF is the #1 bottleneck (calls shadowing 32-248 times per pixel)
-- Current: CPU-side loop calls GPU shadow shader repeatedly
-- Target: Single GPU dispatch that computes all patches per pixel
-  - Option A: Multi-pass shader (one dispatch per patch direction)
-  - Option B: Monolithic shader that loops through all patches per workgroup
-  - Option C: Batch-dispatch all patches, accumulate on GPU
-- Expected benefit: 5-50× for fresh SVF computation
-- Risk: Medium (complex shader, large memory requirements)
-- Note: SVF is cached, so this only helps first-time computation
+- Implemented pipelined GPU dispatch via `svf_accumulation.wgsl`
+- SVF accumulation runs entirely on GPU with batch patch processing
+- Falls back to CPU automatically when GPU unavailable
+- SVF is cached after first computation (210× speedup on repeat)
 
 **Phase G.3.3: GPU cylindric_wedge** (MEDIUM priority)
 
@@ -512,9 +511,9 @@ Python orchestration → Rust computation → Python result handling
 | 2    | Move anisotropic patch loop to Rust (`sky.rs`) | 1-2 hours   | None          | ✅ Complete |
 | 3    | GPU buffer reuse (persistent resource pool)    | 3-4 hours   | None          | ✅ Complete |
 | 4    | Move `binary_dilation()` to Rust               | 2-3 hours   | None          | ✅ Complete |
-| 5    | Move `Perez_v3()` to Rust (`sky.rs`)           | 4-6 hours   | Step 1        | Pending     |
-| 6    | GPU-accelerated SVF (design + prototype)       | 2-3 days    | Step 3        | Pending     |
-| 7    | Fused radiation kernel (if needed)             | 1-2 days    | Steps 1, 2, 5 | Pending     |
+| 5    | ~~Move `Perez_v3()` to Rust~~                  | 4-6 hours   | Step 1        | ✅ Complete |
+| 6    | ~~GPU-accelerated SVF~~                        | 2-3 days    | Step 3        | ✅ Complete |
+| 7    | ~~Fused radiation kernel~~                     | 1-2 days    | Steps 1, 2, 5 | ✅ Complete |
 
 **Milestone targets:**
 
@@ -611,9 +610,9 @@ Python orchestration → Rust computation → Python result handling
 
 - [x] Quick Start Guide ([docs/getting-started/quick-start.md](docs/getting-started/quick-start.md))
 - [x] MkDocs site scaffolded (25 pages under `docs/`)
-- [ ] API Reference with mkdocstrings (auto-generated)
+- [x] API Reference with mkdocstrings (auto-generated)
 - [x] QGIS plugin scaffolded (Phases 1-10, see [qgis_plugin/README.md](qgis_plugin/README.md))
-- [ ] QGIS plugin testing & polish (Phase 11)
+- [x] QGIS plugin testing & polish (Phase 11)
 - [x] CI/CD for cross-platform plugin builds
 - [ ] Build and publish wheels for multiple platforms
 
@@ -816,7 +815,7 @@ Ideas for future development, not yet prioritized.
 All changes must maintain:
 
 - **Tmrt bias < 0.1°C** vs reference implementation
-- **330+ tests passing** (current baseline, including spec, golden, benchmark, and validation tests)
+- **612+ tests passing** (current baseline, including spec, golden, benchmark, and validation tests)
 - No memory regression on standard benchmarks
 
 Gate command: `pytest tests/`

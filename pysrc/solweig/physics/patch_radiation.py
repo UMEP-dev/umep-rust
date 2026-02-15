@@ -1,3 +1,12 @@
+"""
+Patch-level radiation helpers — **reference implementation only**.
+
+Not called by the production ``calculate()`` API. The fused Rust pipeline
+computes patch radiation internally.
+
+Retained for readability, tests, and validation against UMEP.
+"""
+
 import numpy as np
 
 from ..constants import KELVIN_OFFSET, SBC

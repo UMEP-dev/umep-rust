@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .computation import calculate_core, calculate_core_fused  # noqa: F401 (calculate_core kept for direct use)
+from .computation import calculate_core_fused
 from .errors import (
     ConfigurationError,
     GridShapeMismatch,
@@ -232,6 +232,11 @@ def validate_inputs(
             if w.global_rad > 1400:
                 warnings.append(
                     f"Weather[{i}].global_rad={w.global_rad} W/m² exceeds solar constant. Verify this is correct."
+                )
+            if w.ws == 0:
+                warnings.append(
+                    f"Weather[{i}].ws=0 m/s. UTCI is sensitive to wind speed near zero; "
+                    "consider using a small positive value (e.g. 0.5 m/s) if calm conditions are not intended."
                 )
 
     return warnings

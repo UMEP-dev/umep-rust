@@ -1,17 +1,23 @@
-"""Parity tests: Rust Perez_v3 vs Python Perez_v3 and steradians.
+"""Parity tests: Rust Perez_v3 vs upstream UMEP Perez_v3 and steradians.
 
-Verifies that the Rust port produces results matching the original Python
+Verifies that the Rust port produces results matching the upstream UMEP
 implementation for a range of atmospheric conditions.
 """
 
 import numpy as np
 import pytest
 from solweig.physics.patch_radiation import patch_steradians
-from solweig.physics.Perez_v3 import Perez_v3
 from solweig.rustalgos import pipeline
+
+umep_perez = pytest.importorskip(
+    "umep.util.SEBESOLWEIGCommonFiles.Perez_v3",
+    reason="UMEP package required for Perez parity tests",
+)
+Perez_v3 = umep_perez.Perez_v3
 
 # ── Test parameters: representative atmospheric conditions ──────────────────
 
+# Cases where Rust and UMEP should agree (normal atmospheric conditions).
 PEREZ_CASES = [
     # (zen_deg, azimuth_deg, rad_d, rad_i, jday, patch_option, label)
     (30.0, 180.0, 200.0, 400.0, 180, 2, "clear_midday_summer"),
@@ -20,18 +26,22 @@ PEREZ_CASES = [
     (45.0, 200.0, 300.0, 100.0, 180, 2, "overcast_summer"),
     (20.0, 180.0, 50.0, 800.0, 180, 2, "very_clear_high_sun"),
     (85.0, 90.0, 20.0, 30.0, 1, 2, "near_horizon"),
-    # Low sun: should return uniform distribution
-    (88.0, 180.0, 50.0, 10.0, 180, 2, "below_threshold"),
-    # Low diffuse: uniform fallback
-    (30.0, 180.0, 5.0, 400.0, 180, 2, "low_diffuse"),
     # Different patch options
     (40.0, 180.0, 200.0, 400.0, 180, 1, "patch_option_1"),
     (40.0, 180.0, 200.0, 400.0, 180, 3, "patch_option_3"),
 ]
 
+# Cases where Rust intentionally diverges from UMEP: the Rust port includes
+# low-sun and low-diffuse guards (returning uniform distribution) that the
+# upstream UMEP implementation lacks. These guards prevent NaN/Inf at edge cases.
+PEREZ_EDGE_CASES = [
+    (88.0, 180.0, 50.0, 10.0, 180, 2, "below_threshold"),
+    (30.0, 180.0, 5.0, 400.0, 180, 2, "low_diffuse"),
+]
+
 
 class TestPerez_v3Parity:
-    """Rust perez_v3 must match Python Perez_v3 for the same inputs."""
+    """Rust perez_v3 must match upstream UMEP Perez_v3 for the same inputs."""
 
     @pytest.mark.parametrize(
         "zen,azi,rad_d,rad_i,jday,patch_option,label",
@@ -39,15 +49,15 @@ class TestPerez_v3Parity:
         ids=[c[-1] for c in PEREZ_CASES],
     )
     def test_luminance_parity(self, zen, azi, rad_d, rad_i, jday, patch_option, label):
-        """Rust luminance column matches Python within f32 tolerance."""
-        # Python reference
+        """Rust luminance column matches UMEP within f32 tolerance."""
+        # UMEP reference
         py_lv, _, _ = Perez_v3(zen, azi, rad_d, rad_i, jday, patchchoice=1, patch_option=patch_option)
 
         # Rust implementation
         rs_lv = np.asarray(pipeline.perez_v3_py(zen, azi, rad_d, rad_i, jday, patch_option))
 
         # Shape must match
-        assert py_lv.shape == rs_lv.shape, f"shape mismatch: py={py_lv.shape} rs={rs_lv.shape}"
+        assert py_lv.shape == rs_lv.shape, f"shape mismatch: umep={py_lv.shape} rs={rs_lv.shape}"
 
         # Altitudes and azimuths (columns 0,1) come from create_patches — should match exactly
         np.testing.assert_allclose(
@@ -84,6 +94,38 @@ class TestPerez_v3Parity:
         assert abs(lum_sum - 1.0) < 1e-4, f"[{label}] luminance sum = {lum_sum}"
 
 
+class TestPerez_v3EdgeCases:
+    """Rust intentionally diverges from UMEP at edge cases (low sun, low diffuse).
+
+    The Rust port includes guards that return a uniform distribution when
+    sun altitude < 3° or diffuse radiation < 10 W/m². UMEP lacks these
+    guards and can produce numerical instability at these conditions.
+    """
+
+    @pytest.mark.parametrize(
+        "zen,azi,rad_d,rad_i,jday,patch_option,label",
+        PEREZ_EDGE_CASES,
+        ids=[c[-1] for c in PEREZ_EDGE_CASES],
+    )
+    def test_rust_returns_uniform(self, zen, azi, rad_d, rad_i, jday, patch_option, label):
+        """Rust returns uniform distribution at edge cases."""
+        rs_lv = np.asarray(pipeline.perez_v3_py(zen, azi, rad_d, rad_i, jday, patch_option))
+        std_dev = np.std(rs_lv[:, 2])
+        assert std_dev < 1e-6, f"[{label}] Rust should return uniform (std={std_dev:.8f})"
+
+    @pytest.mark.parametrize(
+        "zen,azi,rad_d,rad_i,jday,patch_option,label",
+        PEREZ_EDGE_CASES,
+        ids=[c[-1] for c in PEREZ_EDGE_CASES],
+    )
+    def test_umep_does_not_return_uniform(self, zen, azi, rad_d, rad_i, jday, patch_option, label):
+        """UMEP does NOT return uniform at these edge cases (documenting divergence)."""
+        umep_lv, _, _ = Perez_v3(zen, azi, rad_d, rad_i, jday, patchchoice=1, patch_option=patch_option)
+        std_dev = np.std(umep_lv[:, 2])
+        # UMEP produces non-uniform output here — our Rust port intentionally improves on this
+        assert std_dev > 1e-6, f"[{label}] UMEP unexpectedly returns uniform (std={std_dev:.8f})"
+
+
 class TestSteradiansParity:
     """Rust compute_steradians must match Python patch_steradians."""
 
@@ -91,8 +133,8 @@ class TestSteradiansParity:
     def test_steradians_match_python(self, patch_option):
         """Rust steradians match Python for each patch option."""
         # Python reference: patch_steradians needs the lv array (uses column 0 only)
-        py_lv, _, _ = Perez_v3(30.0, 180.0, 200.0, 400.0, 180, patchchoice=1, patch_option=patch_option)
-        py_ster, _, _ = patch_steradians(py_lv)
+        umep_lv, _, _ = Perez_v3(30.0, 180.0, 200.0, 400.0, 180, patchchoice=1, patch_option=patch_option)
+        py_ster, _, _ = patch_steradians(umep_lv)
 
         # Rust implementation
         rs_ster = np.asarray(pipeline.compute_steradians_py(patch_option))
@@ -134,9 +176,9 @@ class TestSteradiansCaching:
             _n_patches=n_patches,
         )
 
-        # Direct computation via Python
-        py_lv, _, _ = Perez_v3(30.0, 180.0, 200.0, 400.0, 180, patchchoice=1, patch_option=patch_option)
-        py_ster, _, _ = patch_steradians(py_lv)
+        # Direct computation via UMEP + local patch_steradians
+        umep_lv, _, _ = Perez_v3(30.0, 180.0, 200.0, 400.0, 180, patchchoice=1, patch_option=patch_option)
+        py_ster, _, _ = patch_steradians(umep_lv)
 
         # Cached property
         cached_ster = sa.steradians

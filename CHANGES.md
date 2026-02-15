@@ -206,22 +206,6 @@ _Record discussions with original authors here._
 
 ### [Date] Discussion Topic
 
----
-
-## Version Information
-
-- **UMEP Python version:** (check with `pip show umep`)
-- **SOLWEIG Rust version:** See Cargo.toml
-- **Test data:** Athens demo dataset
-
----
-
-## Discussion Log
-
-_Record discussions with original authors here._
-
-### [Date] Discussion Topic
-
 - Participants:
 - Decision:
 - Action items:

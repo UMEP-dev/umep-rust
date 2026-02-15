@@ -1,5 +1,10 @@
 """
-Mean Radiant Temperature (Tmrt) computation component.
+Mean Radiant Temperature (Tmrt) computation component — **reference implementation only**.
+
+Not called by the production ``calculate()`` API. The fused Rust pipeline
+(``pipeline.compute_timestep``) computes Tmrt internally.
+
+Retained for readability, tests, and validation against UMEP.
 
 Computes Tmrt from radiation budget using human body geometry and absorptivities.
 The human body is modeled as a standing or sitting cylinder with specific view factors.

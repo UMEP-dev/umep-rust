@@ -10,6 +10,7 @@ import statistics
 import time
 from collections import defaultdict
 from pathlib import Path
+from typing import Any, cast
 
 # ── Monkey-patch component functions with timing ──────────────────────
 
@@ -48,15 +49,18 @@ tmrt_rust.compute_tmrt = _timed("rust:tmrt", tmrt_rust.compute_tmrt)
 # Patch at computation.py level (captures Python wrapper + Rust call)
 from solweig import computation  # noqa: E402
 
+# Explicit Any alias for monkey-patching dynamic module attributes used only in this profiler.
+comp = cast(Any, computation)
+
 # These are the functions imported by computation.py at module level
 # We need to patch computation's references directly
-computation.compute_shadows = _timed("py:shadows", computation.compute_shadows)
-computation.resolve_svf = _timed("py:svf_resolve", computation.resolve_svf)
-computation.compute_ground_temperature = _timed("py:ground_temp", computation.compute_ground_temperature)
-computation.compute_gvf = _timed("py:gvf", computation.compute_gvf)
-computation.compute_radiation = _timed("py:radiation", computation.compute_radiation)
-computation.compute_tmrt = _timed("py:tmrt", computation.compute_tmrt)
-computation._apply_thermal_delay = _timed("py:thermal_delay", computation._apply_thermal_delay)
+comp.compute_shadows = _timed("py:shadows", comp.compute_shadows)
+comp.resolve_svf = _timed("py:svf_resolve", comp.resolve_svf)
+comp.compute_ground_temperature = _timed("py:ground_temp", comp.compute_ground_temperature)
+comp.compute_gvf = _timed("py:gvf", comp.compute_gvf)
+comp.compute_radiation = _timed("py:radiation", comp.compute_radiation)
+comp.compute_tmrt = _timed("py:tmrt", comp.compute_tmrt)
+comp._apply_thermal_delay = _timed("py:thermal_delay", comp._apply_thermal_delay)
 
 # Patch I/O
 from solweig.models import results as results_mod  # noqa: E402
@@ -66,15 +70,13 @@ if hasattr(results_mod, "SolweigResult"):
     results_mod.SolweigResult.to_geotiff = _timed("io:geotiff_write", orig_to_geotiff)
 
 # Patch nighttime result
-computation._nighttime_result = _timed("py:nighttime", computation._nighttime_result)
+comp._nighttime_result = _timed("py:nighttime", comp._nighttime_result)
 
-# Patch Python physics used in radiation
-from solweig.physics import Kup_veg_2015a as kup_mod  # noqa: E402
-
-kup_mod.Kup_veg_2015a = _timed("py:Kup_veg", kup_mod.Kup_veg_2015a)
+# Patch Python physics used in radiation (requires UMEP)
 from solweig.components import radiation as rad_mod  # noqa: E402
 
-rad_mod.Kup_veg_2015a = _timed("py:Kup_veg_comp", rad_mod.Kup_veg_2015a)
+if rad_mod.Kup_veg_2015a is not None:
+    rad_mod.Kup_veg_2015a = _timed("py:Kup_veg_comp", rad_mod.Kup_veg_2015a)
 
 
 def profile_period(weather_slice, label, surface, output_dir):

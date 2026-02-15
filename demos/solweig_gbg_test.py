@@ -5,6 +5,7 @@ Demo: Gothenburg SOLWEIG preprocessing
 This demo shows how to use the solweig package for:
 1. Wall height and aspect generation
 2. Sky View Factor (SVF) calculation
+3. Land-cover-based surface properties (albedo, emissivity)
 
 Uses SurfaceData.prepare() which automatically computes and caches
 walls and SVF in the working directory.
@@ -23,6 +24,8 @@ working_path.mkdir(parents=True, exist_ok=True)
 # Input files
 dsm_path = "demos/data/Goteborg_SWEREF99_1200/DSM_KRbig.tif"
 cdsm_path = "demos/data/Goteborg_SWEREF99_1200/CDSM_KRbig.tif"
+dem_path = "demos/data/Goteborg_SWEREF99_1200/DEM_KRbig.tif"
+land_cover_path = "demos/data/Goteborg_SWEREF99_1200/landcover.tif"
 
 # Setup parameters
 trunk_ratio = 0.25  # Trunk height as fraction of canopy height
@@ -41,6 +44,8 @@ print(f"GPU acceleration: {'enabled' if solweig.GPU_ENABLED else 'disabled'}")
 surface = solweig.SurfaceData.prepare(
     dsm=dsm_path,
     cdsm=cdsm_path,
+    dem=dem_path,
+    land_cover=land_cover_path,
     working_dir=str(working_path),
     trunk_ratio=trunk_ratio,
     # bbox=None,  # Full extent (default)

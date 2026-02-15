@@ -1,5 +1,11 @@
 """
-Radiation calculation component.
+Radiation calculation component — **reference implementation only**.
+
+Not called by the production ``calculate()`` API. The fused Rust pipeline
+(``pipeline.compute_timestep``) performs all radiation calculations internally,
+including Perez sky luminance distribution.
+
+Retained for readability, tests, and validation against UMEP.
 
 Computes complete radiation budget:
 - Shortwave: direct beam, diffuse sky, ground reflection, wall reflection
@@ -23,9 +29,14 @@ import numpy as np
 from ..buffers import as_float32
 from ..bundles import DirectionalArrays, RadiationBundle
 from ..constants import F_SIDE_SITTING, F_SIDE_STANDING, F_UP_SITTING, F_UP_STANDING, KELVIN_OFFSET, SBC
-from ..physics.Kup_veg_2015a import Kup_veg_2015a
 from ..physics.patch_radiation import patch_steradians
-from ..physics.Perez_v3 import Perez_v3
+
+try:
+    from umep.functions.SOLWEIGpython.Kup_veg_2015a import Kup_veg_2015a
+    from umep.util.SEBESOLWEIGCommonFiles.Perez_v3 import Perez_v3
+except ImportError:
+    Kup_veg_2015a = None  # type: ignore[assignment,misc]
+    Perez_v3 = None  # type: ignore[assignment,misc]
 from ..rustalgos import sky as _sky
 
 if TYPE_CHECKING:

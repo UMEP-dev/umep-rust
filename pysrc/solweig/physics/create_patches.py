@@ -1,3 +1,12 @@
+"""
+Sky vault patch geometry — **reference implementation only**.
+
+Not called by the production ``calculate()`` API. The fused Rust pipeline
+constructs patch geometry internally.
+
+Retained for readability, tests, and validation against UMEP.
+"""
+
 import numpy as np
 
 

@@ -1,7 +1,11 @@
 """
-Pure numpy implementations of morphological operations.
+Pure numpy implementations of morphological operations — **reference implementation only**.
 
-Replaces scipy.ndimage functions to eliminate the scipy dependency,
+Not called by the production ``calculate()`` API. The fused Rust pipeline
+uses ``crate::morphology`` internally.
+
+Retained for readability, tests, and validation against UMEP.
+Originally replaced scipy.ndimage functions to eliminate the scipy dependency,
 making the package lighter for QGIS plugin distribution.
 """
 
