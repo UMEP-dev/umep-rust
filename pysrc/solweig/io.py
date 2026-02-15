@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from ._compat import GDAL_ENV
+from .buffers import as_float32
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -261,7 +262,7 @@ def save_raster(
     trf_arr: list[float],
     crs_wkt: str | None,
     no_data_val: float = -9999,
-    coerce_f64_to_f32: bool = True,
+    ensure_float32: bool = True,
     use_cog: bool = True,
     generate_preview: bool = True,
 ):
@@ -274,16 +275,15 @@ def save_raster(
         trf_arr: GDAL-style geotransform [top_left_x, pixel_width, rotation, top_left_y, rotation, pixel_height]
         crs_wkt: CRS in WKT format
         no_data_val: No-data value to use
-        coerce_f64_to_f32: If True, convert float64 arrays to float32 before saving
-                           (default: True for memory efficiency)
+        ensure_float32: If True, ensure array is float32 before saving
+                        (default: True — converts any non-float32 dtype)
         use_cog: If True, save as Cloud-Optimized GeoTIFF with built-in overviews
                  (default: True for better OS thumbnail support)
         generate_preview: If True, generate a sidecar .preview.png file for OS thumbnails
                          (default: True for float data that can't be previewed directly)
     """
-    # Only convert float64 to float32, leave ints/bools unchanged
-    if coerce_f64_to_f32 and data_arr.dtype == np.float64:
-        data_arr = data_arr.astype(np.float32)
+    if ensure_float32:
+        data_arr = as_float32(data_arr)
 
     attempts = 2
     while attempts > 0:
@@ -492,7 +492,7 @@ def read_raster_window(path_str: str | Path, window: tuple[slice, slice], band: 
 
 
 def load_raster(
-    path_str: str, bbox: list[int] | None = None, band: int = 0, coerce_f64_to_f32: bool = True
+    path_str: str, bbox: list[int] | None = None, band: int = 0, ensure_float32: bool = True
 ) -> tuple[np.ndarray, list[float], str | None, float | None]:
     """
     Load raster, optionally crop to bbox.
@@ -501,7 +501,8 @@ def load_raster(
         path_str: Path to raster file
         bbox: Optional bounding box [minx, miny, maxx, maxy]
         band: Band index to read (0-based)
-        coerce_f64_to_f32: If True, coerce array to float32 (default: True for memory efficiency)
+        ensure_float32: If True, ensure output array is float32
+                        (default: True — converts any non-float32 dtype including integers)
 
     Returns:
         Tuple of (array, transform, crs_wkt, no_data_value)
@@ -538,14 +539,8 @@ def load_raster(
                 if band < 0 or band >= rast.shape[0]:
                     raise IndexError(f"Requested band {band} out of range; raster has {rast.shape[0]} band(s)")
                 rast_arr = rast[band]
-                # Only convert float64 to float32, leave ints/bools unchanged
-                if coerce_f64_to_f32 and rast_arr.dtype == np.float64:
-                    rast_arr = rast_arr.astype(np.float32)
             else:
                 rast_arr = rast
-                # Only convert float64 to float32, leave ints/bools unchanged
-                if coerce_f64_to_f32 and rast_arr.dtype == np.float64:
-                    rast_arr = rast_arr.astype(np.float32)
     else:
         dataset = gdal.Open(str(path))
         if dataset is None:
@@ -559,9 +554,6 @@ def load_raster(
             dataset = None
             raise IndexError(f"Requested band {band} out of range in GDAL dataset")
         rast_arr = rb.ReadAsArray()
-        # Only convert float64 to float32, leave ints/bools unchanged
-        if coerce_f64_to_f32 and rast_arr.dtype == np.float64:
-            rast_arr = rast_arr.astype(np.float32)
         no_data_val = rb.GetNoDataValue()
         if bbox is not None:
             bbox_tuple = _normalise_bbox(bbox)
@@ -590,6 +582,8 @@ def load_raster(
         else:
             trf_arr = [trf[0], trf[1], 0, trf[3], 0, trf[5]]
         dataset = None  # ensure dataset closed
+    if ensure_float32:
+        rast_arr = as_float32(rast_arr)
     # Handle no-data (support NaN)
     if no_data_val is not None and not np.isnan(no_data_val):
         logger.info(f"No-data value is {no_data_val}, replacing with NaN")

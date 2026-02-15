@@ -184,7 +184,7 @@ class SvfArrays:
                 filepath = tmppath / filename
                 if not filepath.exists():
                     raise FileNotFoundError(f"Expected SVF file not found in zip: {filename}")
-                data, _, _, _ = common.load_raster(str(filepath), coerce_f64_to_f32=True)
+                data, _, _, _ = common.load_raster(str(filepath), ensure_float32=True)
                 return data
 
             # Load basic SVF arrays

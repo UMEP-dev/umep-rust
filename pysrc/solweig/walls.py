@@ -45,7 +45,7 @@ def generate_wall_hts(
         wall_hts.tif: Wall heights in meters
         wall_aspects.tif: Wall aspect in degrees (0 = North)
     """
-    dsm_rast, dsm_transf, dsm_crs, _dsm_nd = common.load_raster(dsm_path, bbox, coerce_f64_to_f32=True)
+    dsm_rast, dsm_transf, dsm_crs, _dsm_nd = common.load_raster(dsm_path, bbox, ensure_float32=True)
     dsm_scale = 1 / dsm_transf[1]
 
     out_path = Path(out_dir)
@@ -53,7 +53,7 @@ def generate_wall_hts(
     out_path_str = str(out_path)
 
     walls = wa.findwalls(dsm_rast, wall_limit)
-    common.save_raster(out_path_str + "/" + "wall_hts.tif", walls, dsm_transf, dsm_crs, coerce_f64_to_f32=True)
+    common.save_raster(out_path_str + "/" + "wall_hts.tif", walls, dsm_transf, dsm_crs, ensure_float32=True)
 
     dirwalls = wa.filter1Goodwin_as_aspect_v3(walls, dsm_scale, dsm_rast)
-    common.save_raster(out_path_str + "/" + "wall_aspects.tif", dirwalls, dsm_transf, dsm_crs, coerce_f64_to_f32=True)
+    common.save_raster(out_path_str + "/" + "wall_aspects.tif", dirwalls, dsm_transf, dsm_crs, ensure_float32=True)
