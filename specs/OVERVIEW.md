@@ -23,6 +23,10 @@ SOLWEIG (Solar and Longwave Environmental Irradiance Geometry) calculates mean r
 | [utci.md](utci.md)                             | Universal Thermal Climate Index                 |
 | [pet.md](pet.md)                               | Physiological Equivalent Temperature            |
 | [technical.md](technical.md)                   | Implementation details (tiling, precision, GPU) |
+| [runtime-contract.md](runtime-contract.md)     | Runtime API preconditions and output semantics  |
+
+`runtime-contract.md` is the normative source for API/runtime behavior
+(SVF/anisotropic preconditions, shadow convention, and return semantics).
 
 ## Pipeline
 

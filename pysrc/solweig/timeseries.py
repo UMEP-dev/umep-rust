@@ -211,6 +211,8 @@ def calculate_timeseries(
     if not weather_series:
         return []
 
+    anisotropic_requested_explicitly = use_anisotropic_sky is True
+
     # Auto-extract location from surface if not provided
     if location is None:
         logger.warning(
@@ -298,6 +300,9 @@ def calculate_timeseries(
     tile_workers = effective_tile_workers
     tile_queue_depth = effective_tile_queue_depth
     prefetch_tiles = effective_prefetch_tiles
+    anisotropic_arg = (
+        use_anisotropic_sky if (anisotropic_requested_explicitly or use_anisotropic_sky is False) else None
+    )
 
     # Fill NaN in surface layers (idempotent — skipped if already done)
     surface.fill_nan()
@@ -318,7 +323,7 @@ def calculate_timeseries(
             location=location,
             human=human,
             precomputed=precomputed,
-            use_anisotropic_sky=use_anisotropic_sky,
+            use_anisotropic_sky=anisotropic_arg,
             conifer=conifer,
             physics=physics,
             materials=materials,
@@ -426,7 +431,7 @@ def calculate_timeseries(
                 weather=weather,
                 human=human,
                 precomputed=precomputed,
-                use_anisotropic_sky=use_anisotropic_sky,
+                use_anisotropic_sky=anisotropic_arg,
                 conifer=conifer,
                 state=state,
                 physics=physics,
@@ -464,7 +469,7 @@ def calculate_timeseries(
                     surface=surface,
                 )
 
-            if output_dir is not None or not return_results:
+            if not return_results:
                 # Free large arrays once data is persisted or caller requested streaming mode.
                 result.tmrt = None  # type: ignore[assignment]
                 result.shadow = None

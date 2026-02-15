@@ -245,7 +245,10 @@ results = solweig.calculate_timeseries(
 )
 ```
 
-This requires precomputed shadow matrices, which are generated automatically on first use.
+This requires precomputed shadow matrices. They are prepared alongside SVF via
+`SurfaceData.prepare(...)` or `surface.compute_svf()`. If you explicitly set
+`use_anisotropic_sky=True` without shadow matrices, `calculate*()` raises
+`MissingPrecomputedData`.
 
 ## Input validation
 

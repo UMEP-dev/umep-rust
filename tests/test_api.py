@@ -22,6 +22,7 @@ from solweig.api import (
     calculate_tiled,
     generate_tiles,
 )
+from solweig.errors import MissingPrecomputedData
 from solweig.models.surface import _max_shadow_height
 
 
@@ -620,8 +621,23 @@ class TestCalculateIntegration:
 
         # At night, Tmrt should be close to air temperature
         assert np.allclose(result.tmrt, 15.0, atol=1.0)
-        # At night with no sun, shadow=0 (all shaded, no sunlight)
-        assert np.all(result.shadow == 0.0)
+        # At night, convention is 1 = sunlit (no direct-beam shadows cast)
+        assert np.all(result.shadow == 1.0)
+
+    def test_explicit_anisotropic_requires_shadow_matrices(self):
+        """Explicit anisotropic request must fail without shadow matrices."""
+        dsm = np.ones((20, 20), dtype=np.float32) * 5.0
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
+        location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
+        weather = Weather(
+            datetime=datetime(2024, 7, 15, 12, 0),
+            ta=25.0,
+            rh=50.0,
+            global_rad=800.0,
+        )
+
+        with pytest.raises(MissingPrecomputedData):
+            calculate(surface, location, weather, use_anisotropic_sky=True)
 
     def test_shadows_exist(self):
         """Shadows are cast by buildings during daytime."""

@@ -2,6 +2,10 @@
 
 Implementation details, performance considerations, and computational requirements.
 
+Normative runtime/API behavior is specified in
+[runtime-contract.md](runtime-contract.md). This file focuses on implementation
+details rather than public precondition semantics.
+
 ## Data Types
 
 ### Float32 Precision

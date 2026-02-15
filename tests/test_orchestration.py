@@ -101,11 +101,11 @@ class TestNighttimeResult:
         np.testing.assert_allclose(result.tmrt, 15.0)
 
     def test_shadow_all_zero(self, surface_10x10):
-        """Shadow should be 0 (fully shaded) at night."""
+        """Shadow follows convention 1=sunlit even at night (no beam shadows)."""
         weather = _make_weather(ta=20.0)
         result = _nighttime_result(surface_10x10, weather, state=None, materials=None)
         assert result.shadow is not None
-        np.testing.assert_array_equal(result.shadow, 0.0)
+        np.testing.assert_array_equal(result.shadow, 1.0)
 
     def test_shortwave_zero(self, surface_10x10):
         """Kdown and Kup should be 0 at night (no solar radiation)."""

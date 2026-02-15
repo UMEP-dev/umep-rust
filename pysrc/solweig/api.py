@@ -341,6 +341,12 @@ def calculate(
 
     logger = logging.getLogger(__name__)
 
+    # Track whether anisotropic mode was explicitly requested by direct API arg.
+    # Config/default fallbacks intentionally do not trigger strict precondition
+    # failures because we cannot distinguish "config default" from a deliberate
+    # explicit request at runtime.
+    anisotropic_requested_explicitly = use_anisotropic_sky is True
+
     # Build effective configuration: explicit params override config
     # Config provides base values, explicit params take precedence
     effective_aniso = use_anisotropic_sky
@@ -408,6 +414,18 @@ def calculate(
 
     # Fill NaN in surface layers (idempotent — skipped if already done)
     surface.fill_nan()
+
+    # Explicit anisotropic requests must have shadow matrices available.
+    if anisotropic_requested_explicitly and use_anisotropic_sky:
+        has_shadow_matrices = (precomputed is not None and precomputed.shadow_matrices is not None) or (
+            surface.shadow_matrices is not None
+        )
+        if not has_shadow_matrices:
+            raise MissingPrecomputedData(
+                "shadow_matrices required for anisotropic sky model",
+                "Either set use_anisotropic_sky=False, or provide shadow matrices via "
+                "precomputed=PrecomputedData(shadow_matrices=...) or surface.shadow_matrices",
+            )
 
     # Fused Rust pipeline — single FFI call per daytime timestep.
     # Both isotropic and anisotropic sky models are supported.

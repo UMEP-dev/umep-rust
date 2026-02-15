@@ -17,6 +17,7 @@ from solweig import (
     calculate,
     calculate_tiled,
 )
+from solweig.errors import MissingPrecomputedData
 from solweig.models.state import ThermalState, TileSpec
 from solweig.tiling import (
     _calculate_auto_tile_size,
@@ -258,6 +259,27 @@ class TestTilingHelpers:
         # Below resource limit — no tiling needed
         assert not _should_use_tiling(max_side, max_side)
 
+    def test_calculate_tiled_requires_svf(self):
+        """Tiled runtime must not implicitly compute missing SVF."""
+        dsm = np.ones((320, 320), dtype=np.float32) * 5.0
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
+        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
+        weather = Weather(
+            datetime=datetime(2024, 7, 15, 12, 0),
+            ta=25.0,
+            rh=50.0,
+            global_rad=800.0,
+        )
+
+        with pytest.raises(MissingPrecomputedData):
+            calculate_tiled(
+                surface,
+                location,
+                weather,
+                tile_size=128,
+                use_anisotropic_sky=False,
+            )
+
     def test_auto_tile_size_returns_resource_max(self):
         """Auto tile size returns resource-derived maximum."""
         max_side = compute_max_tile_side(context="solweig")
@@ -299,8 +321,8 @@ class TestTilingHelpers:
             mock_svf.svf[10:60, 10:60],
         )
 
-    def test_extract_tile_surface_computes_svf_when_missing(self):
-        """When surface has no precomputed SVF, tile surface should compute it."""
+    def test_extract_tile_surface_leaves_svf_unset_when_missing(self):
+        """When SVF is unavailable globally, tile extraction must not compute it."""
         size = 50
         dsm = np.ones((size, size), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0)
@@ -323,9 +345,8 @@ class TestTilingHelpers:
 
         tile_surface = _extract_tile_surface(surface, tile, pixel_size=1.0)
 
-        # SVF should have been computed fresh
-        assert tile_surface.svf is not None
-        assert tile_surface.svf.svf.shape == (50, 50)
+        # SVF remains unset; callers enforce the SVF precondition.
+        assert tile_surface.svf is None
 
     def test_extract_tile_surface_uses_precomputed_svf_without_recompute(self):
         """When surface.svf is missing, precomputed.svf should be sliced and reused."""

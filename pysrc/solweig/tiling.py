@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from .errors import MissingPrecomputedData
 from .models import HumanParams, PrecomputedData, SolweigResult, SurfaceData, ThermalState, TileSpec
 from .output_async import AsyncGeoTiffWriter, async_output_enabled, collect_output_arrays
 from .solweig_logging import get_logger
@@ -388,8 +389,8 @@ def _extract_tile_surface(
     If the global surface has precomputed SVF (via prepare() or compute_svf()),
     the SVF is sliced to the tile bounds — avoiding expensive per-tile
     recomputation. If surface.svf is absent but precomputed.svf is provided,
-    that precomputed SVF is sliced instead. When neither source exists,
-    compute_svf() computes it fresh.
+    that precomputed SVF is sliced instead. When neither source exists, SVF
+    remains unset and callers must fail fast before computation.
 
     Args:
         surface: Full raster surface data.
@@ -398,7 +399,7 @@ def _extract_tile_surface(
         precomputed: Optional precomputed data containing SVF.
 
     Returns:
-        SurfaceData for this tile with SVF available.
+        SurfaceData for this tile.
     """
     read_slice = tile.read_slice
 
@@ -449,10 +450,6 @@ def _extract_tile_surface(
         svf=tile_svf,
         shadow_matrices=tile_shadow_matrices,
     )
-    # Compute only when no precomputed/cached SVF source was available.
-    if tile_svf is None:
-        tile_surface.compute_svf()
-
     return tile_surface
 
 
@@ -780,7 +777,7 @@ def calculate_tiled(
     human: HumanParams | None = None,
     precomputed: PrecomputedData | None = None,
     tile_size: int = 1024,
-    use_anisotropic_sky: bool = False,
+    use_anisotropic_sky: bool | None = None,
     conifer: bool = False,
     physics: SimpleNamespace | None = None,
     materials: SimpleNamespace | None = None,
@@ -801,9 +798,10 @@ def calculate_tiled(
         location: Geographic location (lat, lon, UTC offset).
         weather: Weather data for a single timestep.
         human: Human body parameters. Uses defaults if not provided.
-        precomputed: Pre-computed walls (SVF computed per-tile).
+        precomputed: Optional pre-computed SVF/walls/shadow matrices.
         tile_size: Core tile size in pixels (default 1024).
         use_anisotropic_sky: Use anisotropic sky model.
+            If None, follows calculate() default behavior.
         conifer: Treat vegetation as evergreen conifers. Default False.
         physics: Physics parameters. If None, uses bundled defaults.
         materials: Material properties. If None, uses bundled defaults.
@@ -825,6 +823,24 @@ def calculate_tiled(
 
     if human is None:
         human = HumanParams()
+
+    if surface.svf is None and (precomputed is None or precomputed.svf is None):
+        raise MissingPrecomputedData(
+            "Sky View Factor (SVF) data is required but not available.",
+            "Call surface.compute_svf() before calculate_tiled(), or use SurfaceData.prepare() "
+            "which computes SVF automatically.",
+        )
+
+    if use_anisotropic_sky:
+        has_shadow_matrices = (precomputed is not None and precomputed.shadow_matrices is not None) or (
+            surface.shadow_matrices is not None
+        )
+        if not has_shadow_matrices:
+            raise MissingPrecomputedData(
+                "shadow_matrices required for anisotropic sky model",
+                "Either set use_anisotropic_sky=False, or provide shadow matrices via "
+                "precomputed=PrecomputedData(shadow_matrices=...) or surface.shadow_matrices",
+            )
 
     # Compute derived weather values
     if not weather._derived_computed:
@@ -1010,7 +1026,7 @@ def calculate_timeseries_tiled(
         location: Geographic location (lat, lon, UTC offset).
         config: Model configuration (provides defaults for None params).
         human: Human body parameters. If None, uses config or defaults.
-        precomputed: Pre-computed walls (SVF computed per-tile).
+        precomputed: Optional pre-computed SVF/walls/shadow matrices.
         use_anisotropic_sky: Use anisotropic sky model.
             Shadow matrices are spatially sliced per tile.
         conifer: Treat vegetation as evergreen conifers. Default False.
@@ -1037,6 +1053,8 @@ def calculate_timeseries_tiled(
     """
     if not weather_series:
         return []
+
+    anisotropic_requested_explicitly = use_anisotropic_sky is True
 
     # Resolve effective parameters from config
     effective_aniso = use_anisotropic_sky
@@ -1084,6 +1102,7 @@ def calculate_timeseries_tiled(
         from .loaders import load_physics
 
         effective_physics = load_physics()
+    anisotropic_arg = effective_aniso if (anisotropic_requested_explicitly or effective_aniso is False) else None
 
     if output_dir is not None and effective_outputs is None:
         effective_outputs = ["tmrt"]
@@ -1103,6 +1122,24 @@ def calculate_timeseries_tiled(
 
     # Fill NaN in surface layers
     surface.fill_nan()
+
+    if surface.svf is None and (precomputed is None or precomputed.svf is None):
+        raise MissingPrecomputedData(
+            "Sky View Factor (SVF) data is required but not available.",
+            "Call surface.compute_svf() before calculate_timeseries_tiled(), or use SurfaceData.prepare() "
+            "which computes SVF automatically.",
+        )
+
+    if anisotropic_requested_explicitly and effective_aniso:
+        has_shadow_matrices = (precomputed is not None and precomputed.shadow_matrices is not None) or (
+            surface.shadow_matrices is not None
+        )
+        if not has_shadow_matrices:
+            raise MissingPrecomputedData(
+                "shadow_matrices required for anisotropic sky model",
+                "Either set use_anisotropic_sky=False, or provide shadow matrices via "
+                "precomputed=PrecomputedData(shadow_matrices=...) or surface.shadow_matrices",
+            )
 
     rows, cols = surface.shape
     pixel_size = surface.pixel_size
@@ -1267,7 +1304,7 @@ def calculate_timeseries_tiled(
                             surface=surface,
                         )
 
-                    if output_dir is not None or not return_results:
+                    if not return_results:
                         # Free large arrays once data is persisted or caller requested streaming mode.
                         result.tmrt = None  # type: ignore[assignment]
                         result.shadow = None
@@ -1322,7 +1359,7 @@ def calculate_timeseries_tiled(
                             weather=weather,
                             human=effective_human,
                             precomputed=tile_precomputeds[next_submit],
-                            use_anisotropic_sky=effective_aniso,
+                            use_anisotropic_sky=anisotropic_arg,
                             conifer=conifer,
                             state=tile_states[next_submit],
                             physics=effective_physics,
@@ -1434,7 +1471,7 @@ def calculate_timeseries_tiled(
                         surface=surface,
                     )
 
-                if output_dir is not None or not return_results:
+                if not return_results:
                     # Free large arrays once data is persisted or caller requested streaming mode.
                     result.tmrt = None  # type: ignore[assignment]
                     result.shadow = None

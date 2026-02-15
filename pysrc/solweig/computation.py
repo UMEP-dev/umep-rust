@@ -74,7 +74,8 @@ def _nighttime_result(
     nan_mask = np.isnan(surface.dsm)
     tmrt = np.full((rows, cols), weather.ta, dtype=np.float32)
     tmrt[nan_mask] = np.nan
-    shadow = np.zeros((rows, cols), dtype=np.float32)  # 0 = shaded (night)
+    # Night convention: no direct-beam shadows are cast below horizon, so shadow=1.
+    shadow = np.ones((rows, cols), dtype=np.float32)  # 1 = sunlit (night convention)
 
     # Nighttime longwave: Lup = SBC × emis × Ta⁴
     ta_k = weather.ta + KELVIN_OFFSET

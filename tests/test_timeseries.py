@@ -234,6 +234,19 @@ class TestCalculateTimeseries:
         # Check that some output files were created
         output_files = list(tmp_path.iterdir())
         assert len(output_files) > 0
+        # With return_results=True (default), arrays must remain available.
+        assert all(r.tmrt is not None for r in results)
+
+    def test_explicit_anisotropic_requires_shadow_matrices(self, flat_surface, location):
+        """Explicit anisotropic request should fail without shadow matrices."""
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
+        with pytest.raises(MissingPrecomputedData):
+            calculate_timeseries(
+                flat_surface,
+                weather_series,
+                location,
+                use_anisotropic_sky=True,
+            )
 
     def test_return_results_false_returns_empty_list(self, flat_surface, location):
         """Streaming mode should avoid retaining per-timestep results."""

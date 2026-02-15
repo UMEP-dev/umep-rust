@@ -76,7 +76,8 @@ output/
 └── run_metadata.json            # All parameters for reproducibility
 ```
 
-When `output_dir` is set, arrays are freed after saving to conserve memory.
+By default (`return_results=True`), timestep arrays are still returned in memory.
+Set `return_results=False` to stream to disk with minimal memory retention.
 
 ## Choose an output strategy
 
@@ -91,11 +92,12 @@ results = solweig.calculate_timeseries(
     weather_series=weather_list,
     output_dir="output/",
     outputs=["tmrt", "shadow"],
+    return_results=False,         # Lowest-memory streaming mode
 )
 ```
 
-- Pros: low memory use, immediate GeoTIFF outputs, restart-friendly
-- Cons: more disk I/O and storage
+- Pros: lowest memory use, immediate GeoTIFF outputs, restart-friendly
+- Cons: more disk I/O/storage, no in-memory per-timestep arrays returned
 
 ### Strategy B: Keep in memory, aggregate, save selected outputs manually
 

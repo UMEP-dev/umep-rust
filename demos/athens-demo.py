@@ -108,8 +108,8 @@ results = solweig.calculate_timeseries(
 
 print(f"\n✓ Simplified API complete! Processed {len(results)} timesteps.")
 
-# When output_dir is provided, arrays are freed after saving to disk to conserve memory.
-# Load a saved GeoTIFF to inspect results:
+# Arrays are retained by default (return_results=True) even when output_dir is set.
+# Use return_results=False for streaming/low-memory runs. Load a saved GeoTIFF to inspect results:
 sample_tif = next(output_dir.glob("tmrt/tmrt_*.tif"))
 sample_arr, *_ = solweig.io.load_raster(str(sample_tif))
 print(f"  Mean Tmrt (first timestep): {sample_arr[sample_arr > -9999].mean():.1f}°C")
