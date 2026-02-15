@@ -234,7 +234,8 @@ result = solweig.calculate(
 
 ## Anisotropic sky model
 
-By default, SOLWEIG treats diffuse sky radiation as uniform (isotropic). For more accurate results — especially under partly cloudy conditions — enable the anisotropic (Perez) sky model:
+SOLWEIG supports both isotropic and anisotropic sky models. For reproducible
+behavior, set `use_anisotropic_sky` explicitly in your call:
 
 ```python
 results = solweig.calculate_timeseries(
@@ -245,9 +246,9 @@ results = solweig.calculate_timeseries(
 )
 ```
 
-This requires precomputed shadow matrices. They are prepared alongside SVF via
-`SurfaceData.prepare(...)` or `surface.compute_svf()`. If you explicitly set
-`use_anisotropic_sky=True` without shadow matrices, `calculate*()` raises
+If you explicitly set `use_anisotropic_sky=True`, shadow matrices must already
+be available. They are prepared alongside SVF via `SurfaceData.prepare(...)`
+or `surface.compute_svf()`. Otherwise, `calculate*()` raises
 `MissingPrecomputedData`.
 
 ## Input validation

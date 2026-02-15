@@ -52,6 +52,7 @@ print(f"Shaded Tmrt: {result.tmrt[result.shadow < 0.5].mean():.1f}°C")
 
 !!! note "SVF is explicit"
     `calculate()` requires SVF to already be available. For array-based workflows, call `surface.compute_svf()` once before the first calculation. For GeoTIFF workflows, `SurfaceData.prepare()` computes/caches SVF for you.
+    If you explicitly set `use_anisotropic_sky=True`, shadow matrices must also already be available (prepared via the same preprocessing step).
 
 ## Option B: From GeoTIFF files (real-world data)
 
@@ -95,7 +96,9 @@ results = solweig.calculate_timeseries(
 print(f"Done — {len(results)} timesteps saved to output/")
 ```
 
-If disk space is limited, you can omit `output_dir`, aggregate in memory, and save only final summary products. See [Timeseries](../guide/timeseries.md#choose-an-output-strategy).
+If disk space is limited, omit `output_dir` and aggregate in memory, or keep
+`output_dir` and set `return_results=False` for low-memory streaming. See
+[Timeseries](../guide/timeseries.md#choose-an-output-strategy).
 
 ### What `prepare()` does behind the scenes
 

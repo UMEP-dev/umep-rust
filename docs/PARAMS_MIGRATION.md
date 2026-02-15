@@ -156,7 +156,7 @@ results = solweig.calculate_timeseries(
 # Uses bundled defaults:
 # - abs_k=0.7, abs_l=0.95, posture="standing"
 # - Vegetation transmissivity=0.03, deciduous trees
-# - Isotropic sky (use_anisotropic_sky=False)
+# - Sky model from ModelConfig defaults (override explicitly if needed)
 ```
 
 ### With direct parameters

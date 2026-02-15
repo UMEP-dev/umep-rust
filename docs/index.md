@@ -36,6 +36,11 @@ That's it. `SurfaceData.prepare()` computes/caches walls and SVF; then `calculat
     `calculate()` / `calculate_timeseries()` require SVF to already be available on `surface` (or via `precomputed.svf`).
     Use `SurfaceData.prepare(...)` for automatic SVF preparation/caching, or call `surface.compute_svf()` explicitly for in-memory/manual surfaces.
 
+!!! note "Anisotropic Rule"
+    If you explicitly set `use_anisotropic_sky=True`, shadow matrices must already be available
+    (`surface.shadow_matrices` or `precomputed.shadow_matrices`), typically prepared via
+    `SurfaceData.prepare(...)` or `surface.compute_svf()`.
+
 ## How it works
 
 SOLWEIG models the complete radiation budget experienced by a person standing outdoors:

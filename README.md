@@ -63,6 +63,10 @@ print(f"Sunlit Tmrt: {result.tmrt[result.shadow > 0.5].mean():.0f}°C")
 print(f"Shaded Tmrt: {result.tmrt[result.shadow < 0.5].mean():.0f}°C")
 ```
 
+`calculate*()` requires SVF to already be prepared (`SurfaceData.prepare(...)`
+or `surface.compute_svf()`). If you explicitly set
+`use_anisotropic_sky=True`, shadow matrices must also already be available.
+
 ### Real-world workflow (GeoTIFFs + EPW weather)
 
 ```python

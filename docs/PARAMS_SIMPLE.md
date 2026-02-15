@@ -67,10 +67,11 @@ Contains per-landcover-class values:
 
 Two direct parameters control major model behavior:
 
-### `use_anisotropic_sky` (default: `False`)
-- `False` = Faster, simpler sky model
-- `True` = Slower, more accurate (Perez diffuse model)
+### `use_anisotropic_sky` (default: follows `ModelConfig`, currently `True`)
+- `False` = Simpler isotropic sky model
+- `True` = Perez anisotropic sky model
 - **When to change:** Research papers, high-accuracy work
+If explicitly set to `True`, shadow matrices must already be prepared.
 
 ### `conifer` (default: `False`)
 - `False` = Deciduous trees (seasonal leaf on/off)
