@@ -20,8 +20,10 @@ import numpy as np
 from .metadata import create_run_metadata, save_run_metadata
 from .models import HumanParams, Location, ThermalState
 from .output_async import AsyncGeoTiffWriter, async_output_enabled, collect_output_arrays
+from .postprocess import compute_pet_grid, compute_utci_grid
 from .progress import ProgressReporter
 from .solweig_logging import get_logger
+from .summary import GridAccumulator, TimeseriesSummary
 
 logger = get_logger(__name__)
 
@@ -100,7 +102,6 @@ if TYPE_CHECKING:
     from .models import (
         ModelConfig,
         PrecomputedData,
-        SolweigResult,
         SurfaceData,
         Weather,
     )
@@ -124,11 +125,17 @@ def calculate_timeseries(
     prefetch_tiles: bool | None = None,
     output_dir: str | Path | None = None,
     outputs: list[str] | None = None,
-    return_results: bool = True,
+    timestep_outputs: list[str] | None = None,
+    heat_thresholds_day: list[float] | None = None,
+    heat_thresholds_night: list[float] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
-) -> list[SolweigResult]:
+) -> TimeseriesSummary:
     """
     Calculate Tmrt for a time series of weather data.
+
+    Returns a :class:`TimeseriesSummary` with aggregated per-pixel grids
+    (mean/max/min Tmrt and UTCI, sun/shade hours, heat-stress exceedance).
+    Per-timestep arrays are only retained when ``timestep_outputs`` is provided.
 
     Maintains thermal state across timesteps for accurate surface temperature
     modeling with thermal inertia (TsWaveDelay_2015a).
@@ -174,42 +181,47 @@ def calculate_timeseries(
             uses config.tile_queue_depth or a runtime default.
         prefetch_tiles: Whether to prefetch extra tile tasks beyond active workers.
             If None, uses config.prefetch_tiles or runtime auto-selection.
-        output_dir: Directory to save results. If provided, results are saved
-            incrementally as GeoTIFF files during calculation (recommended for
-            long timeseries to avoid memory issues).
-        outputs: Which outputs to save (e.g., ["tmrt", "shadow", "kdown"]).
+        output_dir: Directory to save results. If provided, per-timestep results
+            are saved incrementally as GeoTIFF files during calculation.
+            Summary grids are always saved to ``output_dir/summary/``.
+        outputs: Which per-timestep outputs to save (e.g., ["tmrt", "shadow"]).
             Only used if output_dir is provided. If None, uses config.outputs or ["tmrt"].
-        return_results: Whether to keep timestep results in memory and return them.
-            Set False for long runs to stream computation and reduce memory usage.
+        timestep_outputs: Which per-timestep arrays to retain in memory
+            (e.g., ``["tmrt", "shadow"]``). When provided, ``summary.results``
+            contains a list of SolweigResult with those fields populated.
+            Default None (summary-only, no per-timestep arrays kept).
+        heat_thresholds_day: UTCI thresholds (°C) for daytime exceedance hours.
+            Default ``[32, 38]`` (strong / very strong heat stress).
+        heat_thresholds_night: UTCI thresholds (°C) for nighttime exceedance hours.
+            Default ``[26]`` (tropical night threshold).
         progress_callback: Optional callback(current_step, total_steps) called after
             each timestep. If None, a tqdm progress bar is shown automatically.
 
     Returns:
-        List of SolweigResult objects, one per timestep.
-        Each result includes the thermal state at that timestep.
-        Note: UTCI and PET fields will be None. Use compute_utci() or compute_pet()
-        for post-processing thermal comfort indices.
+        :class:`TimeseriesSummary` with aggregated grids and metadata.
+        Access ``summary.results`` for per-timestep arrays (requires
+        ``timestep_outputs``).
 
     Example:
-        # Run time series with all defaults
-        results = calculate_timeseries(
+        # Summary only (default)
+        summary = calculate_timeseries(
             surface=surface,
             weather_series=weather_list,
-            output_dir="output/",
         )
+        print(summary.tmrt_mean, summary.utci_hours_above[32])
 
-        # With config as base, explicit param override
-        config = ModelConfig(use_anisotropic_sky=True)
-        results = calculate_timeseries(
+        # With per-timestep arrays retained
+        summary = calculate_timeseries(
             surface=surface,
             weather_series=weather_list,
-            config=config,
-            use_anisotropic_sky=False,  # Explicit param wins
+            timestep_outputs=["tmrt", "shadow"],
             output_dir="output/",
         )
+        for r in summary.results:
+            print(r.tmrt.mean())
     """
     if not weather_series:
-        return []
+        return TimeseriesSummary.empty()
 
     anisotropic_requested_explicitly = use_anisotropic_sky is True
 
@@ -334,7 +346,9 @@ def calculate_timeseries(
             prefetch_tiles=prefetch_tiles,
             output_dir=output_dir,
             outputs=outputs,
-            return_results=return_results,
+            timestep_outputs=timestep_outputs,
+            heat_thresholds_day=heat_thresholds_day,
+            heat_thresholds_night=heat_thresholds_night,
             progress_callback=progress_callback,
         )
 
@@ -373,10 +387,13 @@ def calculate_timeseries(
     if output_dir is not None:
         requested_outputs = set(outputs or ["tmrt"])
         requested_outputs.add("tmrt")
-    elif not return_results:
-        # Streaming mode without file output does not need non-Tmrt arrays.
-        # Ask fused Rust path to skip converting optional outputs to numpy.
-        requested_outputs = {"tmrt"}
+        requested_outputs.add("shadow")  # needed for sun/shade hour accumulation
+    elif timestep_outputs is not None:
+        # Keep specific per-timestep arrays; always include tmrt + shadow for accumulator.
+        requested_outputs = {"tmrt", "shadow"} | set(timestep_outputs)
+    else:
+        # Summary-only mode: only need tmrt + shadow for accumulation.
+        requested_outputs = {"tmrt", "shadow"}
 
     # Import calculate here to avoid circular import
     from .api import calculate
@@ -393,18 +410,23 @@ def calculate_timeseries(
     processed_steps = 0
     state = ThermalState.initial(surface.shape)
 
-    # Incremental stats accumulators (avoids iterating all results for summary)
-    _tmrt_sum = 0.0
-    _tmrt_max = -np.inf
-    _tmrt_min = np.inf
-    _tmrt_count = 0
-
     # Pre-calculate timestep size from first two entries (matching runner behavior)
     # The runner uses a fixed timestep_dec for all iterations, calculated upfront
     if len(weather_series) >= 2:
         dt0 = weather_series[0].datetime
         dt1 = weather_series[1].datetime
         state.timestep_dec = (dt1 - dt0).total_seconds() / 86400.0
+        _timestep_hours = (dt1 - dt0).total_seconds() / 3600.0
+    else:
+        _timestep_hours = 1.0
+
+    # Grid accumulator for summary statistics
+    _accumulator = GridAccumulator(
+        shape=surface.shape,
+        heat_thresholds_day=heat_thresholds_day if heat_thresholds_day is not None else [32.0, 38.0],
+        heat_thresholds_night=heat_thresholds_night if heat_thresholds_night is not None else [26.0],
+        timestep_hours=_timestep_hours,
+    )
 
     # Pre-create buffer pool for array reuse across timesteps
     _ = surface.get_buffer_pool()
@@ -447,13 +469,20 @@ def calculate_timeseries(
                 state = result.state
                 result.state = None  # Free state arrays (~23 MB); state managed externally
 
-            # Update incremental stats (before potential array release)
-            _valid = result.tmrt[np.isfinite(result.tmrt)]
-            if _valid.size > 0:
-                _tmrt_sum += _valid.sum()
-                _tmrt_count += _valid.size
-                _tmrt_max = max(_tmrt_max, float(_valid.max()))
-                _tmrt_min = min(_tmrt_min, float(_valid.min()))
+            # Update grid accumulator (before potential array release)
+            _accumulator.update(result, weather, compute_utci_fn=compute_utci_grid)
+
+            # Compute per-timestep UTCI/PET if requested (for in-memory or file output)
+            _need_utci = (timestep_outputs is not None and "utci" in timestep_outputs) or (
+                outputs is not None and "utci" in outputs
+            )
+            _need_pet = (timestep_outputs is not None and "pet" in timestep_outputs) or (
+                outputs is not None and "pet" in outputs
+            )
+            if _need_utci and result.utci is None:
+                result.utci = compute_utci_grid(result.tmrt, weather.ta, weather.rh, weather.ws)
+            if _need_pet and result.pet is None:
+                result.pet = compute_pet_grid(result.tmrt, weather.ta, weather.rh, weather.ws, human)
 
             # Save incrementally if output_dir provided
             if _writer is not None:
@@ -469,16 +498,36 @@ def calculate_timeseries(
                     surface=surface,
                 )
 
-            if not return_results:
-                # Free large arrays once data is persisted or caller requested streaming mode.
+            if timestep_outputs is not None:
+                # Keep only requested fields; free the rest.
+                _keep = set(timestep_outputs)
+                if "tmrt" not in _keep:
+                    result.tmrt = None  # type: ignore[assignment]
+                if "shadow" not in _keep:
+                    result.shadow = None
+                if "kdown" not in _keep:
+                    result.kdown = None
+                if "kup" not in _keep:
+                    result.kup = None
+                if "ldown" not in _keep:
+                    result.ldown = None
+                if "lup" not in _keep:
+                    result.lup = None
+                if "utci" not in _keep:
+                    result.utci = None
+                if "pet" not in _keep:
+                    result.pet = None
+                results.append(result)
+            else:
+                # Summary-only: free all large arrays.
                 result.tmrt = None  # type: ignore[assignment]
                 result.shadow = None
                 result.kdown = None
                 result.kup = None
                 result.ldown = None
                 result.lup = None
-            if return_results:
-                results.append(result)
+                result.utci = None
+                result.pet = None
             processed_steps += 1
 
             # Report progress
@@ -492,6 +541,11 @@ def calculate_timeseries(
         if _writer is not None:
             _writer.close()
 
+    # Finalize summary
+    summary = _accumulator.finalize()
+    summary.results = results  # empty list when timestep_outputs=None
+    summary._surface = surface
+
     # Calculate total elapsed time
     total_time = time.time() - start_time
     overall_rate = processed_steps / total_time if total_time > 0 else 0
@@ -500,17 +554,21 @@ def calculate_timeseries(
     logger.info("=" * 60)
     logger.info(f"✓ Calculation complete: {processed_steps} timesteps processed")
     logger.info(f"  Total time: {total_time:.1f}s ({overall_rate:.2f} steps/s)")
-    if _tmrt_count > 0:
-        mean_tmrt = _tmrt_sum / _tmrt_count
-        logger.info(f"  Tmrt range: {_tmrt_min:.1f}°C - {_tmrt_max:.1f}°C (mean: {mean_tmrt:.1f}°C)")
+    if summary.n_timesteps > 0:
+        _valid_mean = np.nanmean(summary.tmrt_mean)
+        _valid_min = np.nanmin(summary.tmrt_min)
+        _valid_max = np.nanmax(summary.tmrt_max)
+        logger.info(f"  Tmrt range: {_valid_min:.1f}°C - {_valid_max:.1f}°C (mean: {_valid_mean:.1f}°C)")
 
     if output_dir is not None and outputs is not None:
         file_count = processed_steps * len(outputs)
         logger.info(f"  Files saved: {file_count} GeoTIFFs in {output_dir}")
     logger.info("=" * 60)
 
-    # Save run metadata if output_dir is provided
+    # Save summary grids and run metadata if output_dir is provided
     if output_dir is not None:
+        summary.to_geotiff(output_dir, surface=surface)
+        summary._output_dir = Path(output_dir)
         metadata = create_run_metadata(
             surface=surface,
             location=location,
@@ -525,4 +583,4 @@ def calculate_timeseries(
         )
         save_run_metadata(metadata, output_dir)
 
-    return results
+    return summary

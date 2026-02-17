@@ -54,11 +54,10 @@ from .models import (
     Weather,
 )
 from .postprocess import (
-    compute_pet,
     compute_pet_grid,
-    compute_utci,
     compute_utci_grid,
 )
+from .summary import Timeseries, TimeseriesSummary
 from .tiling import (
     calculate_buffer_distance,
     calculate_tiled,
@@ -473,6 +472,8 @@ __all__ = [
     "ShadowArrays",
     # Results
     "SolweigResult",
+    "Timeseries",
+    "TimeseriesSummary",
     # Errors
     "SolweigError",
     "InvalidSurfaceData",
@@ -481,8 +482,6 @@ __all__ = [
     "WeatherDataError",
     "ConfigurationError",
     # Post-processing
-    "compute_utci",
-    "compute_pet",
     "compute_utci_grid",
     "compute_pet_grid",
     # Configuration loading

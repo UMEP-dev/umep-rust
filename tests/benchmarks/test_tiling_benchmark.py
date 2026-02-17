@@ -49,7 +49,7 @@ class TestTilingBenchmark:
     def test_tile_workers_scaling_sanity(self, benchmark_surface, benchmark_location, benchmark_weather_series):
         """Two workers should not be significantly slower than one worker."""
         t0 = time.perf_counter()
-        results_1w = calculate_timeseries_tiled(
+        summary_1w = calculate_timeseries_tiled(
             benchmark_surface,
             benchmark_weather_series,
             benchmark_location,
@@ -58,7 +58,7 @@ class TestTilingBenchmark:
             prefetch_tiles=False,
         )
         t1 = time.perf_counter()
-        results_2w = calculate_timeseries_tiled(
+        summary_2w = calculate_timeseries_tiled(
             benchmark_surface,
             benchmark_weather_series,
             benchmark_location,
@@ -71,24 +71,25 @@ class TestTilingBenchmark:
         elapsed_1w = t1 - t0
         elapsed_2w = t2 - t1
 
-        assert len(results_1w) == len(benchmark_weather_series)
-        assert len(results_2w) == len(benchmark_weather_series)
+        assert len(summary_1w) == len(benchmark_weather_series)
+        assert len(summary_2w) == len(benchmark_weather_series)
         assert elapsed_2w <= elapsed_1w * 1.25, (
             f"Tiled scaling regression: 2 workers too slow ({elapsed_2w:.3f}s vs {elapsed_1w:.3f}s)"
         )
 
     def test_bounded_inflight_runtime_controls(self, benchmark_surface, benchmark_location, benchmark_weather_series):
         """Bounded in-flight scheduling executes correctly with small queue depth."""
-        results = calculate_timeseries_tiled(
+        summary = calculate_timeseries_tiled(
             benchmark_surface,
             benchmark_weather_series,
             benchmark_location,
             tile_workers=2,
             tile_queue_depth=0,
             prefetch_tiles=False,
+            timestep_outputs=["tmrt"],
         )
-        assert len(results) == len(benchmark_weather_series)
-        assert all(r.tmrt is not None for r in results)
+        assert len(summary) == len(benchmark_weather_series)
+        assert all(r.tmrt is not None for r in summary.results)
 
     def test_anisotropic_tiled_runtime_smoke(self, benchmark_location):
         """Anisotropic tiled path runs with non-zero overlap/runtime controls."""

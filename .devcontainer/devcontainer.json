@@ -1,0 +1,23 @@
+{
+  "name": "SOLWEIG",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13",
+  "features": {
+    "ghcr.io/devcontainers/features/rust:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/workspaces/solweig/.venv/bin/python"
+      },
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "rust-lang.rust-analyzer",
+        "ms-toolsai.jupyter",
+        "astral-sh.ty"
+      ]
+    }
+  },
+  "postCreateCommand": "pip install uv && uv sync --dev && uv run maturin develop --release"
+}

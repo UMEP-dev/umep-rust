@@ -96,12 +96,8 @@ results = solweig.calculate_timeseries(
     outputs=["tmrt", "shadow"],
 )
 
-# 4. Post-process thermal comfort (optional, runs on saved Tmrt files)
-solweig.compute_utci(
-    tmrt_dir="output/",
-    weather_series=weather_list,
-    output_dir="output_utci/",
-)
+# Summary grids (mean Tmrt, UTCI, sun hours, etc.) are on the returned object
+print(summary.report())
 ```
 
 ## What you need

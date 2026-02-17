@@ -377,7 +377,21 @@ class Weather:
             # Use pre-measured direct and diffuse radiation
             self.direct_rad = self.measured_direct_rad
             self.diffuse_rad = self.measured_diffuse_rad
-            self.clearness_index = 1.0  # Not computed when using measured values
+            # Still compute clearness index for diagnostics/plotting
+            if self.sun_altitude > 0 and self.global_rad > 0:
+                zen_rad = self.sun_zenith * (np.pi / 180.0)
+                result = clearnessindex_2013b(
+                    zen_rad,
+                    self.datetime.timetuple().tm_yday,
+                    self.ta,
+                    self.rh / 100.0,
+                    self.global_rad,
+                    location_dict,
+                    self.pressure,
+                )
+                _, self.clearness_index, _, _, _ = result
+            else:
+                self.clearness_index = 0.0
         elif self.sun_altitude > 0 and self.global_rad > 0:
             # Compute clearness index
             zen_rad = self.sun_zenith * (np.pi / 180.0)
@@ -401,7 +415,7 @@ class Weather:
             # Night or no radiation
             self.direct_rad = 0.0
             self.diffuse_rad = self.global_rad
-            self.clearness_index = 1.0
+            self.clearness_index = 0.0
 
         self._derived_computed = True
 
@@ -752,5 +766,25 @@ class Weather:
                 f"{weather_list[0].datetime.strftime('%Y-%m-%d %H:%M')} → "
                 f"{weather_list[-1].datetime.strftime('%Y-%m-%d %H:%M')}"
             )
+        elif start is not None or end is not None:
+            # Warn when date filter produces no results — usually a year mismatch
+            all_weather = []
+            for r in rows:
+                from datetime import timedelta as _td
+
+                ts = dt(int(r["year"]), 1, 1) + _td(
+                    days=int(r["doy"]) - 1, hours=int(r["hour"]), minutes=int(r["minute"])
+                )
+                all_weather.append(ts)
+            if all_weather:
+                avail_start = min(all_weather)
+                avail_end = max(all_weather)
+                logger.warning(
+                    f"No timesteps found for requested range "
+                    f"{start} to {end}.\n"
+                    f"  File contains data for: "
+                    f"{avail_start.strftime('%Y-%m-%d')} to {avail_end.strftime('%Y-%m-%d')}\n"
+                    f"  Check that start/end dates match the year in the file."
+                )
 
         return weather_list

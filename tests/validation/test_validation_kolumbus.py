@@ -562,11 +562,13 @@ class TestFullPipelineValidation:
             end="2023-07-15",
         )
 
-        results = solweig.calculate_timeseries(
+        summary = solweig.calculate_timeseries(
             surface=surface,
             location=location,
             weather_series=met,
+            timestep_outputs=["tmrt"],
         )
+        results = summary.results
 
         assert len(results) == 24
 

@@ -76,8 +76,53 @@ output/
 └── run_metadata.json            # All parameters for reproducibility
 ```
 
-By default (`return_results=True`), timestep arrays are still returned in memory.
-Set `return_results=False` to stream to disk with minimal memory retention.
+By default, only summary grids are returned (no per-timestep arrays in memory).
+Use `timestep_outputs=["tmrt", "shadow"]` to retain specific per-timestep arrays.
+
+## Inspecting results
+
+### Summary report
+
+`report()` returns a human-readable text summary of the run:
+
+```python
+summary = solweig.calculate_timeseries(
+    surface=surface,
+    weather_series=weather_list,
+    output_dir="output/",
+    outputs=["tmrt", "shadow"],
+)
+print(summary.report())
+```
+
+In Jupyter notebooks, placing `summary` as the last expression in a cell
+renders the report automatically (via `_repr_html_`).
+
+### Per-timestep timeseries
+
+`summary.timeseries` contains 1-D arrays of spatial means at each timestep
+— useful for understanding how conditions evolved over the simulation:
+
+```python
+ts = summary.timeseries
+print(ts.datetime)       # timestamps
+print(ts.ta)             # air temperature per step
+print(ts.tmrt_mean)      # spatial mean Tmrt per step
+print(ts.utci_mean)      # spatial mean UTCI per step
+print(ts.sun_fraction)   # fraction of sunlit pixels per step
+```
+
+### Plotting
+
+`plot()` produces a multi-panel figure showing temperature, radiation,
+sun exposure, and meteorological inputs over time:
+
+```python
+summary.plot()                                  # interactive display
+summary.plot(save_path="output/timeseries.png") # save to file
+```
+
+Requires `matplotlib` (`pip install matplotlib`).
 
 ## Choose an output strategy
 
@@ -86,105 +131,60 @@ Set `return_results=False` to stream to disk with minimal memory retention.
 Use this for long runs and limited RAM.
 
 ```python
-results = solweig.calculate_timeseries(
+summary = solweig.calculate_timeseries(
     surface=surface,
     location=location,
     weather_series=weather_list,
     output_dir="output/",
     outputs=["tmrt", "shadow"],
-    return_results=False,         # Lowest-memory streaming mode
 )
 ```
 
 - Pros: lowest memory use, immediate GeoTIFF outputs, restart-friendly
-- Cons: more disk I/O/storage, no in-memory per-timestep arrays returned
+- Cons: more disk I/O/storage
 
-### Strategy B: Keep in memory, aggregate, save selected outputs manually
+### Strategy B: Summary only (no file output)
 
 Use this when disk space is tight and you only need summary products.
+`TimeseriesSummary` aggregates per-pixel statistics (mean/max/min Tmrt and
+UTCI, sun/shade hours, threshold exceedance) incrementally during the loop,
+so per-timestep arrays are freed immediately.
 
 ```python
-import numpy as np
-import solweig
-
-sum_tmrt = None
-count_tmrt = None
-max_tmrt = None
-
-# Process in chunks to keep memory bounded
-for i in range(0, len(weather_list), 24):
-    chunk = weather_list[i : i + 24]
-    results = solweig.calculate_timeseries(
-        surface=surface,
-        location=location,
-        weather_series=chunk,
-        # No output_dir -> keep arrays in memory
-    )
-
-    for result in results:
-        tmrt = result.tmrt.astype(np.float32)
-        valid = np.isfinite(tmrt)
-
-        if sum_tmrt is None:
-            sum_tmrt = np.zeros_like(tmrt, dtype=np.float64)
-            count_tmrt = np.zeros_like(tmrt, dtype=np.uint32)
-            max_tmrt = np.full_like(tmrt, -np.inf, dtype=np.float32)
-
-        sum_tmrt[valid] += tmrt[valid]
-        count_tmrt[valid] += 1
-        max_tmrt = np.maximum(max_tmrt, np.nan_to_num(tmrt, nan=-np.inf))
-
-# Build aggregated products
-mean_tmrt = np.divide(
-    sum_tmrt,
-    np.maximum(count_tmrt, 1),
-    dtype=np.float64,
-).astype(np.float32)
-mean_tmrt[count_tmrt == 0] = np.nan
-max_tmrt[~np.isfinite(max_tmrt)] = np.nan
-
-# Save only final products
-solweig.SolweigResult(tmrt=mean_tmrt).to_geotiff(
-    output_dir="summary/",
-    outputs=["tmrt"],
+summary = solweig.calculate_timeseries(
     surface=surface,
+    location=location,
+    weather_series=weather_list,
+    # No output_dir -> summary-only, minimal memory
 )
-solweig.SolweigResult(tmrt=max_tmrt).to_geotiff(
-    output_dir="summary_max/",
-    outputs=["tmrt"],
-    surface=surface,
-)
+print(summary.report())
+summary.to_geotiff("output/")  # Save summary grids only
 ```
 
-- Pros: minimal disk usage, flexible custom products
-- Cons: you must manage aggregation logic explicitly
+- Pros: minimal disk usage and memory, automatic aggregation
+- Cons: no per-timestep files on disk
 
-## Post-processing thermal comfort
+## Per-timestep UTCI and PET
 
-Compute UTCI or PET from saved Tmrt files without re-running the main calculation:
+UTCI and PET summary grids (mean, max, min, day/night averages) are always
+included in the returned `TimeseriesSummary`. To also retain per-timestep
+UTCI or PET arrays, include them in `timestep_outputs`:
 
 ```python
-# UTCI — fast polynomial (~1 second for 72 timesteps)
-n_utci = solweig.compute_utci(
-    tmrt_dir="output/",
+summary = solweig.calculate_timeseries(
+    surface=surface,
     weather_series=weather_list,
-    output_dir="output_utci/",
+    timestep_outputs=["tmrt", "utci"],  # per-timestep Tmrt + UTCI
+    output_dir="output/",
+    outputs=["tmrt", "utci"],           # save both as GeoTIFF files
 )
-
-# PET — slower iterative solver (~50x slower than UTCI)
-n_pet = solweig.compute_pet(
-    tmrt_dir="output/",
-    weather_series=weather_list,
-    output_dir="output_pet/",
-    human=solweig.HumanParams(weight=70, height=1.75),
-)
+for r in summary.results:
+    print(f"UTCI range: {r.utci.min():.1f} – {r.utci.max():.1f}°C")
 ```
 
-This separation means you can:
-
-- Skip thermal comfort entirely if you only need Tmrt
-- Recompute for different human parameters without re-running the main model
-- Process only a subset of timesteps
+To also save per-timestep files to disk, add `"utci"` or `"pet"` to the
+`outputs` parameter. The indices are computed inline during the main loop
+(UTCI uses a fast Rust polynomial; PET uses an iterative solver).
 
 ## Memory management for long simulations
 

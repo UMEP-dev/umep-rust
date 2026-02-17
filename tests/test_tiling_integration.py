@@ -519,22 +519,24 @@ class TestTimeseriesTiledIntegration:
         from solweig import calculate_timeseries, calculate_timeseries_tiled
 
         # Non-tiled (normal path — uses mock SVF from surface)
-        results_ref = calculate_timeseries(
+        summary_ref = calculate_timeseries(
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
+            timestep_outputs=["tmrt"],
         )
 
         # Tiled (forced via direct call — slices mock SVF from surface)
-        results_tiled = calculate_timeseries_tiled(
+        summary_tiled = calculate_timeseries_tiled(
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
+            timestep_outputs=["tmrt"],
         )
 
-        assert len(results_ref) == len(results_tiled)
+        assert len(summary_ref) == len(summary_tiled)
 
-        for i, (ref, tiled) in enumerate(zip(results_ref, results_tiled)):
+        for i, (ref, tiled) in enumerate(zip(summary_ref.results, summary_tiled.results)):
             both_valid = np.isfinite(ref.tmrt) & np.isfinite(tiled.tmrt)
             if both_valid.sum() > 0:
                 diff = np.abs(ref.tmrt[both_valid] - tiled.tmrt[both_valid])
@@ -546,15 +548,16 @@ class TestTimeseriesTiledIntegration:
         """Thermal state should evolve across timesteps in tiled mode."""
         from solweig import calculate_timeseries_tiled
 
-        results = calculate_timeseries_tiled(
+        summary = calculate_timeseries_tiled(
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
+            timestep_outputs=["tmrt"],
         )
 
         # Both timesteps should produce valid results
-        assert len(results) == 2
-        for r in results:
+        assert len(summary) == 2
+        for r in summary.results:
             valid = np.isfinite(r.tmrt)
             assert valid.sum() > 0, "Expected some valid Tmrt values"
 
@@ -576,21 +579,21 @@ class TestTimeseriesTiledIntegration:
 
         assert len(calls) > 0, "No progress callbacks received"
 
-    def test_timeseries_tiled_return_results_false(self, small_surface, location, weather_pair):
-        """Streaming mode should avoid retaining tiled timestep results."""
+    def test_timeseries_tiled_default_no_timestep_outputs(self, small_surface, location, weather_pair):
+        """Default mode should not retain tiled timestep results."""
         from solweig import calculate_timeseries_tiled
 
-        results = calculate_timeseries_tiled(
+        summary = calculate_timeseries_tiled(
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
-            return_results=False,
         )
 
-        assert results == []
+        assert summary.results == []
+        assert len(summary) == 2
 
-    def test_timeseries_tiled_return_results_false_requests_tmrt_only(self, small_surface, location, weather_pair):
-        """Streaming mode should request only Tmrt from tiled per-tile calculations."""
+    def test_timeseries_tiled_summary_only_requests_tmrt_and_shadow(self, small_surface, location, weather_pair):
+        """Summary-only mode should request tmrt and shadow from tiled per-tile calculations."""
         from solweig import SolweigResult, calculate_timeseries_tiled
 
         captured: list[set[str] | None] = []
@@ -600,7 +603,7 @@ class TestTimeseriesTiledIntegration:
             shape = kwargs["surface"].dsm.shape
             return SolweigResult(
                 tmrt=np.zeros(shape, dtype=np.float32),
-                shadow=None,
+                shadow=np.zeros(shape, dtype=np.float32),
                 kdown=None,
                 kup=None,
                 ldown=None,
@@ -613,17 +616,16 @@ class TestTimeseriesTiledIntegration:
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr("solweig.api.calculate", _fake_calculate)
         try:
-            results = calculate_timeseries_tiled(
+            summary = calculate_timeseries_tiled(
                 surface=small_surface,
                 weather_series=weather_pair,
                 location=location,
-                return_results=False,
             )
         finally:
             monkeypatch.undo()
 
-        assert results == []
-        assert captured and all(req == {"tmrt"} for req in captured)
+        assert summary.results == []
+        assert captured and all(req == {"tmrt", "shadow"} for req in captured)
 
     def test_timeseries_tiled_precreates_tile_surfaces_once(self, small_surface, location, weather_pair):
         """Tile surfaces should be extracted once per tile, not once per timestep."""
@@ -665,25 +667,27 @@ class TestTimeseriesTiledIntegration:
         """Worker count should not materially change tiled timeseries outputs."""
         from solweig import calculate_timeseries_tiled
 
-        one_worker = calculate_timeseries_tiled(
+        summary_one = calculate_timeseries_tiled(
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
             tile_workers=1,
             tile_queue_depth=0,
             prefetch_tiles=False,
+            timestep_outputs=["tmrt"],
         )
-        multi_worker = calculate_timeseries_tiled(
+        summary_multi = calculate_timeseries_tiled(
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
             tile_workers=2,
             tile_queue_depth=2,
             prefetch_tiles=True,
+            timestep_outputs=["tmrt"],
         )
 
-        assert len(one_worker) == len(multi_worker)
-        for ref, got in zip(one_worker, multi_worker):
+        assert len(summary_one) == len(summary_multi)
+        for ref, got in zip(summary_one.results, summary_multi.results):
             both_valid = np.isfinite(ref.tmrt) & np.isfinite(got.tmrt)
             if both_valid.sum() > 0:
                 diff = np.abs(ref.tmrt[both_valid] - got.tmrt[both_valid])

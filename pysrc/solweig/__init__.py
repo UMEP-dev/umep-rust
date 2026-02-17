@@ -56,6 +56,8 @@ from .api import (  # noqa: E402
     SolweigResult,
     SurfaceData,
     TileSpec,
+    Timeseries,
+    TimeseriesSummary,
     Weather,
     calculate,
     # Tiled processing helpers
@@ -63,10 +65,8 @@ from .api import (  # noqa: E402
     calculate_tiled,
     calculate_timeseries,
     calculate_timeseries_tiled,
-    compute_pet,
     compute_pet_grid,
     # Post-processing: Thermal comfort indices
-    compute_utci,
     compute_utci_grid,
     # Run metadata/provenance
     create_run_metadata,
@@ -182,6 +182,8 @@ __all__ = [
     "HumanParams",
     "ModelConfig",
     "SolweigResult",
+    "Timeseries",
+    "TimeseriesSummary",
     "SolweigError",
     "calculate",
     "calculate_timeseries",
@@ -196,8 +198,6 @@ __all__ = [
     "TileSpec",
     "generate_tiles",
     # Post-processing: Thermal comfort
-    "compute_utci",
-    "compute_pet",
     "compute_utci_grid",
     "compute_pet_grid",
     # Run metadata/provenance

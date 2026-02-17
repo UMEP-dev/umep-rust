@@ -8,22 +8,49 @@ UTCI is the most widely used outdoor thermal comfort index. It represents the ai
 
 **Use UTCI when:** You want a standardised, fast metric for heat stress mapping, urban planning, or public health applications.
 
+### Summary grids (default)
+
+UTCI summary grids (mean, max, min, day/night averages) are always computed
+as part of `TimeseriesSummary`:
+
+```python
+summary = solweig.calculate_timeseries(surface=surface, weather_series=weather_list)
+print(summary.report())  # Includes Tmrt, UTCI, sun hours, threshold exceedance
+```
+
+### Per-timestep arrays
+
+Include `"utci"` in `timestep_outputs` to retain per-timestep UTCI grids:
+
+```python
+summary = solweig.calculate_timeseries(
+    surface=surface,
+    weather_series=weather_list,
+    timestep_outputs=["tmrt", "utci"],
+)
+for r in summary.results:
+    print(f"UTCI range: {r.utci.min():.1f} – {r.utci.max():.1f}°C")
+```
+
+### Per-timestep GeoTIFF files
+
+Include `"utci"` in `outputs` to save per-timestep UTCI GeoTIFFs:
+
+```python
+summary = solweig.calculate_timeseries(
+    surface=surface,
+    weather_series=weather_list,
+    output_dir="output/",
+    outputs=["tmrt", "utci"],
+)
+```
+
 ### From a single result
 
 ```python
 result = solweig.calculate(surface, location, weather)
 utci = result.compute_utci(weather)
 print(f"Mean UTCI: {utci.mean():.1f}°C")
-```
-
-### Batch from saved Tmrt files
-
-```python
-n_files = solweig.compute_utci(
-    tmrt_dir="output/",
-    weather_series=weather_list,
-    output_dir="output_utci/",
-)
 ```
 
 ### UTCI stress categories
@@ -55,7 +82,20 @@ PET is the air temperature of a reference indoor environment at which the human 
 
 **Use PET when:** You need thermal comfort for specific populations (elderly, children, athletes) or when research requires the physiological model.
 
-### Single result
+### Per-timestep PET
+
+Include `"pet"` in `timestep_outputs` or `outputs`:
+
+```python
+summary = solweig.calculate_timeseries(
+    surface=surface,
+    weather_series=weather_list,
+    timestep_outputs=["tmrt", "pet"],
+    human=solweig.HumanParams(weight=60, height=1.65, age=70),
+)
+```
+
+### Single-result PET
 
 ```python
 result = solweig.calculate(surface, location, weather)
@@ -77,17 +117,6 @@ pet = result.compute_pet(
         clothing=0.5,        # clothing insulation (clo)
         posture="standing",
     ),
-)
-```
-
-### PET batch processing
-
-```python
-n_files = solweig.compute_pet(
-    tmrt_dir="output/",
-    weather_series=weather_list,
-    output_dir="output_pet/",
-    human=solweig.HumanParams(weight=70, height=1.75),
 )
 ```
 

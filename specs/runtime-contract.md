@@ -30,10 +30,10 @@ conflict, this contract is the source of truth.
    - This convention applies to daytime and nighttime outputs.
 
 2. **Timeseries return semantics**
-   - `return_results=True`: returned `SolweigResult` objects keep their arrays
-     in memory (including `tmrt`).
-   - `return_results=False`: implementation may free arrays after persistence or
-     aggregation to minimize memory use.
+   - `timestep_outputs=["tmrt", "shadow", ...]`: returned `SolweigResult` objects
+     in `summary.results` keep the requested arrays in memory.
+   - `timestep_outputs=None` (default): implementation frees arrays after
+     aggregation to minimize memory use; `summary.results` is empty.
 
 ## Default Behavior
 

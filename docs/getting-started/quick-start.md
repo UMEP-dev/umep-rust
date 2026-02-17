@@ -96,8 +96,8 @@ results = solweig.calculate_timeseries(
 print(f"Done — {len(results)} timesteps saved to output/")
 ```
 
-If disk space is limited, omit `output_dir` and aggregate in memory, or keep
-`output_dir` and set `return_results=False` for low-memory streaming. See
+If disk space is limited, omit `output_dir` — the returned `TimeseriesSummary`
+contains aggregated grids (mean/max/min Tmrt, UTCI, sun hours, etc.). See
 [Timeseries](../guide/timeseries.md#choose-an-output-strategy).
 
 ### What `prepare()` does behind the scenes
@@ -114,17 +114,19 @@ When you call `SurfaceData.prepare()`, it automatically:
 
 Tmrt tells you how much radiation a person absorbs, but thermal comfort also depends on air temperature, humidity, and wind. UTCI and PET combine all of these.
 
-```python
-# From a single-timestep result:
-utci = result.compute_utci(weather)
-print(f"Mean UTCI: {utci.mean():.1f}°C")
+UTCI and PET summary grids are included in the `TimeseriesSummary` by default.
+For per-timestep arrays or saved files, include `"utci"` or `"pet"` in
+`timestep_outputs` or `outputs`:
 
-# From saved timeseries files (batch):
-solweig.compute_utci(
-    tmrt_dir="output/",
+```python
+summary = solweig.calculate_timeseries(
+    surface=surface,
     weather_series=weather_list,
-    output_dir="output_utci/",
+    outputs=["tmrt", "utci"],           # save per-timestep GeoTIFFs
+    timestep_outputs=["tmrt", "utci"],  # keep per-timestep arrays in memory
+    output_dir="output/",
 )
+print(summary.report())  # Full summary with Tmrt, UTCI, sun hours, thresholds
 ```
 
 | UTCI range | Meaning |

@@ -515,12 +515,14 @@ class TestTmrtValidation:
         """Run full-day timeseries and check diurnal Tmrt pattern."""
         import solweig
 
-        results = solweig.calculate_timeseries(
+        summary = solweig.calculate_timeseries(
             surface=surface,
             location=location,
             weather_series=aug04_weather,
             wall_material="concrete",
+            timestep_outputs=["tmrt"],
         )
+        results = summary.results
 
         assert len(results) == len(aug04_weather)
 
@@ -553,12 +555,14 @@ class TestTmrtValidation:
         """
         import solweig
 
-        results = solweig.calculate_timeseries(
+        summary = solweig.calculate_timeseries(
             surface=surface,
             location=location,
             weather_series=aug04_weather,
             wall_material="concrete",
+            timestep_outputs=["tmrt"],
         )
+        results = summary.results
 
         # Build model Tmrt dict by hour
         model_tmrt = {}
@@ -680,12 +684,14 @@ class TestTmrtValidation:
             if len(weather_list) < 20:
                 continue
 
-            results = solweig.calculate_timeseries(
+            summary = solweig.calculate_timeseries(
                 surface=surface,
                 location=location,
                 weather_series=weather_list,
                 wall_material="concrete",
+                timestep_outputs=["tmrt"],
             )
+            results = summary.results
 
             model_tmrt = {}
             for w, r in zip(weather_list, results):
@@ -783,12 +789,14 @@ class TestSkyModelComparison:
         weather_list = self._build_weather(day)
         obs_tmrt = compute_observed_tmrt(load_presti_observations(day=day))
 
-        results_iso = solweig.calculate_timeseries(
+        summary_iso = solweig.calculate_timeseries(
             surface=surface,
             location=location,
             weather_series=weather_list,
             use_anisotropic_sky=False,
+            timestep_outputs=["tmrt"],
         )
+        results_iso = summary_iso.results
 
         tmrt_iso = {}
         for w, r in zip(weather_list, results_iso):

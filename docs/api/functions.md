@@ -34,20 +34,3 @@
       show_source: false
       heading_level: 3
 
----
-
-## compute_utci
-
-::: solweig.compute_utci
-    options:
-      show_source: false
-      heading_level: 3
-
----
-
-## compute_pet
-
-::: solweig.compute_pet
-    options:
-      show_source: false
-      heading_level: 3

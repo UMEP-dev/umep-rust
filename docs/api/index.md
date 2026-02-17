@@ -22,14 +22,9 @@ SOLWEIG provides a clean, minimal API for urban microclimate calculations.
 | [`Weather`](dataclasses.md#weather) | Meteorological conditions |
 | [`HumanParams`](dataclasses.md#humanparams) | Human body parameters |
 | [`SolweigResult`](dataclasses.md#solweigresult) | Calculation output |
+| [`TimeseriesSummary`](dataclasses.md#timeseriessummary) | Aggregated timeseries output |
+| [`Timeseries`](dataclasses.md#timeseries) | Per-timestep scalar timeseries |
 | [`ModelConfig`](dataclasses.md#modelconfig) | Model configuration |
-
-### Post-Processing
-
-| Function | Description |
-|----------|-------------|
-| [`compute_utci()`](functions.md#compute_utci) | Batch UTCI from Tmrt files |
-| [`compute_pet()`](functions.md#compute_pet) | Batch PET from Tmrt files |
 
 ### GPU Utilities
 

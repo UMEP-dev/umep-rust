@@ -400,6 +400,11 @@ GeoTIFF files organised into subfolders of the output directory:
         for comp in ["shadow", "kdown", "kup", "ldown", "lup"]:
             if self.parameterAsBool(parameters, f"OUTPUT_{comp.upper()}", context):
                 selected_outputs.append(comp)
+        # UTCI/PET are now computed inline during the main calculation
+        if self.parameterAsBool(parameters, "COMPUTE_UTCI", context):
+            selected_outputs.append("utci")
+        if self.parameterAsBool(parameters, "COMPUTE_PET", context):
+            selected_outputs.append("pet")
         feedback.pushInfo(f"Outputs: {', '.join(selected_outputs)}")
 
         # Load precomputed SVF — check explicit SVF_DIR, then prepared surface dir
@@ -512,20 +517,7 @@ GeoTIFF files organised into subfolders of the output directory:
         calc_elapsed = time.time() - start_time
         feedback.pushInfo(f"Calculation complete: {n_timesteps} timestep(s) in {calc_elapsed:.1f}s")
 
-        # Step 7: Post-processing
-        utci_count = 0
-        pet_count = 0
-
-        compute_utci = self.parameterAsBool(parameters, "COMPUTE_UTCI", context)
-        compute_pet = self.parameterAsBool(parameters, "COMPUTE_PET", context)
-
-        if compute_utci:
-            utci_count = self._run_utci(solweig, output_dir, weather_series, feedback)
-
-        if compute_pet:
-            pet_count = self._run_pet(solweig, output_dir, weather_series, human, feedback)
-
-        # Step 8: Add first Tmrt to canvas (single timestep only)
+        # Step 7: Add first Tmrt to canvas (single timestep only)
         if is_single:
             tmrt_files = sorted(Path(output_dir, "tmrt").glob("tmrt_*.tif"))
             if tmrt_files:
@@ -539,6 +531,8 @@ GeoTIFF files organised into subfolders of the output directory:
 
         # Report summary
         total_elapsed = time.time() - start_time
+        utci_count = n_results if "utci" in selected_outputs else 0
+        pet_count = n_results if "pet" in selected_outputs else 0
         if results is None:
             # Timeseries path: use incremental stats
             self._report_summary(n_results, total_elapsed, utci_count, pet_count, output_dir, feedback, tmrt_stats)
@@ -685,7 +679,6 @@ GeoTIFF files organised into subfolders of the output directory:
                 prefetch_tiles=prefetch_tiles,
                 output_dir=output_dir,
                 outputs=selected_outputs,
-                return_results=False,
                 progress_callback=_qgis_progress,
             )
         except KeyboardInterrupt:
@@ -738,86 +731,6 @@ GeoTIFF files organised into subfolders of the output directory:
             return {}
 
         return {"mean": mean_sum / mean_count, "min": float(tmrt_min), "max": float(tmrt_max)}
-
-    # -------------------------------------------------------------------------
-    # Post-processing helpers
-    # -------------------------------------------------------------------------
-
-    def _run_utci(self, solweig, output_dir, weather_series, feedback) -> int:
-        """Compute UTCI from saved Tmrt GeoTIFFs via public post-processing API."""
-
-        feedback.setProgressText("Computing UTCI...")
-        feedback.pushInfo("")
-        feedback.pushInfo("Computing UTCI thermal comfort index...")
-
-        utci_dir = os.path.join(output_dir, "utci")
-        os.makedirs(utci_dir, exist_ok=True)
-
-        progress_state = {"completed": 0}
-
-        def _qgis_progress(current: int, total: int) -> None:
-            progress_state["completed"] = current
-            if feedback.isCanceled():
-                raise KeyboardInterrupt
-            total_safe = max(total, 1)
-            pct = 80 + int(10 * current / total_safe)
-            feedback.setProgress(pct)
-
-        try:
-            processed = solweig.compute_utci(
-                tmrt_dir=output_dir,
-                weather_series=weather_series,
-                output_dir=utci_dir,
-                progress_callback=_qgis_progress,
-            )
-        except KeyboardInterrupt:
-            feedback.pushInfo("UTCI post-processing cancelled by user.")
-            processed = progress_state["completed"]
-        except Exception as e:
-            raise QgsProcessingException(f"UTCI post-processing failed: {e}") from e
-
-        feedback.pushInfo(f"UTCI: {processed} files created in {utci_dir}")
-        return processed
-
-    def _run_pet(self, solweig, output_dir, weather_series, human, feedback) -> int:
-        """Compute PET from saved Tmrt GeoTIFFs via public post-processing API."""
-
-        feedback.setProgressText("Computing PET (this may take a while)...")
-        feedback.pushInfo("")
-        feedback.pushInfo("Computing PET thermal comfort index...")
-        feedback.pushInfo(
-            f"Human params: {human.weight}kg, {human.height}m, {human.age}y, {human.activity}W, {human.clothing}clo"
-        )
-
-        pet_dir = os.path.join(output_dir, "pet")
-        os.makedirs(pet_dir, exist_ok=True)
-
-        progress_state = {"completed": 0}
-
-        def _qgis_progress(current: int, total: int) -> None:
-            progress_state["completed"] = current
-            if feedback.isCanceled():
-                raise KeyboardInterrupt
-            total_safe = max(total, 1)
-            pct = 90 + int(8 * current / total_safe)
-            feedback.setProgress(pct)
-
-        try:
-            processed = solweig.compute_pet(
-                tmrt_dir=output_dir,
-                weather_series=weather_series,
-                output_dir=pet_dir,
-                human=human,
-                progress_callback=_qgis_progress,
-            )
-        except KeyboardInterrupt:
-            feedback.pushInfo("PET post-processing cancelled by user.")
-            processed = progress_state["completed"]
-        except Exception as e:
-            raise QgsProcessingException(f"PET post-processing failed: {e}") from e
-
-        feedback.pushInfo(f"PET: {processed} files created in {pet_dir}")
-        return processed
 
     # -------------------------------------------------------------------------
     # Utility helpers

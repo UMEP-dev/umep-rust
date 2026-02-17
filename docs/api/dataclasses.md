@@ -54,6 +54,24 @@
 
 ---
 
+## TimeseriesSummary
+
+::: solweig.TimeseriesSummary
+    options:
+      show_source: false
+      heading_level: 3
+
+---
+
+## Timeseries
+
+::: solweig.Timeseries
+    options:
+      show_source: false
+      heading_level: 3
+
+---
+
 ## PrecomputedData
 
 ::: solweig.PrecomputedData

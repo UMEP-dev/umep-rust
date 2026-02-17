@@ -96,7 +96,7 @@ location = solweig.Location.from_epw(epw_path)  # lat, lon, UTC offset, elevatio
 #  - Human: abs_k=0.7, abs_l=0.95, standing, 75kg, 180cm, 35yo, 80W activity
 #  - Physics: Tree transmissivity=0.03, seasonal dates, posture geometry
 #  - No materials needed (no landcover grid)
-results = solweig.calculate_timeseries(
+summary = solweig.calculate_timeseries(
     surface=surface,
     weather_series=weather_list,
     location=location,
@@ -105,17 +105,51 @@ results = solweig.calculate_timeseries(
     output_dir=str(output_dir),
     outputs=["tmrt", "shadow"],
 )
+print(summary.report())
 
-print(f"\n✓ Simplified API complete! Processed {len(results)} timesteps.")
+# %%
+# Plot timeseries (Ta, Tmrt, UTCI, radiation, sun exposure over time)
+summary.plot()
 
-# Arrays are retained by default (return_results=True) even when output_dir is set.
-# Use return_results=False for streaming/low-memory runs. Load a saved GeoTIFF to inspect results:
-sample_tif = next(output_dir.glob("tmrt/tmrt_*.tif"))
-sample_arr, *_ = solweig.io.load_raster(str(sample_tif))
-print(f"  Mean Tmrt (first timestep): {sample_arr[sample_arr > -9999].mean():.1f}°C")
-print(f"\nNote: Preprocessing cached in {output_folder_path / 'working'}")
-print("      Use force_recompute=True to regenerate walls/SVF.")
-print(f"      Run metadata saved to {output_dir / 'run_metadata.json'}")
+# %%
+# Visualise summary grids
+import matplotlib.pyplot as plt  # noqa: E402
+
+fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+
+im0 = axes[0, 0].imshow(summary.tmrt_mean, cmap="hot")
+axes[0, 0].set_title("Mean Tmrt (°C)")
+plt.colorbar(im0, ax=axes[0, 0])
+
+im1 = axes[0, 1].imshow(summary.utci_mean, cmap="hot")
+axes[0, 1].set_title("Mean UTCI (°C)")
+plt.colorbar(im1, ax=axes[0, 1])
+
+im2 = axes[0, 2].imshow(summary.sun_hours, cmap="YlOrRd")
+axes[0, 2].set_title("Sun hours")
+plt.colorbar(im2, ax=axes[0, 2])
+
+im3 = axes[1, 0].imshow(summary.tmrt_day_mean, cmap="hot")
+axes[1, 0].set_title("Mean daytime Tmrt (°C)")
+plt.colorbar(im3, ax=axes[1, 0])
+
+im4 = axes[1, 1].imshow(summary.tmrt_night_mean, cmap="cool")
+axes[1, 1].set_title("Mean nighttime Tmrt (°C)")
+plt.colorbar(im4, ax=axes[1, 1])
+
+# Show hours above the first day threshold (32°C by default)
+threshold = sorted(summary.utci_hours_above.keys())[0]
+im5 = axes[1, 2].imshow(summary.utci_hours_above[threshold], cmap="Reds")
+axes[1, 2].set_title(f"UTCI hours > {threshold}°C")
+plt.colorbar(im5, ax=axes[1, 2])
+
+for ax in axes.flat:
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+plt.suptitle(f"SOLWEIG Summary — {len(summary)} timesteps ({summary.n_daytime} day, {summary.n_nighttime} night)")
+plt.tight_layout()
+plt.show()
 
 # %%
 # Optional: Load and inspect run metadata
@@ -181,31 +215,20 @@ print(f"  Date range: {metadata['timeseries']['start']} to {metadata['timeseries
 # Note: Prefer the new three-parameter model for clarity!
 
 # %%
-# Step 4: Post-process thermal comfort indices (UTCI/PET)
-# UTCI and PET are computed separately for better performance
-# This allows you to:
-# - Skip thermal comfort if you only need Tmrt
-# - Compute for subset of timesteps
-# - Compute for different human parameters without re-running main calculation
-
-# Compute UTCI (fast polynomial, ~1 second for full timeseries)
-utci_dir = output_folder_path / "output_utci"
-n_utci = solweig.compute_utci(
-    tmrt_dir=str(output_dir),
-    weather_series=weather_list,
-    output_dir=str(utci_dir),
-)
-print(f"\n✓ UTCI post-processing complete! Processed {n_utci} timesteps.")
-
-# Compute PET (slower iterative solver, optional)
-# pet_dir = output_folder_path / "output_pet"
-# n_pet = solweig.compute_pet(
-#     tmrt_dir=str(output_dir),
+# Step 4: Per-timestep UTCI/PET (via timestep_outputs)
+# To get per-timestep UTCI or PET arrays, include them in timestep_outputs:
+#
+# summary = solweig.calculate_timeseries(
+#     surface=surface,
 #     weather_series=weather_list,
-#     output_dir=str(pet_dir),
-#     human=solweig.HumanParams(weight=75, height=1.75),
+#     location=location,
+#     timestep_outputs=["tmrt", "utci"],  # retain per-timestep Tmrt + UTCI
+#     output_dir=str(output_dir),
 # )
-# print(f"\n✓ PET post-processing complete! Processed {n_pet} timesteps.")
+# for r in summary.results:
+#     print(f"UTCI range: {np.nanmin(r.utci):.1f} - {np.nanmax(r.utci):.1f}")
+#
+# Note: Summary grids (utci_mean, utci_max, etc.) are always computed regardless.
 
 # %%
 # =============================================================================

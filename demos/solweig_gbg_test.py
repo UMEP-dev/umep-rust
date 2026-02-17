@@ -52,26 +52,24 @@ surface = solweig.SurfaceData.prepare(
     # force_recompute=False,  # Use cached data if available (default)
 )
 
-print("\nPreprocessing complete!")
-print(f"  DSM shape: {surface.dsm.shape}")
-print(f"  Walls cached: {working_path}/walls/")
-print(f"  SVF cached: {working_path}/svf/")
-
 # %%
 # The surface object is now ready for SOLWEIG calculations:
 #
 weather_list = solweig.Weather.from_umep_met(
     "demos/data/Goteborg_SWEREF99_1200/GBG_TMY_1977.txt",
-    start="1975-07-01",
-    end="1975-07-02",  # 2 days: July 1-2
+    start="1977-07-01",
+    end="1977-07-05",  # 5 days: July 1-5
 )
 # Location from surface CRS with explicit UTC offset (Gothenburg: CET = UTC+1)
 location = solweig.Location.from_surface(surface, utc_offset=1)
-results = solweig.calculate_timeseries(
+summary = solweig.calculate_timeseries(
     surface=surface,
     weather_series=weather_list,
     location=location,
     output_dir=str(working_path / "output"),
+    outputs=["tmrt", "shadow"],
 )
+summary.report()
+summary.plot()
 
 # %%
