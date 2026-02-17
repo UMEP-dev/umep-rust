@@ -870,6 +870,7 @@ impl ShadowGpuContext {
         scale: f32,
         max_local_dsm_ht: f32,
         min_sun_elev_deg: f32,
+        max_shadow_distance_m: f32,
     ) -> Result<GpuShadowResult, String> {
         let (rows, cols) = dsm.dim();
         let total_pixels = rows * cols;
@@ -887,7 +888,8 @@ impl ShadowGpuContext {
         let tan_azimuth = azimuth_rad.tan();
         let tan_altitude_by_scale = altitude_rad.tan() / scale;
         let min_sun_elev_rad = min_sun_elev_deg.to_radians();
-        let max_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+        let height_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+        let max_reach_m = if max_shadow_distance_m > 0.0 { height_reach_m.min(max_shadow_distance_m) } else { height_reach_m };
         let max_index = (max_reach_m / scale).ceil();
 
         let params = ShadowParams {
@@ -1263,6 +1265,7 @@ impl ShadowGpuContext {
         scale: f32,
         max_local_dsm_ht: f32,
         min_sun_elev_deg: f32,
+        max_shadow_distance_m: f32,
     ) -> Result<SvfShadowResult, String> {
         let (rows, cols) = dsm.dim();
         let total_pixels = rows * cols;
@@ -1302,7 +1305,8 @@ impl ShadowGpuContext {
         let azimuth_rad = azimuth_deg.to_radians();
         let altitude_rad = altitude_deg.to_radians();
         let min_sun_elev_rad = min_sun_elev_deg.to_radians();
-        let max_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+        let height_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+        let max_reach_m = if max_shadow_distance_m > 0.0 { height_reach_m.min(max_shadow_distance_m) } else { height_reach_m };
         let max_index = (max_reach_m / scale).ceil();
 
         let params = ShadowParams {
@@ -1755,6 +1759,7 @@ impl ShadowGpuContext {
         scale: f32,
         max_local_dsm_ht: f32,
         min_sun_elev_deg: f32,
+        max_shadow_distance_m: f32,
         weight_iso: f32,
         weight_n: f32,
         weight_e: f32,
@@ -1788,7 +1793,8 @@ impl ShadowGpuContext {
         let azimuth_rad = azimuth_deg.to_radians();
         let altitude_rad = altitude_deg.to_radians();
         let min_sun_elev_rad = min_sun_elev_deg.to_radians();
-        let max_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+        let height_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+        let max_reach_m = if max_shadow_distance_m > 0.0 { height_reach_m.min(max_shadow_distance_m) } else { height_reach_m };
         let max_index = (max_reach_m / scale).ceil();
 
         let shadow_params = ShadowParams {

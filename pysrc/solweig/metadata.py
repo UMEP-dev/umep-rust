@@ -69,7 +69,7 @@ def create_run_metadata(
         },
         "outputs": {
             "directory": str(output_dir),
-            "variables": outputs or ["tmrt"],
+            "variables": outputs or [],
         },
     }
 

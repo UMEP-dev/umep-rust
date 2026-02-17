@@ -544,13 +544,13 @@ class SurfaceData:
             logger.info(f"  Extracted pixel size from DSM: {pixel_size:.2f} m")
         else:
             # Validate against native resolution
-            if pixel_size < native_pixel_size - 1e-6:
+            if pixel_size < native_pixel_size - 0.01:
                 raise ValueError(
                     f"Specified pixel_size ({pixel_size:.2f} m) is finer than the DSM native "
                     f"resolution ({native_pixel_size:.2f} m). Upsampling creates false precision. "
                     f"Use pixel_size >= {native_pixel_size:.2f} or omit to use native resolution."
                 )
-            if abs(pixel_size - native_pixel_size) > 1e-6:
+            if abs(pixel_size - native_pixel_size) > 0.01:
                 logger.warning(
                     f"  ⚠ Specified pixel_size ({pixel_size:.2f} m) differs from DSM native "
                     f"resolution ({native_pixel_size:.2f} m) — all rasters will be resampled"
@@ -902,94 +902,80 @@ class SurfaceData:
             target_bbox = intersect_bounds(bounds_list)
             logger.info(f"  Auto-computed extent from raster intersection: {target_bbox}")
 
-        # Check if resampling is needed (compare DSM to target)
-        dsm_bounds = extract_bounds(dsm_transform, dsm_arr.shape)
-        dsm_pixel_size = abs(dsm_transform[1])
-        needs_resampling = (
-            abs(dsm_bounds[0] - target_bbox[0]) > 1e-6
-            or abs(dsm_bounds[1] - target_bbox[1]) > 1e-6
-            or abs(dsm_bounds[2] - target_bbox[2]) > 1e-6
-            or abs(dsm_bounds[3] - target_bbox[3]) > 1e-6
-            or abs(dsm_pixel_size - pixel_size) > 1e-6
-        )
+        # Expected target dimensions (same formula as resample_to_grid)
+        expected_h = int(np.round((target_bbox[3] - target_bbox[1]) / pixel_size))
+        expected_w = int(np.round((target_bbox[2] - target_bbox[0]) / pixel_size))
+        expected_shape = (expected_h, expected_w)
 
-        if needs_resampling:
-            logger.info("  Resampling all rasters to target grid...")
+        def _layer_needs_resample(arr, transform):
+            """Check if a single layer needs resampling (bounds, pixel size, or shape mismatch)."""
+            layer_bounds = extract_bounds(transform, arr.shape)
+            layer_px = abs(transform[1]) if isinstance(transform, list) else abs(transform.a)
+            return (
+                abs(layer_bounds[0] - target_bbox[0]) > 1e-6
+                or abs(layer_bounds[1] - target_bbox[1]) > 1e-6
+                or abs(layer_bounds[2] - target_bbox[2]) > 1e-6
+                or abs(layer_bounds[3] - target_bbox[3]) > 1e-6
+                or abs(layer_px - pixel_size) > 1e-6
+                or arr.shape != expected_shape
+            )
 
-            # Resample DSM
+        resampled_any = False
+
+        # Resample DSM if needed
+        if _layer_needs_resample(dsm_arr, dsm_transform):
             dsm_arr, dsm_transform = resample_to_grid(
                 dsm_arr, dsm_transform, target_bbox, pixel_size, method="bilinear", src_crs=dsm_crs
             )
+            resampled_any = True
 
-            # Resample optional terrain rasters
-            if terrain_rasters["cdsm_arr"] is not None and terrain_rasters["cdsm_transform"] is not None:
-                terrain_rasters["cdsm_arr"], _ = resample_to_grid(
-                    terrain_rasters["cdsm_arr"],
-                    terrain_rasters["cdsm_transform"],
+        # Resample optional terrain rasters independently
+        for key, method in [("cdsm", "bilinear"), ("dem", "bilinear"), ("tdsm", "bilinear"), ("land_cover", "nearest")]:
+            arr_key, tf_key = f"{key}_arr", f"{key}_transform"
+            if (
+                terrain_rasters[arr_key] is not None
+                and terrain_rasters[tf_key] is not None
+                and _layer_needs_resample(terrain_rasters[arr_key], terrain_rasters[tf_key])
+            ):
+                terrain_rasters[arr_key], _ = resample_to_grid(
+                    terrain_rasters[arr_key],
+                    terrain_rasters[tf_key],
                     target_bbox,
                     pixel_size,
-                    method="bilinear",
+                    method=method,
                     src_crs=dsm_crs,
                 )
-            if terrain_rasters["dem_arr"] is not None and terrain_rasters["dem_transform"] is not None:
-                terrain_rasters["dem_arr"], _ = resample_to_grid(
-                    terrain_rasters["dem_arr"],
-                    terrain_rasters["dem_transform"],
-                    target_bbox,
-                    pixel_size,
-                    method="bilinear",
-                    src_crs=dsm_crs,
-                )
-            if terrain_rasters["tdsm_arr"] is not None and terrain_rasters["tdsm_transform"] is not None:
-                terrain_rasters["tdsm_arr"], _ = resample_to_grid(
-                    terrain_rasters["tdsm_arr"],
-                    terrain_rasters["tdsm_transform"],
-                    target_bbox,
-                    pixel_size,
-                    method="bilinear",
-                    src_crs=dsm_crs,
-                )
-            if terrain_rasters["land_cover_arr"] is not None and terrain_rasters["land_cover_transform"] is not None:
-                # Use nearest neighbor for categorical data
-                terrain_rasters["land_cover_arr"], _ = resample_to_grid(
-                    terrain_rasters["land_cover_arr"],
-                    terrain_rasters["land_cover_transform"],
-                    target_bbox,
-                    pixel_size,
-                    method="nearest",
-                    src_crs=dsm_crs,
-                )
+                resampled_any = True
 
-            # Resample preprocessing data
-            if preprocess_data["wall_height_arr"] is not None and preprocess_data["wall_height_transform"] is not None:
-                preprocess_data["wall_height_arr"], _ = resample_to_grid(
-                    preprocess_data["wall_height_arr"],
-                    preprocess_data["wall_height_transform"],
+        # Resample preprocessing data independently
+        for key in ["wall_height", "wall_aspect"]:
+            arr_key, tf_key = f"{key}_arr", f"{key}_transform"
+            if (
+                preprocess_data[arr_key] is not None
+                and preprocess_data[tf_key] is not None
+                and _layer_needs_resample(preprocess_data[arr_key], preprocess_data[tf_key])
+            ):
+                preprocess_data[arr_key], _ = resample_to_grid(
+                    preprocess_data[arr_key],
+                    preprocess_data[tf_key],
                     target_bbox,
                     pixel_size,
                     method="bilinear",
                     src_crs=dsm_crs,
                 )
-            if preprocess_data["wall_aspect_arr"] is not None and preprocess_data["wall_aspect_transform"] is not None:
-                preprocess_data["wall_aspect_arr"], _ = resample_to_grid(
-                    preprocess_data["wall_aspect_arr"],
-                    preprocess_data["wall_aspect_transform"],
-                    target_bbox,
-                    pixel_size,
-                    method="bilinear",
-                    src_crs=dsm_crs,
-                )
+                resampled_any = True
 
-            # Note: SVF resampling is more complex (multiple arrays) - handled separately if needed
-            if preprocess_data["svf_data"] is not None and preprocess_data["svf_data"].svf.shape != dsm_arr.shape:
-                logger.warning(
-                    f"  ⚠ SVF shape {preprocess_data['svf_data'].svf.shape} doesn't match target shape "
-                    f"{dsm_arr.shape} - SVF resampling not yet implemented. "
-                    f"SVF cache will be dropped; recompute via SurfaceData.prepare() or compute_svf()."
-                )
-                preprocess_data["svf_data"] = None
-                preprocess_data["shadow_data"] = None
+        # Note: SVF resampling is more complex (multiple arrays) - handled separately if needed
+        if preprocess_data["svf_data"] is not None and preprocess_data["svf_data"].svf.shape != dsm_arr.shape:
+            logger.warning(
+                f"  ⚠ SVF shape {preprocess_data['svf_data'].svf.shape} doesn't match target shape "
+                f"{dsm_arr.shape} - SVF resampling not yet implemented. "
+                f"SVF cache will be dropped; recompute via SurfaceData.prepare() or compute_svf()."
+            )
+            preprocess_data["svf_data"] = None
+            preprocess_data["shadow_data"] = None
 
+        if resampled_any:
             logger.info(f"  ✓ Resampled to {dsm_arr.shape[1]}×{dsm_arr.shape[0]} pixels")
         else:
             logger.info("  ✓ No resampling needed - all rasters match target grid")

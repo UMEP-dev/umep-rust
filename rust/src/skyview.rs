@@ -25,6 +25,7 @@ fn compute_svf_shadows(
     scale: f32,
     max_dsm_ht: f32,
     min_sun_elev: f32,
+    max_shadow_distance_m: f32,
 ) -> ShadowingResultRust {
     #[cfg(feature = "gpu")]
     {
@@ -39,6 +40,7 @@ fn compute_svf_shadows(
                 scale,
                 max_dsm_ht,
                 min_sun_elev,
+                max_shadow_distance_m,
             ) {
                 Ok(r) => {
                     let dim = dsm.dim();
@@ -79,6 +81,7 @@ fn compute_svf_shadows(
         None,
         false,
         min_sun_elev,
+        max_shadow_distance_m,
     )
 }
 
@@ -333,6 +336,7 @@ fn calculate_svf_inner(
     min_sun_elev_deg: Option<f32>,
     progress_counter: Option<Arc<AtomicUsize>>,
     cancel_flag: Option<Arc<AtomicBool>>,
+    max_shadow_distance_m: f32,
 ) -> PyResult<SvfIntermediate> {
     // Convert owned arrays to views for internal processing
     let dsm_f32 = dsm_owned.view();
@@ -412,6 +416,7 @@ fn calculate_svf_inner(
                         scale,
                         max_local_dsm_ht,
                         min_elev,
+                        max_shadow_distance_m,
                         pw.weight_iso,
                         pw.weight_n,
                         pw.weight_e,
@@ -560,6 +565,7 @@ fn calculate_svf_inner(
                 scale,
                 max_local_dsm_ht,
                 min_sun_elev_deg.unwrap_or(5.0_f32),
+                max_shadow_distance_m,
             );
 
             // Bitpack f32 shadows into matrices (bit=1 means shadow value >= 0.5)
@@ -922,6 +928,7 @@ fn crop_svf_intermediate(
 
 // Keep existing pyfunction wrapper for backward compatibility (ignores progress)
 #[pyfunction]
+#[pyo3(signature = (dsm_py, vegdem_py, vegdem2_py, scale, usevegdem, max_local_dsm_ht, patch_option=None, min_sun_elev_deg=None, _progress_callback=None, max_shadow_distance_m=None))]
 pub fn calculate_svf(
     py: Python,
     dsm_py: PyReadonlyArray2<f32>,
@@ -933,8 +940,10 @@ pub fn calculate_svf(
     patch_option: Option<u8>, // New argument for patch option
     min_sun_elev_deg: Option<f32>,
     _progress_callback: Option<PyObject>,
+    max_shadow_distance_m: Option<f32>,
 ) -> PyResult<Py<SvfResult>> {
     let patch_option = patch_option.unwrap_or(2);
+    let max_shadow_dist = max_shadow_distance_m.unwrap_or(0.0);
     // Copy Python arrays into owned Rust arrays so computation can run without the GIL
     let dsm_owned = dsm_py.as_array().to_owned();
     let vegdem_owned = vegdem_py.as_array().to_owned();
@@ -951,6 +960,7 @@ pub fn calculate_svf(
             min_sun_elev_deg,
             None,
             None,
+            max_shadow_dist,
         )
     })?;
     svf_intermediate_to_py(py, inter)
@@ -987,6 +997,7 @@ impl SkyviewRunner {
         self.cancelled.store(true, Ordering::SeqCst);
     }
 
+    #[pyo3(signature = (dsm_py, vegdem_py, vegdem2_py, scale, usevegdem, max_local_dsm_ht, patch_option=None, min_sun_elev_deg=None, max_shadow_distance_m=None))]
     pub fn calculate_svf(
         &self,
         py: Python,
@@ -998,8 +1009,10 @@ impl SkyviewRunner {
         max_local_dsm_ht: f32,
         patch_option: Option<u8>,
         min_sun_elev_deg: Option<f32>,
+        max_shadow_distance_m: Option<f32>,
     ) -> PyResult<Py<SvfResult>> {
         let patch_option = patch_option.unwrap_or(2);
+        let max_shadow_dist = max_shadow_distance_m.unwrap_or(0.0);
         // reset progress and cancel flag
         self.progress.store(0, Ordering::SeqCst);
         self.cancelled.store(false, Ordering::SeqCst);
@@ -1019,11 +1032,13 @@ impl SkyviewRunner {
                 min_sun_elev_deg,
                 Some(self.progress.clone()),
                 Some(self.cancelled.clone()),
+                max_shadow_dist,
             )
         })?;
         svf_intermediate_to_py(py, inter)
     }
 
+    #[pyo3(signature = (dsm_py, vegdem_py, vegdem2_py, scale, usevegdem, max_local_dsm_ht, patch_option, min_sun_elev_deg, core_row_start, core_row_end, core_col_start, core_col_end, max_shadow_distance_m=None))]
     pub fn calculate_svf_core(
         &self,
         py: Python,
@@ -1039,8 +1054,10 @@ impl SkyviewRunner {
         core_row_end: usize,
         core_col_start: usize,
         core_col_end: usize,
+        max_shadow_distance_m: Option<f32>,
     ) -> PyResult<Py<SvfResult>> {
         let patch_option = patch_option.unwrap_or(2);
+        let max_shadow_dist = max_shadow_distance_m.unwrap_or(0.0);
         self.progress.store(0, Ordering::SeqCst);
         self.cancelled.store(false, Ordering::SeqCst);
         let dsm_owned = dsm_py.as_array().to_owned();
@@ -1058,6 +1075,7 @@ impl SkyviewRunner {
                 min_sun_elev_deg,
                 Some(self.progress.clone()),
                 Some(self.cancelled.clone()),
+                max_shadow_dist,
             )
         })?;
         let core_inter = crop_svf_intermediate(

@@ -232,6 +232,8 @@ pub struct ConfigScalars {
     pub conifer: bool,
     #[pyo3(get, set)]
     pub use_anisotropic: bool,
+    #[pyo3(get, set)]
+    pub max_shadow_distance_m: f32,
 }
 
 #[pymethods]
@@ -250,6 +252,7 @@ impl ConfigScalars {
         has_walls: bool,
         conifer: bool,
         use_anisotropic: bool,
+        max_shadow_distance_m: f32,
     ) -> Self {
         Self {
             pixel_size,
@@ -263,6 +266,7 @@ impl ConfigScalars {
             has_walls,
             conifer,
             use_anisotropic,
+            max_shadow_distance_m,
         }
     }
 }
@@ -951,6 +955,7 @@ pub fn compute_timestep(
                 None,  // aspect_scheme
                 false, // need_full_wall_outputs (pipeline only needs wall_sun)
                 3.0,   // min_sun_altitude
+                config.max_shadow_distance_m,
             );
 
             // Combine shadows with vegetation transmissivity

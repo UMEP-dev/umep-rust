@@ -37,10 +37,10 @@ class ModelConfig:
             Default ``["tmrt"]``.
         physics: Physics parameters (vegetation, posture geometry). Optional.
         materials: Material properties (albedo, emissivity). Optional.
-        max_shadow_distance_m: Maximum shadow reach in metres. Default 500.0.
-            Caps shadow ray computation distance and serves as tile overlap
-            buffer for automatic tiled processing. At low sun angles (3 deg),
-            a 26 m building casts a 500 m shadow; taller buildings are capped.
+        max_shadow_distance_m: Maximum shadow reach in metres. Default 1000.0.
+            Caps horizontal shadow ray distance and serves as tile overlap
+            buffer for automatic tiled processing. On mountainous terrain,
+            increase this to capture terrain shadows across valleys.
         tile_workers: Number of workers for tiled orchestration. If None,
             picks an adaptive default based on CPU count.
         tile_queue_depth: Extra queued tile tasks beyond active workers.
@@ -77,7 +77,7 @@ class ModelConfig:
     outputs: list[str] = field(default_factory=lambda: ["tmrt"])
     physics: SimpleNamespace | None = None
     materials: SimpleNamespace | None = None
-    max_shadow_distance_m: float = 500.0
+    max_shadow_distance_m: float = 1000.0
     tile_workers: int | None = None
     tile_queue_depth: int | None = None
     prefetch_tiles: bool | None = None
@@ -214,7 +214,7 @@ class ModelConfig:
 
         return cls(
             use_anisotropic_sky=data.get("use_anisotropic_sky", False),
-            max_shadow_distance_m=data.get("max_shadow_distance_m", 500.0),
+            max_shadow_distance_m=data.get("max_shadow_distance_m", 1000.0),
             tile_workers=data.get("tile_workers"),
             tile_queue_depth=data.get("tile_queue_depth"),
             prefetch_tiles=data.get("prefetch_tiles"),

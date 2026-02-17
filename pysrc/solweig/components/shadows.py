@@ -94,6 +94,7 @@ def compute_shadows(
     bush: NDArray[np.floating] | None = None,
     wall_ht: NDArray[np.floating] | None = None,
     wall_asp_rad: NDArray[np.floating] | None = None,
+    max_shadow_distance_m: float = 0.0,
 ) -> ShadowBundle:
     """
     Compute shadows from buildings and vegetation.
@@ -147,6 +148,7 @@ def compute_shadows(
         None,  # walls_scheme
         None,  # aspect_scheme
         3.0,  # min_sun_altitude
+        max_shadow_distance_m,
     )
 
     # Vegetation transmissivity - compute dynamically based on season

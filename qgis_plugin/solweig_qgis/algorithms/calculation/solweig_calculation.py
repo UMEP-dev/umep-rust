@@ -394,13 +394,7 @@ GeoTIFF files organised into subfolders of the output directory:
         use_anisotropic_sky = self.parameterAsBool(parameters, "USE_ANISOTROPIC_SKY", context)
         conifer = self.parameterAsBool(parameters, "CONIFER", context)
         max_shadow_distance_m = self.parameterAsDouble(parameters, "MAX_SHADOW_DISTANCE", context)
-        tile_workers_raw = self.parameterAsInt(parameters, "TILE_WORKERS", context)
-        tile_queue_depth_raw = self.parameterAsInt(parameters, "TILE_QUEUE_DEPTH", context)
-        prefetch_mode = self.parameterAsEnum(parameters, "PREFETCH_TILES_MODE", context)
         output_dir = self.parameterAsString(parameters, "OUTPUT_DIR", context)
-        tile_workers = None if tile_workers_raw <= 0 else tile_workers_raw
-        tile_queue_depth = None if tile_queue_depth_raw <= 0 else tile_queue_depth_raw
-        prefetch_tiles = None if prefetch_mode == 0 else prefetch_mode == 1
 
         # Default output to 'results/' inside prepared surface directory
         if not output_dir or output_dir.rstrip("/").endswith("OUTPUT_DIR"):
@@ -527,9 +521,6 @@ GeoTIFF files organised into subfolders of the output directory:
                 output_dir,
                 selected_outputs,
                 max_shadow_distance_m,
-                tile_workers,
-                tile_queue_depth,
-                prefetch_tiles,
                 materials,
                 heat_thresholds_day,
                 heat_thresholds_night,
@@ -658,9 +649,6 @@ GeoTIFF files organised into subfolders of the output directory:
         output_dir,
         selected_outputs,
         max_shadow_distance_m,
-        tile_workers,
-        tile_queue_depth,
-        prefetch_tiles,
         materials,
         heat_thresholds_day,
         heat_thresholds_night,
@@ -703,9 +691,6 @@ GeoTIFF files organised into subfolders of the output directory:
                 physics=physics,
                 materials=materials,
                 max_shadow_distance_m=max_shadow_distance_m,
-                tile_workers=tile_workers,
-                tile_queue_depth=tile_queue_depth,
-                prefetch_tiles=prefetch_tiles,
                 output_dir=output_dir,
                 outputs=selected_outputs,
                 heat_thresholds_day=heat_thresholds_day or None,

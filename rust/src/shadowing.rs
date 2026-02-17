@@ -144,6 +144,7 @@ pub(crate) fn calculate_shadows_rust(
     aspect_scheme_view_opt: Option<ArrayView2<f32>>,
     need_full_wall_outputs: bool,
     min_sun_elev_deg: f32,
+    max_shadow_distance_m: f32,
 ) -> ShadowingResultRust {
     let shape = dsm_view.shape();
     let num_rows = shape[0];
@@ -203,6 +204,7 @@ pub(crate) fn calculate_shadows_rust(
                 scale,
                 max_local_dsm_ht,
                 min_sun_elev_deg,
+                max_shadow_distance_m,
             ) {
                 Ok(gpu_result) => {
                     // Handle sh_on_wall if wall scheme is present
@@ -321,9 +323,17 @@ pub(crate) fn calculate_shadows_rust(
     let mut ds: f32;
     let mut index = 0.0;
 
-    // clamp elevation used for reach computation
+    // Horizontal reach: derived from height, optionally capped by max_shadow_distance_m.
+    // On mountainous terrain the height-derived reach can be huge, so the distance
+    // cap prevents tracing rays for kilometres while the dz guard (below) still
+    // uses the full terrain relief for correct vertical cutoff.
     let min_sun_elev_rad = min_sun_elev_deg.to_radians();
-    let max_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+    let height_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+    let max_reach_m = if max_shadow_distance_m > 0.0 {
+        height_reach_m.min(max_shadow_distance_m)
+    } else {
+        height_reach_m
+    };
     let max_radius_pixels = (max_reach_m / scale).ceil() as usize;
     let max_index = max_radius_pixels as f32; // index uses f32
 
@@ -686,6 +696,7 @@ fn shade_on_walls(
 }
 
 #[pyfunction]
+#[pyo3(signature = (azimuth_deg, altitude_deg, scale, max_local_dsm_ht, dsm, veg_canopy_dsm=None, veg_trunk_dsm=None, bush=None, walls=None, aspect=None, walls_scheme=None, aspect_scheme=None, min_sun_elev_deg=None, max_shadow_distance_m=None))]
 /// Calculates shadow maps for buildings, vegetation, and walls given DSM and sun position (Python wrapper).
 ///
 /// This function handles Python type conversions and calls the internal Rust shadow calculation logic.
@@ -706,6 +717,7 @@ fn shade_on_walls(
 /// * `aspect` - Optional wall aspect/orientation layer (radians or degrees). Required if `walls` is provided.
 /// * `walls_scheme` - Optional alternative wall height layer for specific calculations
 /// * `aspect_scheme` - Optional alternative wall aspect layer
+/// * `max_shadow_distance_m` - Optional: Maximum horizontal shadow distance in metres (0 = no cap)
 ///
 /// # Returns
 /// * `ShadowingResult` struct containing various shadow maps (ground, vegetation, walls) as PyArrays.
@@ -724,6 +736,7 @@ pub fn calculate_shadows_wall_ht_25(
     walls_scheme: Option<PyReadonlyArray2<f32>>,
     aspect_scheme: Option<PyReadonlyArray2<f32>>,
     min_sun_elev_deg: Option<f32>,
+    max_shadow_distance_m: Option<f32>,
 ) -> PyResult<PyObject> {
     let dsm_view = dsm.as_array();
     let shape = dsm_view.shape();
@@ -832,6 +845,7 @@ pub fn calculate_shadows_wall_ht_25(
         aspect_scheme_view_opt,
         true,
         min_sun_elev_deg.unwrap_or(5.0_f32),
+        max_shadow_distance_m.unwrap_or(0.0_f32),
     );
 
     let py_result = ShadowingResult {

@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 MIN_TILE_SIZE = 256  # Minimum tile size in pixels
 _FALLBACK_MAX_TILE_SIZE = 2500  # Used when GPU + RAM detection both fail
 MIN_SUN_ELEVATION_DEG = 3.0  # Minimum sun elevation for shadow calculations
-MAX_BUFFER_M = 500.0  # Default maximum buffer / shadow distance in meters
+MAX_BUFFER_M = 1000.0  # Default maximum buffer / shadow distance in meters
 
 # Backward-compat alias (imported by tests and calculate_timeseries_tiled docstring)
 MAX_TILE_SIZE = _FALLBACK_MAX_TILE_SIZE
@@ -1112,13 +1112,9 @@ def calculate_timeseries_tiled(
         effective_physics = load_physics()
     anisotropic_arg = effective_aniso if (anisotropic_requested_explicitly or effective_aniso is False) else None
 
-    if output_dir is not None and effective_outputs is None:
-        effective_outputs = ["tmrt"]
     requested_outputs = None
-    if output_dir is not None:
-        requested_outputs = set(effective_outputs or ["tmrt"])
-        requested_outputs.add("tmrt")
-        requested_outputs.add("shadow")  # needed for sun/shade hour accumulation
+    if output_dir is not None and effective_outputs:
+        requested_outputs = {"tmrt", "shadow"} | set(effective_outputs)
     elif timestep_outputs is not None:
         # Keep specific per-timestep arrays; always include tmrt + shadow for accumulator.
         requested_outputs = {"tmrt", "shadow"} | set(timestep_outputs)
@@ -1216,7 +1212,7 @@ def calculate_timeseries_tiled(
     if output_dir is not None:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
-    use_async_output = output_dir is not None and async_output_enabled()
+    use_async_output = output_dir is not None and effective_outputs and async_output_enabled()
     _writer = (
         AsyncGeoTiffWriter(output_dir=output_path, surface=surface)
         if use_async_output and output_path is not None
@@ -1417,13 +1413,13 @@ def calculate_timeseries_tiled(
                 if _need_pet and result.pet is None:
                     result.pet = compute_pet_grid(result.tmrt, weather.ta, weather.rh, weather.ws, effective_human)
 
-                # Save incrementally if output_dir provided
-                if _writer is not None:
+                # Save per-timestep outputs if output_dir and outputs are provided
+                if _writer is not None and effective_outputs:
                     _writer.submit(
                         timestamp=weather.datetime,
-                        arrays=collect_output_arrays(result, effective_outputs or ["tmrt"]),
+                        arrays=collect_output_arrays(result, effective_outputs),
                     )
-                elif output_dir is not None:
+                elif output_dir is not None and effective_outputs:
                     result.to_geotiff(
                         output_dir=output_dir,
                         timestamp=weather.datetime,

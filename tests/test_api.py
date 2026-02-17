@@ -716,9 +716,13 @@ class TestTiledProcessing:
         buffer = calculate_buffer_distance(10.0)
         assert 180 < buffer < 200
 
-        # 50m building: buffer = 50 / tan(3°) ≈ 954m, but capped at 500m
+        # 50m building: buffer = 50 / tan(3°) ≈ 954m, under 1000m cap
         buffer = calculate_buffer_distance(50.0)
-        assert buffer == 500.0  # MAX_BUFFER_M
+        assert 940 < buffer < 960
+
+        # 60m building: buffer = 60 / tan(3°) ≈ 1145m, capped at 1000m
+        buffer = calculate_buffer_distance(60.0)
+        assert buffer == 1000.0  # MAX_BUFFER_M
 
     def test_calculate_buffer_distance_zero_height(self):
         """Zero height returns zero buffer."""

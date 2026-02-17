@@ -269,15 +269,12 @@ def calculate_core_fused(
     wall_ht = surface.wall_height if has_walls else None
     wall_asp = surface.wall_aspect if has_walls else None
 
-    # Keep height semantics aligned with daytime path and tiled/SVF flows.
+    # Use full terrain relief for shadow ray termination so that mountain
+    # ridges can correctly shadow valleys.  The horizontal reach is still
+    # bounded by max_shadow_distance_m via max_index in Rust, so rays
+    # don't run forever — they just won't terminate prematurely on the
+    # vertical axis when terrain relief exceeds building heights.
     max_height = surface.max_height
-
-    # Cap shadow reach if max_shadow_distance_m is set
-    if max_shadow_distance_m is not None:
-        from .tiling import MIN_SUN_ELEVATION_DEG
-
-        height_cap = max_shadow_distance_m * np.tan(np.radians(MIN_SUN_ELEVATION_DEG))
-        max_height = min(max_height, height_cap)
 
     # SVF resolution (cached between timesteps)
     svf_bundle, _needs_psi_adjustment = resolve_svf(
@@ -394,6 +391,7 @@ def calculate_core_fused(
         has_walls=has_walls,
         conifer=conifer,
         use_anisotropic=use_anisotropic_sky,
+        max_shadow_distance_m=float(max_shadow_distance_m or 1000.0),
     )
 
     # Buildings mask for GVF (computed from DSM/land_cover/walls)

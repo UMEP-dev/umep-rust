@@ -373,10 +373,7 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         USE_ANISOTROPIC_SKY: Enable anisotropic sky model
         CONIFER: Treat vegetation as evergreen
         SVF_DIR: Override SVF directory (optional)
-        MAX_SHADOW_DISTANCE: Maximum shadow distance in metres
-        TILE_WORKERS: Tiled timeseries worker threads (0 = auto)
-        TILE_QUEUE_DEPTH: Extra queued tile tasks (0 = auto)
-        PREFETCH_TILES_MODE: Tile prefetch mode (auto/on/off)
+        MAX_SHADOW_DISTANCE: Maximum horizontal shadow distance in metres
     """
     from qgis.core import QgsProcessingParameterDefinition
 
@@ -407,45 +404,14 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
 
     max_shadow = QgsProcessingParameterNumber(
         "MAX_SHADOW_DISTANCE",
-        algorithm.tr("Maximum shadow distance (m) — caps shadow ray reach and tile overlap"),
+        algorithm.tr("Maximum shadow distance (m) — caps horizontal shadow ray reach"),
         type=QgsProcessingParameterNumber.Double,
-        defaultValue=500.0,
+        defaultValue=1000.0,
         minValue=50.0,
-        maxValue=2000.0,
+        maxValue=5000.0,
     )
     max_shadow.setFlags(max_shadow.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
     algorithm.addParameter(max_shadow)
-
-    tile_workers = QgsProcessingParameterNumber(
-        "TILE_WORKERS",
-        algorithm.tr("Tile workers (0 = auto)"),
-        type=QgsProcessingParameterNumber.Integer,
-        defaultValue=0,
-        minValue=0,
-        maxValue=128,
-    )
-    tile_workers.setFlags(tile_workers.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
-    algorithm.addParameter(tile_workers)
-
-    tile_queue_depth = QgsProcessingParameterNumber(
-        "TILE_QUEUE_DEPTH",
-        algorithm.tr("Tile queue depth (0 = auto)"),
-        type=QgsProcessingParameterNumber.Integer,
-        defaultValue=0,
-        minValue=0,
-        maxValue=512,
-    )
-    tile_queue_depth.setFlags(tile_queue_depth.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
-    algorithm.addParameter(tile_queue_depth)
-
-    prefetch_mode = QgsProcessingParameterEnum(
-        "PREFETCH_TILES_MODE",
-        algorithm.tr("Tile prefetch mode"),
-        options=["Auto", "Enabled", "Disabled"],
-        defaultValue=0,
-    )
-    prefetch_mode.setFlags(prefetch_mode.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
-    algorithm.addParameter(prefetch_mode)
 
 
 def add_vegetation_parameters(algorithm: QgsProcessingAlgorithm) -> None:

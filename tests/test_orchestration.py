@@ -538,8 +538,8 @@ class TestCalculateBufferDistance:
         assert 190 < result < 192
 
     def test_tall_building_capped(self):
-        """50m building would need ~954m, capped at 500m."""
-        result = calculate_buffer_distance(50.0)
+        """60m building would need ~1145m, capped at 1000m."""
+        result = calculate_buffer_distance(60.0)
         assert result == MAX_BUFFER_M
 
     def test_custom_min_elevation(self):

@@ -182,8 +182,8 @@ def validate_inputs(
     if height_range > 500:
         warnings.append(
             f"DSM height range is {height_range:.0f}m (max={dsm_max:.0f}m, min={dsm_min:.0f}m). "
-            "This exceeds typical urban areas. If your DSM contains terrain elevation, "
-            "provide a DEM to separate ground from building heights."
+            "This is typical for mountainous terrain. Shadow rays will use full terrain "
+            "relief; consider increasing max_shadow_distance_m for wide valleys."
         )
 
     if surface.dem is None and dsm_min > 100:

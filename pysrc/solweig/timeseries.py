@@ -171,10 +171,10 @@ def calculate_timeseries(
         wall_material: Wall material type for temperature model.
             One of "brick", "concrete", "wood", "cobblestone" (case-insensitive).
             If None (default), uses generic wall params from materials JSON.
-        max_shadow_distance_m: Maximum shadow reach in metres (default 500.0).
-            Caps shadow ray computation distance and serves as the tile overlap
+        max_shadow_distance_m: Maximum shadow reach in metres (default 1000.0).
+            Caps horizontal shadow ray distance and serves as the tile overlap
             buffer for automatic tiled processing of large rasters. If None,
-            uses config.max_shadow_distance_m or 500.0.
+            uses config.max_shadow_distance_m or 1000.0.
         tile_workers: Number of workers for tiled orchestration. If None, uses
             config.tile_workers or adaptive default.
         tile_queue_depth: Extra queued tile tasks beyond active workers. If None,
@@ -184,8 +184,8 @@ def calculate_timeseries(
         output_dir: Directory to save results. If provided, per-timestep results
             are saved incrementally as GeoTIFF files during calculation.
             Summary grids are always saved to ``output_dir/summary/``.
-        outputs: Which per-timestep outputs to save (e.g., ["tmrt", "shadow"]).
-            Only used if output_dir is provided. If None, uses config.outputs or ["tmrt"].
+        outputs: Which per-timestep outputs to save as GeoTIFFs (e.g., ["tmrt", "shadow"]).
+            Only used if output_dir is provided. If None, no per-timestep files are written.
         timestep_outputs: Which per-timestep arrays to retain in memory
             (e.g., ``["tmrt", "shadow"]``). When provided, ``summary.results``
             contains a list of SolweigResult with those fields populated.
@@ -370,8 +370,10 @@ def calculate_timeseries(
     if options:
         logger.info(f"  Options: {', '.join(options)}")
 
-    if output_dir is not None:
-        logger.info(f"  Auto-save: {output_dir} ({', '.join(outputs or ['tmrt'])})")
+    if output_dir is not None and outputs:
+        logger.info(f"  Auto-save: {output_dir} ({', '.join(outputs)})")
+    elif output_dir is not None:
+        logger.info(f"  Output dir: {output_dir} (summary only)")
     logger.info("=" * 60)
 
     output_path: Path | None = None
@@ -380,14 +382,11 @@ def calculate_timeseries(
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-    # Default outputs
-    if output_dir is not None and outputs is None:
-        outputs = ["tmrt"]
+    # Determine which arrays the Rust compute needs to return.
+    # tmrt + shadow are always needed for the summary accumulator.
     requested_outputs = None
-    if output_dir is not None:
-        requested_outputs = set(outputs or ["tmrt"])
-        requested_outputs.add("tmrt")
-        requested_outputs.add("shadow")  # needed for sun/shade hour accumulation
+    if output_dir is not None and outputs:
+        requested_outputs = {"tmrt", "shadow"} | set(outputs)
     elif timestep_outputs is not None:
         # Keep specific per-timestep arrays; always include tmrt + shadow for accumulator.
         requested_outputs = {"tmrt", "shadow"} | set(timestep_outputs)
@@ -434,7 +433,7 @@ def calculate_timeseries(
     # Set up progress reporting (caller callback suppresses tqdm)
     n_steps = len(weather_series)
     _progress = None if progress_callback is not None else ProgressReporter(total=n_steps, desc="SOLWEIG timeseries")
-    use_async_output = output_dir is not None and async_output_enabled()
+    use_async_output = output_dir is not None and outputs and async_output_enabled()
     _writer = (
         AsyncGeoTiffWriter(output_dir=output_path, surface=surface)
         if use_async_output and output_path is not None
@@ -484,13 +483,13 @@ def calculate_timeseries(
             if _need_pet and result.pet is None:
                 result.pet = compute_pet_grid(result.tmrt, weather.ta, weather.rh, weather.ws, human)
 
-            # Save incrementally if output_dir provided
-            if _writer is not None:
+            # Save per-timestep outputs if output_dir and outputs are provided
+            if _writer is not None and outputs:
                 _writer.submit(
                     timestamp=weather.datetime,
-                    arrays=collect_output_arrays(result, outputs or ["tmrt"]),
+                    arrays=collect_output_arrays(result, outputs),
                 )
-            elif output_dir is not None:
+            elif output_dir is not None and outputs:
                 result.to_geotiff(
                     output_dir=output_dir,
                     timestamp=weather.datetime,

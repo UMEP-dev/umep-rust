@@ -108,8 +108,12 @@ def _align_layer(
     method: str,
     crs_wkt: str,
 ) -> NDArray[np.floating]:
-    """Resample a raster to the target grid if extents differ."""
+    """Resample a raster to the target grid if extents or shape differ."""
     from solweig.utils import extract_bounds, resample_to_grid
+
+    # Expected target dimensions (same formula as resample_to_grid)
+    expected_h = int(np.round((target_bbox[3] - target_bbox[1]) / pixel_size))
+    expected_w = int(np.round((target_bbox[2] - target_bbox[0]) / pixel_size))
 
     bounds = extract_bounds(gt, arr.shape)
     needs_resample = (
@@ -118,6 +122,7 @@ def _align_layer(
         or abs(bounds[2] - target_bbox[2]) > 1e-6
         or abs(bounds[3] - target_bbox[3]) > 1e-6
         or abs(abs(gt[1]) - pixel_size) > 1e-6
+        or arr.shape != (expected_h, expected_w)
     )
     if needs_resample:
         arr, _ = resample_to_grid(arr, gt, target_bbox, pixel_size, method=method, src_crs=crs_wkt)
