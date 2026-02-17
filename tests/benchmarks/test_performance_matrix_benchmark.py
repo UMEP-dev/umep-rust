@@ -201,6 +201,8 @@ def _run_plugin_case(tiled: bool, anisotropic: bool) -> None:
             tile_queue_depth=None,
             prefetch_tiles=None,
             materials=None,
+            heat_thresholds_day=[],
+            heat_thresholds_night=[],
             feedback=feedback,
         )
 

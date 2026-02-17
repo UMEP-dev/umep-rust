@@ -560,6 +560,32 @@ def add_land_cover_mapping_parameters(algorithm: QgsProcessingAlgorithm) -> None
     algorithm.addParameter(custom_file)
 
 
+def add_heat_threshold_parameters(algorithm: QgsProcessingAlgorithm) -> None:
+    """Add UTCI heat-stress threshold parameters for timeseries summary.
+
+    Parameters added:
+        HEAT_THRESHOLDS_DAY: Comma-separated UTCI thresholds for daytime (°C)
+        HEAT_THRESHOLDS_NIGHT: Comma-separated UTCI thresholds for nighttime (°C)
+    """
+    algorithm.addParameter(
+        QgsProcessingParameterString(
+            "HEAT_THRESHOLDS_DAY",
+            algorithm.tr("Daytime UTCI thresholds (°C, comma-separated)"),
+            defaultValue="32, 38",
+            optional=True,
+        )
+    )
+
+    algorithm.addParameter(
+        QgsProcessingParameterString(
+            "HEAT_THRESHOLDS_NIGHT",
+            algorithm.tr("Nighttime UTCI thresholds (°C, comma-separated)"),
+            defaultValue="26",
+            optional=True,
+        )
+    )
+
+
 def add_output_tmrt_parameter(algorithm: QgsProcessingAlgorithm) -> None:
     """Add Tmrt output raster parameter."""
     algorithm.addParameter(

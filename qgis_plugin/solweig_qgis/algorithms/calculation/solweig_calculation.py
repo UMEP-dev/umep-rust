@@ -7,6 +7,7 @@ with optional tiled processing and UTCI/PET post-processing.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 from pathlib import Path
@@ -39,6 +40,7 @@ from ...utils.converters import (
 from ...utils.parameters import (
     add_date_filter_parameters,
     add_epw_parameters,
+    add_heat_threshold_parameters,
     add_human_body_parameters,
     add_human_parameters,
     add_location_parameters,
@@ -216,7 +218,17 @@ GeoTIFF files organised into subfolders of the output directory:
             if param:
                 param.setFlags(param.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
 
-        # --- Output selection (Tmrt always saved) ---
+        # --- Heat-stress thresholds (for UTCI exceedance summary grids) ---
+        add_heat_threshold_parameters(self)
+
+        # --- Output selection ---
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                "OUTPUT_TMRT",
+                self.tr("Save Tmrt (Mean Radiant Temperature) per timestep"),
+                defaultValue=True,
+            )
+        )
         self.addParameter(
             QgsProcessingParameterBoolean(
                 "OUTPUT_SHADOW",
@@ -395,8 +407,20 @@ GeoTIFF files organised into subfolders of the output directory:
             output_dir = os.path.join(prepared_dir, "results")
             feedback.pushInfo(f"Output directory: {output_dir} (inside prepared surface dir)")
 
-        # Parse output components (tmrt always saved)
-        selected_outputs = ["tmrt"]
+        # Parse heat-stress thresholds
+        heat_thresholds_day = self._parse_thresholds(self.parameterAsString(parameters, "HEAT_THRESHOLDS_DAY", context))
+        heat_thresholds_night = self._parse_thresholds(
+            self.parameterAsString(parameters, "HEAT_THRESHOLDS_NIGHT", context)
+        )
+        if heat_thresholds_day:
+            feedback.pushInfo(f"Daytime UTCI thresholds: {heat_thresholds_day}")
+        if heat_thresholds_night:
+            feedback.pushInfo(f"Nighttime UTCI thresholds: {heat_thresholds_night}")
+
+        # Parse output components
+        selected_outputs = []
+        if self.parameterAsBool(parameters, "OUTPUT_TMRT", context):
+            selected_outputs.append("tmrt")
         for comp in ["shadow", "kdown", "kup", "ldown", "lup"]:
             if self.parameterAsBool(parameters, f"OUTPUT_{comp.upper()}", context):
                 selected_outputs.append(comp)
@@ -507,6 +531,8 @@ GeoTIFF files organised into subfolders of the output directory:
                 tile_queue_depth,
                 prefetch_tiles,
                 materials,
+                heat_thresholds_day,
+                heat_thresholds_night,
                 feedback,
             )
 
@@ -636,6 +662,8 @@ GeoTIFF files organised into subfolders of the output directory:
         tile_queue_depth,
         prefetch_tiles,
         materials,
+        heat_thresholds_day,
+        heat_thresholds_night,
         feedback,
     ) -> tuple[int, dict]:
         """Run multi-timestep timeseries with per-timestep progress.
@@ -662,8 +690,9 @@ GeoTIFF files organised into subfolders of the output directory:
             pct = 25 + int(55 * current / total_safe)
             feedback.setProgress(pct)
 
+        summary = None
         try:
-            solweig.calculate_timeseries(
+            summary = solweig.calculate_timeseries(
                 surface=surface,
                 weather_series=weather_series,
                 location=location,
@@ -679,6 +708,8 @@ GeoTIFF files organised into subfolders of the output directory:
                 prefetch_tiles=prefetch_tiles,
                 output_dir=output_dir,
                 outputs=selected_outputs,
+                heat_thresholds_day=heat_thresholds_day or None,
+                heat_thresholds_night=heat_thresholds_night or None,
                 progress_callback=_qgis_progress,
             )
         except KeyboardInterrupt:
@@ -692,6 +723,13 @@ GeoTIFF files organised into subfolders of the output directory:
             if progress_state["completed"] > 0
             else (0 if feedback.isCanceled() else n_steps)
         )
+
+        # Log the summary report
+        if summary is not None and n_results > 0:
+            feedback.pushInfo("")
+            for line in summary.report().splitlines():
+                feedback.pushInfo(line)
+
         tmrt_stats = self._compute_tmrt_stats_from_outputs(output_dir) if output_dir and n_results > 0 else {}
         return n_results, tmrt_stats
 
@@ -735,6 +773,19 @@ GeoTIFF files organised into subfolders of the output directory:
     # -------------------------------------------------------------------------
     # Utility helpers
     # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_thresholds(raw: str | None) -> list[float]:
+        """Parse a comma-separated string of temperature thresholds into a list of floats."""
+        if not raw or not raw.strip():
+            return []
+        values = []
+        for part in raw.split(","):
+            part = part.strip()
+            if part:
+                with contextlib.suppress(ValueError):
+                    values.append(float(part))
+        return values
 
     @staticmethod
     def _report_summary(
