@@ -578,12 +578,12 @@ class TestFullPipelineValidation:
 
         print("\n--- Timeseries (2023-07-15) ---")
         print(f"{'Hour':>4s} {'Ta':>6s} {'Tmrt':>6s} {'Tmrt-Ta':>7s}")
-        for h, ta, tmrt in zip(hours, ta_series, woi_tmrt):
+        for h, ta, tmrt in zip(hours, ta_series, woi_tmrt, strict=False):
             print(f"{h:4d} {ta:6.1f} {tmrt:6.1f} {tmrt - ta:+7.1f}")
 
         # Daytime Tmrt should exceed nighttime
-        day_tmrt = [t for h, t in zip(hours, woi_tmrt) if 10 <= h <= 16]
-        night_tmrt = [t for h, t in zip(hours, woi_tmrt) if h < 5 or h > 22]
+        day_tmrt = [t for h, t in zip(hours, woi_tmrt, strict=False) if 10 <= h <= 16]
+        night_tmrt = [t for h, t in zip(hours, woi_tmrt, strict=False) if h < 5 or h > 22]
 
         if day_tmrt and night_tmrt:
             assert np.mean(day_tmrt) > np.mean(night_tmrt), (

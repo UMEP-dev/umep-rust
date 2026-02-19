@@ -536,7 +536,7 @@ class TestTimeseriesTiledIntegration:
 
         assert len(summary_ref) == len(summary_tiled)
 
-        for i, (ref, tiled) in enumerate(zip(summary_ref.results, summary_tiled.results)):
+        for i, (ref, tiled) in enumerate(zip(summary_ref.results, summary_tiled.results, strict=False)):
             both_valid = np.isfinite(ref.tmrt) & np.isfinite(tiled.tmrt)
             if both_valid.sum() > 0:
                 diff = np.abs(ref.tmrt[both_valid] - tiled.tmrt[both_valid])
@@ -687,7 +687,7 @@ class TestTimeseriesTiledIntegration:
         )
 
         assert len(summary_one) == len(summary_multi)
-        for ref, got in zip(summary_one.results, summary_multi.results):
+        for ref, got in zip(summary_one.results, summary_multi.results, strict=False):
             both_valid = np.isfinite(ref.tmrt) & np.isfinite(got.tmrt)
             if both_valid.sum() > 0:
                 diff = np.abs(ref.tmrt[both_valid] - got.tmrt[both_valid])

@@ -39,7 +39,7 @@ def generate_sky_patches(n_alt_bands=6, n_azi_per_band=12):
     alt_bands = [6, 18, 30, 42, 54, 66, 78, 90]
     azis_per_band = [30, 24, 24, 18, 12, 6, 6, 1]  # Patches per altitude band
 
-    for _alt_idx, (alt, n_azi) in enumerate(zip(alt_bands[:n_alt_bands], azis_per_band[:n_alt_bands])):
+    for _alt_idx, (alt, n_azi) in enumerate(zip(alt_bands[:n_alt_bands], azis_per_band[:n_alt_bands], strict=False)):
         azi_step = 360.0 / n_azi if n_azi > 1 else 0
         for azi_idx in range(n_azi):
             azi = azi_idx * azi_step

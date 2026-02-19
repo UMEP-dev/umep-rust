@@ -531,12 +531,12 @@ class TestTmrtValidation:
 
         print("\n--- Diurnal Tmrt at canyon center (Aug 4, 2023) ---")
         print(f"{'Hour':>4s} {'Ta':>6s} {'Tmrt':>6s} {'Tmrt-Ta':>7s}")
-        for h, w, tmrt in zip(hours, aug04_weather, tmrt_series):
+        for h, w, tmrt in zip(hours, aug04_weather, tmrt_series, strict=False):
             print(f"{h:4d} {w.ta:6.1f} {tmrt:6.1f} {tmrt - w.ta:+7.1f}")
 
         # Daytime Tmrt should exceed nighttime
-        day_tmrt = [t for h, t in zip(hours, tmrt_series) if 10 <= h <= 16]
-        night_tmrt = [t for h, t in zip(hours, tmrt_series) if h < 5 or h > 22]
+        day_tmrt = [t for h, t in zip(hours, tmrt_series, strict=False) if 10 <= h <= 16]
+        night_tmrt = [t for h, t in zip(hours, tmrt_series, strict=False) if h < 5 or h > 22]
 
         if day_tmrt and night_tmrt:
             assert np.mean(day_tmrt) > np.mean(night_tmrt), (
@@ -566,7 +566,7 @@ class TestTmrtValidation:
 
         # Build model Tmrt dict by hour
         model_tmrt = {}
-        for w, r in zip(aug04_weather, results):
+        for w, r in zip(aug04_weather, results, strict=False):
             model_tmrt[w.datetime.hour] = r.tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
 
         # Match with hourly observations
@@ -694,7 +694,7 @@ class TestTmrtValidation:
             results = summary.results
 
             model_tmrt = {}
-            for w, r in zip(weather_list, results):
+            for w, r in zip(weather_list, results, strict=False):
                 model_tmrt[w.datetime] = r.tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
 
             for o in obs_tmrt:
@@ -799,7 +799,7 @@ class TestSkyModelComparison:
         results_iso = summary_iso.results
 
         tmrt_iso = {}
-        for w, r in zip(weather_list, results_iso):
+        for w, r in zip(weather_list, results_iso, strict=False):
             tmrt_iso[w.datetime.hour] = r.tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
 
         errors = []

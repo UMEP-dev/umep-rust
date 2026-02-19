@@ -855,7 +855,7 @@ def generate_anisotropic_sky_fixtures():
         patches = []
         alt_bands = [6, 18, 30, 42]
         azis_per_band = [30, 24, 24, 18]
-        for alt, n_azi in zip(alt_bands[:n_alt_bands], azis_per_band[:n_alt_bands]):
+        for alt, n_azi in zip(alt_bands[:n_alt_bands], azis_per_band[:n_alt_bands], strict=False):
             azi_step = 360.0 / n_azi if n_azi > 1 else 0
             for azi_idx in range(n_azi):
                 azi = azi_idx * azi_step
@@ -1082,7 +1082,7 @@ def generate_aniso_radiation_fixtures():
         patches = []
         alt_bands = [6, 18, 30, 42]
         azis_per_band = [30, 24, 24, 18]
-        for alt, n_azi in zip(alt_bands[:n_alt_bands], azis_per_band[:n_alt_bands]):
+        for alt, n_azi in zip(alt_bands[:n_alt_bands], azis_per_band[:n_alt_bands], strict=False):
             azi_step = 360.0 / n_azi if n_azi > 1 else 0
             for azi_idx in range(n_azi):
                 patches.append([alt, azi_idx * azi_step])

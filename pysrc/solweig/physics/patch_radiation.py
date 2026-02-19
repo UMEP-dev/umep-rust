@@ -366,7 +366,7 @@ def patch_steradians(L_patches):
 
     # Calculation of steradian for each patch
     # Build scalar lookup once to avoid array->scalar coercion warnings.
-    count_by_altitude = {float(alt): float(count) for alt, count in zip(skyalt, skyalt_c)}
+    count_by_altitude = {float(alt): float(count) for alt, count in zip(skyalt, skyalt_c, strict=False)}
     steradian = np.zeros((patch_altitude.shape[0]), dtype=np.float32)
     for i in range(patch_altitude.shape[0]):
         band_count = count_by_altitude[float(patch_altitude[i])]

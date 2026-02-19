@@ -2522,7 +2522,7 @@ wheels = [
 
 [[package]]
 name = "solweig"
-version = "0.1.0b46"
+version = "0.1.0b47"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },

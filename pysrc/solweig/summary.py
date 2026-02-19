@@ -8,9 +8,10 @@ internal helper that builds it incrementally during the loop).
 from __future__ import annotations
 
 import datetime as _dt
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 
 import numpy as np
 

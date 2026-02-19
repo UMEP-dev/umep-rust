@@ -143,7 +143,7 @@ def rasterise_gdf(gdf, geom_col, ht_col, bbox=None, pixel_size: float = 1.0):
     # Create a blank array for the raster
     raster = np.zeros((height, width), dtype=np.float32)
     # Burn geometries into the raster
-    shapes = ((geom, value) for geom, value in zip(gdf[geom_col], gdf[ht_col]))
+    shapes = ((geom, value) for geom, value in zip(gdf[geom_col], gdf[ht_col], strict=False))
     raster = rasterize(shapes, out_shape=raster.shape, transform=transform, fill=0, dtype=np.float32)
 
     return raster, transform
@@ -821,13 +821,13 @@ class _BooleanArray:
 
     def __and__(self, other):
         if isinstance(other, _BooleanArray):
-            return _BooleanArray([a and b for a, b in zip(self._values, other._values)])
-        return _BooleanArray([a and b for a, b in zip(self._values, other)])
+            return _BooleanArray([a and b for a, b in zip(self._values, other._values, strict=False)])
+        return _BooleanArray([a and b for a, b in zip(self._values, other, strict=False)])
 
     def __or__(self, other):
         if isinstance(other, _BooleanArray):
-            return _BooleanArray([a or b for a, b in zip(self._values, other._values)])
-        return _BooleanArray([a or b for a, b in zip(self._values, other)])
+            return _BooleanArray([a or b for a, b in zip(self._values, other._values, strict=False)])
+        return _BooleanArray([a or b for a, b in zip(self._values, other, strict=False)])
 
     def __iter__(self):
         return iter(self._values)
@@ -942,8 +942,8 @@ class _EpwDataFrame:
         if isinstance(key, _BooleanArray):
             key = key._values
         if isinstance(key, list):
-            filtered_rows = [r for r, m in zip(self._rows, key) if m]
-            filtered_ts = [t for t, m in zip(self._timestamps, key) if m]
+            filtered_rows = [r for r, m in zip(self._rows, key, strict=False) if m]
+            filtered_ts = [t for t, m in zip(self._timestamps, key, strict=False) if m]
             return _EpwDataFrame(filtered_rows, filtered_ts)
         raise TypeError(f"Unsupported indexing type: {type(key)}")
 
@@ -953,7 +953,7 @@ class _EpwDataFrame:
 
     def iterrows(self):
         """Iterate over (timestamp, row) pairs."""
-        for ts, row_data in zip(self._timestamps, self._rows):
+        for ts, row_data in zip(self._timestamps, self._rows, strict=False):
             yield _EpwTimestamp(ts), _EpwRow(row_data)
 
     def to_dataframe(self):

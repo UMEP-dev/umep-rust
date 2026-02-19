@@ -25,7 +25,7 @@ SKY_BOT = (135, 206, 235)  # light blue   (gradient only)
 
 
 def lerp_color(c1, c2, t):
-    return tuple(int(a + (b - a) * t) for a, b in zip(c1, c2))
+    return tuple(int(a + (b - a) * t) for a, b in zip(c1, c2, strict=False))
 
 
 def draw_icon(size=128):

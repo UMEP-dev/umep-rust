@@ -19,7 +19,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -409,7 +409,7 @@ def _append_performance_log(perf_matrix: dict[str, dict[str, float | list[float]
     """Append a run record to benchmark logs (CSV + markdown matrix)."""
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     run_id = now.strftime("%Y%m%dT%H%M%SZ")
     timestamp = now.isoformat(timespec="seconds")
     py_ver = sys.version.split()[0]

@@ -241,7 +241,7 @@ class TestRustBitExtractionParity:
         alt_bands = [6, 18, 30, 42, 54, 66]
         azis_per_band = [30, 24, 24, 18, 12, 6]  # total = 114, but we trim
         count = 0
-        for alt, n_azi in zip(alt_bands, azis_per_band):
+        for alt, n_azi in zip(alt_bands, azis_per_band, strict=False):
             azi_step = 360.0 / n_azi
             for j in range(n_azi):
                 if count >= n_patches:

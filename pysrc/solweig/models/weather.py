@@ -566,7 +566,7 @@ class Weather:
             # like Dec 15 → Jan 15 correctly.
             start_md = (start_dt.month, start_dt.day)
             end_md = (end_dt.month, end_dt.day)
-            idx_md = list(zip(df_idx.month, df_idx.day))
+            idx_md = list(zip(df_idx.month, df_idx.day, strict=False))
 
             if start_md <= end_md:
                 # Normal range (e.g., Feb 7 → Feb 8)
