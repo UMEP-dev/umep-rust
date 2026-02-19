@@ -1,9 +1,9 @@
 [project]
 name = "solweig"
-version = "0.1.0b45"
+version = "0.1.0b46"
 description = "High-performance SOLWEIG urban microclimate model (Rust + Python)"
 readme = "README.md"
-requires-python = ">=3.9, <3.14"
+requires-python = ">=3.11, <3.14"
 license = { text = "AGPL-3.0" }
 keywords = [
     "python3",
@@ -27,8 +27,6 @@ authors = [{ name = "UMEP Developers" }]
 maintainers = [{ name = "UMEP Developers" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -37,10 +35,9 @@ classifiers = [
     "Topic :: Scientific/Engineering :: GIS",
 ]
 dependencies = [
-    "numpy>=1.26.0",  # Allows OSGeo4W 2.2.2 AND newer
-    "pyproj>=3.6.0",  # Matches OSGeo4W 3.6.x minimum
-    "scipy>=1.13.0",  # Matches OSGeo4W 1.13.0
-    "shapely>=2.0.1", # Matches OSGeo4W 2.0.x
+    "numpy>=1.26.0",   # QGIS 4 master ships 1.26.4
+    "pyproj>=3.7.0",   # Bundled with QGIS
+    "shapely>=2.0.4",  # Bundled with QGIS
 ]
 
 [project.optional-dependencies]
@@ -67,7 +64,7 @@ build-backend = "maturin"
 manifest-path = "rust/Cargo.toml"
 python-source = "pysrc"
 module-name = 'solweig.rustalgos'
-features = ["pyo3/extension-module", "pyo3/abi3-py39", "gpu"]
+features = ["pyo3/extension-module", "pyo3/abi3-py311", "gpu"]
 include = ["LICENSE"]
 
 [tool.setuptools]
@@ -91,6 +88,7 @@ dev = [
     "rasterio>=1.3.0",   # Fast raster I/O (falls back to GDAL)
     "tqdm>=4.67.1",      # Terminal progress bars
     "pillow>=9.0.0",     # Preview PNG generation for GeoTIFFs
+    "scipy>=1.13.0",       # Golden tests (ndimage)
     "pre-commit>=4.3.0",
     # Documentation
     "mkdocs>=1.6.0",
@@ -98,18 +96,16 @@ dev = [
     "mkdocstrings[python]>=0.27.0",
     "ipykernel>=6.31.0",
 ]
-# QGIS 3.34 LTR compatibility testing - uses GDAL backend, no rasterio/geopandas
-# Tests the minimal dependency set that works in QGIS/OSGeo4W Python environment
-# Package versions from: http://download.osgeo.org/osgeo4w/v2/x86_64/release/
-# QGIS 3.34.14 (Dec 2024) uses Python 3.12.8
+# QGIS 4 compatibility testing - uses GDAL backend, no rasterio/geopandas
+# Tests the minimal dependency set that works in QGIS 4 / Qt6 Python environment
 qgis-compat = [
-    "numpy==1.26.4", # OSGeo4W bundles 1.26.4 (Apr 2024)
-    "pandas>=2.2.2", # OSGeo4W bundles 2.2.2 (Apr 2024), also 2.3.1 available
-    "scipy>=1.13.0", # OSGeo4W bundles 1.13.0 (Apr 2024)
+    "numpy>=1.26.0",
+    "pandas>=2.2.2",
     # Note: GDAL is a system package in QGIS/OSGeo4W, not pip-installed.
     # In CI, install matching version separately: uv pip install gdal==$(gdal-config --version)
-    "pyproj>=3.6.0",  # OSGeo4W bundles 3.6.x-3.7.x
-    "shapely>=2.0.1", # OSGeo4W bundles 2.0.x
+    "pyproj>=3.7.0",
+    "shapely>=2.0.4",
+    # Note: scipy NOT bundled in QGIS — only needed for dev/golden tests
     # Note: tqdm not bundled in OSGeo4W - progress.py falls back to QGIS progress bars
     # Note: geopandas not bundled - POI/WOI features unavailable without manual install
     "pytest>=7.2.0",  # Testing

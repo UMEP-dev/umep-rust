@@ -74,19 +74,19 @@ Calculation algorithm loads these automatically.
             QgsProcessingParameterFile(
                 "PREPARED_SURFACE_DIR",
                 self.tr("Prepared surface directory (from 'Prepare Surface Data')"),
-                behavior=QgsProcessingParameterFile.Folder,
+                behavior=QgsProcessingParameterFile.Behavior.Folder,
             )
         )
 
         trunk_ratio = QgsProcessingParameterNumber(
             self.TRUNK_RATIO,
             self.tr("Trunk ratio (fraction of canopy height, used when no TDSM provided)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=0.25,
             minValue=0.0,
             maxValue=1.0,
         )
-        trunk_ratio.setFlags(trunk_ratio.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        trunk_ratio.setFlags(trunk_ratio.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
         self.addParameter(trunk_ratio)
 
         self.addParameter(

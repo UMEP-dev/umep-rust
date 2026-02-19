@@ -101,7 +101,7 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis."""
             QgsProcessingParameterNumber(
                 "LATITUDE",
                 self.tr("Latitude (for download)"),
-                type=QgsProcessingParameterNumber.Double,
+                type=QgsProcessingParameterNumber.Type.Double,
                 defaultValue=canvas_lat,
                 minValue=-90.0,
                 maxValue=90.0,
@@ -113,7 +113,7 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis."""
             QgsProcessingParameterNumber(
                 "LONGITUDE",
                 self.tr("Longitude (for download)"),
-                type=QgsProcessingParameterNumber.Double,
+                type=QgsProcessingParameterNumber.Type.Double,
                 defaultValue=canvas_lon,
                 minValue=-180.0,
                 maxValue=180.0,
@@ -218,7 +218,7 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis."""
             error_msg = reply.errorString()
             raise QgsProcessingException(f"Cannot reach PVGIS server. Check your internet connection.\n{error_msg}")
 
-        http_status = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
+        http_status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
         data = bytes(reply.content())
 
         if http_status == 400:

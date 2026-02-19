@@ -350,11 +350,11 @@ def _prompt_install():
             None,
             title,
             prompt,
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
         )
 
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             QMessageBox.information(None, "SOLWEIG Plugin", decline_msg)
             return
 
@@ -362,7 +362,7 @@ def _prompt_install():
         from qgis.PyQt.QtCore import Qt
         from qgis.PyQt.QtWidgets import QApplication
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             ok, install_msg = _install_solweig()
         finally:

@@ -148,7 +148,7 @@ GeoTIFF files organised into subfolders of the output directory:
             QgsProcessingParameterFile(
                 "PREPARED_SURFACE_DIR",
                 self.tr("Prepared surface directory (from 'Prepare Surface Data')"),
-                behavior=QgsProcessingParameterFile.Folder,
+                behavior=QgsProcessingParameterFile.Behavior.Folder,
             )
         )
 
@@ -174,7 +174,7 @@ GeoTIFF files organised into subfolders of the output directory:
         for name in ("DATETIME", "TEMPERATURE", "HUMIDITY", "GLOBAL_RADIATION", "WIND_SPEED", "PRESSURE"):
             param = self.parameterDefinition(name)
             if param:
-                param.setFlags(param.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+                param.setFlags(param.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
 
         # --- EPW weather ---
         add_epw_parameters(self)
@@ -216,7 +216,7 @@ GeoTIFF files organised into subfolders of the output directory:
         for name in ("AGE", "WEIGHT", "HEIGHT", "SEX", "ACTIVITY", "CLOTHING"):
             param = self.parameterDefinition(name)
             if param:
-                param.setFlags(param.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+                param.setFlags(param.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
 
         # --- Heat-stress thresholds (for UTCI exceedance summary grids) ---
         add_heat_threshold_parameters(self)

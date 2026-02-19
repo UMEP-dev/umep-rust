@@ -362,7 +362,7 @@ class SolweigAlgorithmBase(QgsProcessingAlgorithm):
         # Create shader
         shader = QgsRasterShader()
         ramp_shader = QgsColorRampShader()
-        ramp_shader.setColorRampType(QgsColorRampShader.Interpolated)
+        ramp_shader.setColorRampType(QgsColorRampShader.Type.Interpolated)
 
         items = []
         for value, color, label in color_points:
@@ -396,7 +396,7 @@ class SolweigAlgorithmBase(QgsProcessingAlgorithm):
 
         shader = QgsRasterShader()
         ramp_shader = QgsColorRampShader()
-        ramp_shader.setColorRampType(QgsColorRampShader.Interpolated)
+        ramp_shader.setColorRampType(QgsColorRampShader.Type.Interpolated)
 
         items = [
             QgsColorRampShader.ColorRampItem(0, QColor(255, 255, 153), "Sunlit"),

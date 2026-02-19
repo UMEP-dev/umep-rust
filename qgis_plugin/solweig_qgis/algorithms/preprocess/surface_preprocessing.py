@@ -114,7 +114,7 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
         pixel_size_param = QgsProcessingParameterNumber(
             "PIXEL_SIZE",
             self.tr("Output pixel size (m) — leave 0 to use native DSM resolution"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=0.0,
             minValue=0.0,
             maxValue=100.0,
@@ -126,14 +126,14 @@ Run "SOLWEIG Calculation" with the prepared surface directory."""
         wall_limit = QgsProcessingParameterNumber(
             "WALL_LIMIT",
             self.tr("Minimum wall height (m)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=1.0,
             minValue=0.0,
             maxValue=10.0,
         )
         from qgis.core import QgsProcessingParameterDefinition
 
-        wall_limit.setFlags(wall_limit.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+        wall_limit.setFlags(wall_limit.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
         self.addParameter(wall_limit)
 
         # --- Vegetation (advanced) ---

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from qgis.core import (
     QgsProcessingParameterBoolean,
     QgsProcessingParameterDateTime,
+    QgsProcessingParameterDefinition,
     QgsProcessingParameterEnum,
     QgsProcessingParameterFile,
     QgsProcessingParameterFolderDestination,
@@ -156,7 +157,7 @@ def add_location_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "LATITUDE",
             algorithm.tr("Latitude (degrees)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=canvas_lat,
             minValue=-90.0,
             maxValue=90.0,
@@ -168,7 +169,7 @@ def add_location_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "LONGITUDE",
             algorithm.tr("Longitude (degrees)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=canvas_lon,
             minValue=-180.0,
             maxValue=180.0,
@@ -180,7 +181,7 @@ def add_location_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "UTC_OFFSET",
             algorithm.tr("UTC offset (hours)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=0,
             minValue=-12,
             maxValue=14,
@@ -204,7 +205,7 @@ def add_weather_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterDateTime(
             "DATETIME",
             algorithm.tr("Date and time"),
-            type=QgsProcessingParameterDateTime.DateTime,
+            type=QgsProcessingParameterDateTime.Type.DateTime,
         )
     )
 
@@ -212,7 +213,7 @@ def add_weather_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "TEMPERATURE",
             algorithm.tr("Air temperature (°C)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=25.0,
             minValue=-50.0,
             maxValue=60.0,
@@ -223,7 +224,7 @@ def add_weather_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "HUMIDITY",
             algorithm.tr("Relative humidity (%)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=50.0,
             minValue=0.0,
             maxValue=100.0,
@@ -234,7 +235,7 @@ def add_weather_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "GLOBAL_RADIATION",
             algorithm.tr("Global solar radiation (W/m²)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=800.0,
             minValue=0.0,
             maxValue=1400.0,
@@ -245,7 +246,7 @@ def add_weather_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "WIND_SPEED",
             algorithm.tr("Wind speed (m/s)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=1.0,
             minValue=0.0,
             maxValue=50.0,
@@ -256,7 +257,7 @@ def add_weather_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "PRESSURE",
             algorithm.tr("Atmospheric pressure (hPa)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=1013.25,
             minValue=800.0,
             maxValue=1100.0,
@@ -285,7 +286,7 @@ def add_human_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "ABS_K",
             algorithm.tr("Shortwave absorption coefficient"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=0.7,
             minValue=0.0,
             maxValue=1.0,
@@ -304,7 +305,7 @@ def add_human_body_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "AGE",
             algorithm.tr("Age (years)"),
-            type=QgsProcessingParameterNumber.Integer,
+            type=QgsProcessingParameterNumber.Type.Integer,
             defaultValue=35,
             minValue=1,
             maxValue=120,
@@ -315,7 +316,7 @@ def add_human_body_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "WEIGHT",
             algorithm.tr("Body weight (kg)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=75.0,
             minValue=20.0,
             maxValue=200.0,
@@ -326,7 +327,7 @@ def add_human_body_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "HEIGHT",
             algorithm.tr("Body height (m)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=1.75,
             minValue=1.0,
             maxValue=2.5,
@@ -346,7 +347,7 @@ def add_human_body_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "ACTIVITY",
             algorithm.tr("Metabolic activity (W)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=80.0,
             minValue=40.0,
             maxValue=500.0,
@@ -357,7 +358,7 @@ def add_human_body_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterNumber(
             "CLOTHING",
             algorithm.tr("Clothing insulation (clo)"),
-            type=QgsProcessingParameterNumber.Double,
+            type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=0.9,
             minValue=0.0,
             maxValue=2.0,
@@ -375,7 +376,6 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         SVF_DIR: Override SVF directory (optional)
         MAX_SHADOW_DISTANCE: Maximum horizontal shadow distance in metres
     """
-    from qgis.core import QgsProcessingParameterDefinition
 
     algorithm.addParameter(
         QgsProcessingParameterBoolean(
@@ -397,7 +397,7 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterFile(
             "SVF_DIR",
             algorithm.tr("Override SVF directory (SVF is included in prepared surface by default)"),
-            behavior=QgsProcessingParameterFile.Folder,
+            behavior=QgsProcessingParameterFile.Behavior.Folder,
             optional=True,
         )
     )
@@ -405,12 +405,12 @@ def add_options_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     max_shadow = QgsProcessingParameterNumber(
         "MAX_SHADOW_DISTANCE",
         algorithm.tr("Maximum shadow distance (m) — caps horizontal shadow ray reach"),
-        type=QgsProcessingParameterNumber.Double,
+        type=QgsProcessingParameterNumber.Type.Double,
         defaultValue=1000.0,
         minValue=50.0,
         maxValue=5000.0,
     )
-    max_shadow.setFlags(max_shadow.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    max_shadow.setFlags(max_shadow.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
     algorithm.addParameter(max_shadow)
 
 
@@ -423,50 +423,49 @@ def add_vegetation_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         LEAF_START: First day of year with leaves (1-366)
         LEAF_END: Last day of year with leaves (1-366)
     """
-    from qgis.core import QgsProcessingParameterDefinition
 
     trans_on = QgsProcessingParameterNumber(
         "TRANSMISSIVITY",
         algorithm.tr("Vegetation transmissivity — leaf-on season (0 = opaque, 1 = transparent)"),
-        type=QgsProcessingParameterNumber.Double,
+        type=QgsProcessingParameterNumber.Type.Double,
         defaultValue=0.03,
         minValue=0.0,
         maxValue=1.0,
     )
-    trans_on.setFlags(trans_on.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    trans_on.setFlags(trans_on.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
     algorithm.addParameter(trans_on)
 
     trans_off = QgsProcessingParameterNumber(
         "TRANSMISSIVITY_LEAFOFF",
         algorithm.tr("Vegetation transmissivity — leaf-off season (bare branches)"),
-        type=QgsProcessingParameterNumber.Double,
+        type=QgsProcessingParameterNumber.Type.Double,
         defaultValue=0.5,
         minValue=0.0,
         maxValue=1.0,
     )
-    trans_off.setFlags(trans_off.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    trans_off.setFlags(trans_off.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
     algorithm.addParameter(trans_off)
 
     leaf_start = QgsProcessingParameterNumber(
         "LEAF_START",
         algorithm.tr("First day of year with leaves (1–366)"),
-        type=QgsProcessingParameterNumber.Integer,
+        type=QgsProcessingParameterNumber.Type.Integer,
         defaultValue=97,
         minValue=1,
         maxValue=366,
     )
-    leaf_start.setFlags(leaf_start.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    leaf_start.setFlags(leaf_start.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
     algorithm.addParameter(leaf_start)
 
     leaf_end = QgsProcessingParameterNumber(
         "LEAF_END",
         algorithm.tr("Last day of year with leaves (1–366)"),
-        type=QgsProcessingParameterNumber.Integer,
+        type=QgsProcessingParameterNumber.Type.Integer,
         defaultValue=300,
         minValue=1,
         maxValue=366,
     )
-    leaf_end.setFlags(leaf_end.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    leaf_end.setFlags(leaf_end.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
     algorithm.addParameter(leaf_end)
 
 
@@ -482,7 +481,6 @@ def add_land_cover_mapping_parameters(algorithm: QgsProcessingAlgorithm) -> None
         LC_MATERIALS: Matrix table (Code, Name, Albedo, Emissivity, TgK, Tstart, TmaxLST)
         CUSTOM_MATERIALS_FILE: Optional custom materials JSON (overrides table)
     """
-    from qgis.core import QgsProcessingParameterDefinition
 
     # UMEP standard defaults as flat list (7 columns per row)
     # fmt: off
@@ -513,7 +511,7 @@ def add_land_cover_mapping_parameters(algorithm: QgsProcessingAlgorithm) -> None
         defaultValue=umep_defaults,
         optional=True,
     )
-    materials.setFlags(materials.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    materials.setFlags(materials.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
     algorithm.addParameter(materials)
 
     custom_file = QgsProcessingParameterFile(
@@ -522,7 +520,7 @@ def add_land_cover_mapping_parameters(algorithm: QgsProcessingAlgorithm) -> None
         extension="json",
         optional=True,
     )
-    custom_file.setFlags(custom_file.flags() | QgsProcessingParameterDefinition.FlagAdvanced)
+    custom_file.setFlags(custom_file.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
     algorithm.addParameter(custom_file)
 
 
@@ -619,7 +617,7 @@ def add_date_filter_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterDateTime(
             "START_DATE",
             algorithm.tr("Start date (leave empty for full range)"),
-            type=QgsProcessingParameterDateTime.DateTime,
+            type=QgsProcessingParameterDateTime.Type.DateTime,
             optional=True,
         )
     )
@@ -628,7 +626,7 @@ def add_date_filter_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         QgsProcessingParameterDateTime(
             "END_DATE",
             algorithm.tr("End date (leave empty for full range)"),
-            type=QgsProcessingParameterDateTime.DateTime,
+            type=QgsProcessingParameterDateTime.Type.DateTime,
             optional=True,
         )
     )
