@@ -92,6 +92,14 @@ SOLWEIG models the complete radiation budget experienced by a person standing ou
 
     [:octicons-arrow-right-24: Physics](physics/index.md)
 
+-   :material-map:{ .lg .middle } **QGIS Plugin**
+
+    ---
+
+    Point-and-click spatial analysis in QGIS — no scripting required
+
+    [:octicons-arrow-right-24: QGIS Plugin](guide/qgis-plugin.md)
+
 </div>
 
 ## Citation

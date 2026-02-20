@@ -12,12 +12,13 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from tests.qgis_mocks import QgsProcessingException, install, install_osgeo, uninstall_osgeo
+from tests.qgis_mocks import QgsProcessingException, install, install_osgeo, preserve_solweig_modules, uninstall_osgeo
 
 install()  # Must be called before any qgis_plugin imports
 install_osgeo()  # Temporarily needed for osgeo imports in base.py
 
-from qgis_plugin.solweig_qgis.algorithms.base import SolweigAlgorithmBase  # noqa: E402
+with preserve_solweig_modules():
+    from qgis_plugin.solweig_qgis.algorithms.base import SolweigAlgorithmBase  # noqa: E402
 
 uninstall_osgeo()  # Clean up immediately after imports to avoid polluting other tests
 

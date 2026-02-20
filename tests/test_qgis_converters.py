@@ -14,17 +14,18 @@ from unittest.mock import MagicMock
 import pytest
 import solweig
 
-from tests.qgis_mocks import QgsProcessingException, install, install_osgeo, uninstall_osgeo
+from tests.qgis_mocks import QgsProcessingException, install, install_osgeo, preserve_solweig_modules, uninstall_osgeo
 
 install()  # Must be called before any qgis_plugin imports
 install_osgeo()  # Temporarily needed for osgeo imports in converters.py
 
-from qgis_plugin.solweig_qgis.utils.converters import (  # noqa: E402
-    create_human_params_from_parameters,
-    create_location_from_parameters,
-    create_weather_from_parameters,
-    load_weather_from_epw,
-)
+with preserve_solweig_modules():
+    from qgis_plugin.solweig_qgis.utils.converters import (  # noqa: E402
+        create_human_params_from_parameters,
+        create_location_from_parameters,
+        create_weather_from_parameters,
+        load_weather_from_epw,
+    )
 
 uninstall_osgeo()  # Clean up immediately after imports to avoid polluting other tests
 

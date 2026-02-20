@@ -11,7 +11,10 @@ SOLWEIG provides a clean, minimal API for urban microclimate calculations.
 | [`calculate()`](functions.md#calculate) | Single timestep Tmrt calculation |
 | [`calculate_timeseries()`](functions.md#calculate_timeseries) | Multi-timestep with thermal state |
 | [`calculate_tiled()`](functions.md#calculate_tiled) | Large raster processing |
+| [`calculate_timeseries_tiled()`](functions.md#calculate_timeseries_tiled) | Tiled multi-timestep processing |
 | [`validate_inputs()`](functions.md#validate_inputs) | Pre-flight input validation |
+| [`compute_utci_grid()`](functions.md#compute_utci_grid) | UTCI from Tmrt grid |
+| [`compute_pet_grid()`](functions.md#compute_pet_grid) | PET from Tmrt grid |
 
 ### Data Classes
 
@@ -25,6 +28,16 @@ SOLWEIG provides a clean, minimal API for urban microclimate calculations.
 | [`TimeseriesSummary`](dataclasses.md#timeseriessummary) | Aggregated timeseries output |
 | [`Timeseries`](dataclasses.md#timeseries) | Per-timestep scalar timeseries |
 | [`ModelConfig`](dataclasses.md#modelconfig) | Model configuration |
+
+### I/O Functions
+
+| Function | Description |
+|----------|-------------|
+| [`load_raster()`](io.md#load_raster) | Load a GeoTIFF with optional bbox cropping |
+| [`save_raster()`](io.md#save_raster) | Save array as Cloud-Optimized GeoTIFF |
+| [`rasterise_gdf()`](io.md#rasterise_gdf) | Rasterise vector data to a height grid |
+| [`download_epw()`](io.md#download_epw) | Download EPW weather from PVGIS |
+| [`read_epw()`](io.md#read_epw) | Parse an EPW file to weather records |
 
 ### GPU Utilities
 

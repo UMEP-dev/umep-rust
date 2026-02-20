@@ -30,13 +30,15 @@ from conftest import make_mock_svf
 from solweig import Location, SurfaceData, Weather
 from solweig.models.precomputed import ShadowArrays
 
-from tests.qgis_mocks import install, install_osgeo, uninstall_osgeo
+from tests.qgis_mocks import install, install_osgeo, preserve_solweig_modules, uninstall_osgeo
 
 install()  # Must run before importing plugin modules.
 install_osgeo()
-from qgis_plugin.solweig_qgis.algorithms.calculation.solweig_calculation import (  # noqa: E402
-    SolweigCalculationAlgorithm,
-)
+
+with preserve_solweig_modules():
+    from qgis_plugin.solweig_qgis.algorithms.calculation.solweig_calculation import (  # noqa: E402
+        SolweigCalculationAlgorithm,
+    )
 
 uninstall_osgeo()
 
@@ -175,12 +177,15 @@ def _run_api_case(tiled: bool, anisotropic: bool) -> None:
 
 
 def _run_plugin_case(tiled: bool, anisotropic: bool) -> None:
+    import tempfile
+
     algo = SolweigCalculationAlgorithm()
 
     feedback = MagicMock()
     feedback.isCanceled.return_value = False
 
     with (
+        tempfile.TemporaryDirectory(prefix="solweig-bench-") as tmpdir,
         patch("solweig.tiling._should_use_tiling", return_value=tiled),
         patch("solweig.tiling._calculate_auto_tile_size", return_value=256),
     ):
@@ -194,7 +199,7 @@ def _run_plugin_case(tiled: bool, anisotropic: bool) -> None:
             conifer=False,
             physics=None,
             precomputed=None,
-            output_dir="/tmp/solweig-benchmarks",
+            output_dir=tmpdir,
             selected_outputs=["tmrt"],
             max_shadow_distance_m=80.0,
             materials=None,

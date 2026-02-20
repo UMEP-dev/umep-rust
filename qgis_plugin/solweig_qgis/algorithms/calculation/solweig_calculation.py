@@ -13,7 +13,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-from osgeo import gdal
 from qgis.core import (
     QgsProcessingContext,
     QgsProcessingException,
@@ -703,11 +702,15 @@ GeoTIFF files organised into subfolders of the output directory:
             raise QgsProcessingException(f"Timeseries calculation failed: {e}") from e
 
         feedback.setProgress(80)
-        n_results = (
-            progress_state["completed"]
-            if progress_state["completed"] > 0
-            else (0 if feedback.isCanceled() else n_steps)
-        )
+        # If calculate_timeseries returned normally (summary is not None),
+        # all timesteps completed.  The progress callback may report tile-level
+        # counts when tiling is active, so use n_steps directly on success.
+        if summary is not None:
+            n_results = n_steps
+        elif feedback.isCanceled():
+            n_results = 0
+        else:
+            n_results = n_steps
 
         # Log the summary report
         if summary is not None and n_results > 0:
@@ -721,6 +724,8 @@ GeoTIFF files organised into subfolders of the output directory:
     @staticmethod
     def _compute_tmrt_stats_from_outputs(output_dir: str) -> dict:
         """Compute summary stats from saved Tmrt rasters (mean of per-file means)."""
+        from solweig.io import load_raster
+
         tmrt_dir = Path(output_dir) / "tmrt"
         tmrt_files = sorted(tmrt_dir.glob("tmrt_*.tif"))
         if not tmrt_files:
@@ -732,23 +737,17 @@ GeoTIFF files organised into subfolders of the output directory:
         tmrt_max = -np.inf
 
         for tif_path in tmrt_files:
-            ds = gdal.Open(str(tif_path), gdal.GA_ReadOnly)
-            if ds is None:
-                continue
             try:
-                band = ds.GetRasterBand(1)
-                stats = band.GetStatistics(False, True)
-                if stats is None or len(stats) < 3:
-                    continue
-                min_v, max_v, mean_v = float(stats[0]), float(stats[1]), float(stats[2])
-                if not (np.isfinite(min_v) and np.isfinite(max_v) and np.isfinite(mean_v)):
-                    continue
-                mean_sum += mean_v
-                mean_count += 1
-                tmrt_min = min(tmrt_min, min_v)
-                tmrt_max = max(tmrt_max, max_v)
-            finally:
-                ds = None
+                arr, *_ = load_raster(str(tif_path))
+            except Exception:
+                continue
+            valid = arr[np.isfinite(arr)]
+            if valid.size == 0:
+                continue
+            mean_sum += float(np.mean(valid))
+            mean_count += 1
+            tmrt_min = min(tmrt_min, float(np.min(valid)))
+            tmrt_max = max(tmrt_max, float(np.max(valid)))
 
         if mean_count == 0:
             return {}

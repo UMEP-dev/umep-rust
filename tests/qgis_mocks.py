@@ -7,7 +7,9 @@ All mock classes and stubs are defined here to ensure consistency across test fi
 
 from __future__ import annotations
 
+import os
 import sys
+from contextlib import contextmanager
 from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
@@ -148,3 +150,25 @@ def uninstall_osgeo():
     for name in ("osgeo", "osgeo.gdal", "osgeo.osr"):
         if name in sys.modules and isinstance(sys.modules[name], MagicMock):
             del sys.modules[name]
+
+
+@contextmanager
+def preserve_solweig_modules():
+    """Context manager that snapshots and restores solweig modules in sys.modules.
+
+    The QGIS plugin __init__.py sets UMEP_USE_GDAL=1 and may purge+reimport
+    solweig with mock GDAL, corrupting _compat.GDAL_ENV and io for the rest
+    of the test session.  Use this around plugin imports to prevent pollution.
+    """
+    saved_env = os.environ.get("UMEP_USE_GDAL")
+    saved_mods = {k: v for k, v in sys.modules.items() if k == "solweig" or k.startswith("solweig.")}
+    try:
+        yield
+    finally:
+        for k in [k for k in sys.modules if k == "solweig" or k.startswith("solweig.")]:
+            del sys.modules[k]
+        sys.modules.update(saved_mods)
+        if saved_env is None:
+            os.environ.pop("UMEP_USE_GDAL", None)
+        else:
+            os.environ["UMEP_USE_GDAL"] = saved_env
