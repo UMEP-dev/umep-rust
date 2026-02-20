@@ -10,6 +10,8 @@ Adapted from the [UMEP](https://github.com/UMEP-dev/UMEP-processing) (Urban Mult
 
 > **Experimental:** This package and QGIS plugin are released for testing and discussion purposes. The API is stabilising but may change. Feedback and bug reports welcome — [open an issue](https://github.com/UMEP-dev/solweig/issues).
 
+**[Documentation](https://umep-dev.github.io/solweig/)** · [Installation](https://umep-dev.github.io/solweig/getting-started/installation/) · [Quick Start](https://umep-dev.github.io/solweig/getting-started/quick-start/) · [API Reference](https://umep-dev.github.io/solweig/api/)
+
 ---
 
 ## What can you do with it?
@@ -353,16 +355,6 @@ Complete working scripts:
 
 - **[demos/athens-demo.py](demos/athens-demo.py)** — Full workflow: rasterise tree vectors, load GeoTIFFs, run a multi-day timeseries, visualise summary grids.
 - **[demos/solweig_gbg_test.py](demos/solweig_gbg_test.py)** — Gothenburg: surface preparation with SVF caching, timeseries calculation.
-
----
-
-## Documentation
-
-- [Installation](docs/getting-started/installation.md)
-- [Quick Start Guide](docs/getting-started/quick-start.md) — Step-by-step first calculation
-- [User Guide](docs/guide/basic-usage.md) — Common workflows, height conventions, and options
-- [API Reference](docs/api/index.md) — All classes and functions
-- [Physics](docs/physics/index.md) — How the radiation model works
 
 ---
 

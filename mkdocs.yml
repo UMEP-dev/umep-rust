@@ -8,13 +8,13 @@ theme:
   name: material
   palette:
     - scheme: default
-      primary: teal
+      primary: blue grey
       accent: amber
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: teal
+      primary: blue grey
       accent: amber
       toggle:
         icon: material/brightness-4
@@ -45,9 +45,14 @@ plugins:
             members_order: source
 
 markdown_extensions:
+  - attr_list
+  - md_in_html
   - admonition
   - pymdownx.details
   - pymdownx.superfences
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
@@ -66,39 +71,39 @@ extra_javascript:
 nav:
   - Home: index.md
   - Getting Started:
-    - Quick Start: getting-started/quick-start.md
-    - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quick-start.md
+      - Installation: getting-started/installation.md
   - User Guide:
-    - Basic Usage: guide/basic-usage.md
-    - Working with GeoTIFFs: guide/geotiffs.md
-    - Timeseries Calculations: guide/timeseries.md
-    - Thermal Comfort (UTCI/PET): guide/thermal-comfort.md
-    - QGIS Plugin: guide/qgis-plugin.md
-    - Configuration: PARAMS_SIMPLE.md
-    - Reproducibility: RUN_METADATA.md
+      - Basic Usage: guide/basic-usage.md
+      - Working with GeoTIFFs: guide/geotiffs.md
+      - Timeseries Calculations: guide/timeseries.md
+      - Thermal Comfort (UTCI/PET): guide/thermal-comfort.md
+      - QGIS Plugin: guide/qgis-plugin.md
+      - Configuration: PARAMS_SIMPLE.md
+      - Reproducibility: RUN_METADATA.md
   - API Reference:
-    - Overview: api/index.md
-    - Core Functions: api/functions.md
-    - Data Classes: api/dataclasses.md
-    - I/O Functions: api/io.md
-    - Errors: api/errors.md
+      - Overview: api/index.md
+      - Core Functions: api/functions.md
+      - Data Classes: api/dataclasses.md
+      - I/O Functions: api/io.md
+      - Errors: api/errors.md
   - Physics:
-    - Overview: physics/index.md
-    - Sky View Factor: physics/svf.md
-    - Shadows: physics/shadows.md
-    - Ground View Factor: physics/gvf.md
-    - Radiation: physics/radiation.md
-    - Ground Temperature: physics/ground-temperature.md
-    - Mean Radiant Temperature: physics/tmrt.md
-    - UTCI: physics/utci.md
-    - PET: physics/pet.md
+      - Overview: physics/index.md
+      - Sky View Factor: physics/svf.md
+      - Shadows: physics/shadows.md
+      - Ground View Factor: physics/gvf.md
+      - Radiation: physics/radiation.md
+      - Ground Temperature: physics/ground-temperature.md
+      - Mean Radiant Temperature: physics/tmrt.md
+      - UTCI: physics/utci.md
+      - PET: physics/pet.md
   - Development:
-    - Contributing: development/contributing.md
-    - Architecture: development/architecture.md
-    - GPU Execution Plan: development/gpu-execution-plan.md
-    - Roadmap: development/roadmap.md
-    - Migration from Old API: PARAMS_MIGRATION.md
-    - Validation Research: SOLWEIG_VALIDATION_RESEARCH.md
+      - Contributing: development/contributing.md
+      - Architecture: development/architecture.md
+      - GPU Execution Plan: development/gpu-execution-plan.md
+      - Roadmap: development/roadmap.md
+      - Migration from Old API: PARAMS_MIGRATION.md
+      - Validation Research: SOLWEIG_VALIDATION_RESEARCH.md
 
 extra:
   social:

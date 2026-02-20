@@ -2,6 +2,9 @@
 
 **Map how hot it *feels* across a city — pixel by pixel.**
 
+!!! warning "Experimental"
+    This package and QGIS plugin are released for testing and discussion purposes. The API is stabilising but may change. Feedback and bug reports welcome — [open an issue](https://github.com/UMEP-dev/solweig/issues).
+
 SOLWEIG computes **Mean Radiant Temperature (Tmrt)** and thermal comfort indices (**UTCI**, **PET**) for urban environments. Give it a building height model and weather data, and it produces high-resolution maps showing where people experience heat stress — and where trees, shade, and cool surfaces make a difference.
 
 ![UTCI thermal comfort map](UTCI.jpg)
