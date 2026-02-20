@@ -1,0 +1,56 @@
+{
+  "Tmrt_params": {
+    "Value": {
+      "absK": 0.7,
+      "absL": 0.97,
+      "posture": "Standing"
+    },
+    "Comment": "Absorption coefficients per ISO 7726:1998. absK=0.70 (shortwave, clothed human), absL=0.97 (longwave). Posture is Standing or Sitting."
+  },
+  "PET_settings": {
+    "Value": {
+      "Age": 35,
+      "Weight": 75.0,
+      "Height": 180,
+      "Sex": "Male",
+      "Activity": 80.0,
+      "clo": 0.9
+    },
+    "Comment": "Settings to calculate Physiological Equivalent Temperature (PET). Sex is either Male or Female."
+  },
+  "Wind_Height": {
+    "Value": {
+      "magl": 10.0
+    },
+    "Comment": "Height of wind sensor for PET and UTCI calculations."
+  },
+  "Tree_settings": {
+    "Value": {
+      "Transmissivity": 0.03,
+      "Trunk_ratio": 0.25,
+      "First_day_leaf": 97,
+      "Last_day_leaf": 300
+    },
+    "Comment": "Settings for trees. Shortwave transmissivity in %. Trunk ratio as a fraction of total height."
+  },
+  "Posture": {
+    "Standing": {
+      "Value": {
+        "Fside": 0.22,
+        "Fup": 0.06,
+        "height": 1.1,
+        "Fcyl": 0.28
+      },
+      "Comment": "Standing posture of human body. Used in Tmrt calculations."
+    },
+    "Sitting": {
+      "Value": {
+        "Fside": 0.166666,
+        "Fup": 0.166666,
+        "height": 0.75,
+        "Fcyl": 0.2
+      },
+      "Comment": "Sitting posture of human body. Used in Tmrt calculations."
+    }
+  }
+}

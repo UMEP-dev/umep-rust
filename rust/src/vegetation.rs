@@ -1,84 +1,56 @@
-use ndarray::Array2;
+use ndarray::{Array2, ArrayView2};
 use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 use rayon::prelude::*;
 
-/// Result container for lside_veg_v2022a direction-wise longwave fluxes.
-#[pyclass]
-pub struct LsideVegResult {
-    #[pyo3(get)]
-    pub least: Py<PyArray2<f32>>,
-    #[pyo3(get)]
-    pub lsouth: Py<PyArray2<f32>>,
-    #[pyo3(get)]
-    pub lwest: Py<PyArray2<f32>>,
-    #[pyo3(get)]
-    pub lnorth: Py<PyArray2<f32>>,
+/// Pure result type for lside_veg (no PyO3 dependency).
+pub(crate) struct LsideVegPureResult {
+    pub least: Array2<f32>,
+    pub lsouth: Array2<f32>,
+    pub lwest: Array2<f32>,
+    pub lnorth: Array2<f32>,
 }
 
-/// Vectorized Rust port of Python `Lside_veg_v2022a` operating on grid arrays.
-/// Returns a `LsideVegResult` pyclass with four 2D arrays (least, lsouth, lwest, lnorth).
-#[pyfunction]
+/// Pure-ndarray implementation of Lside_veg_v2022a.
+/// Callable from pipeline.rs (fused path) or from the PyO3 wrapper (modular path).
 #[allow(non_snake_case)]
 #[allow(clippy::too_many_arguments)]
-pub fn lside_veg(
-    py: Python,
-    svfS: PyReadonlyArray2<f32>,
-    svfW: PyReadonlyArray2<f32>,
-    svfN: PyReadonlyArray2<f32>,
-    svfE: PyReadonlyArray2<f32>,
-    svfEveg: PyReadonlyArray2<f32>,
-    svfSveg: PyReadonlyArray2<f32>,
-    svfWveg: PyReadonlyArray2<f32>,
-    svfNveg: PyReadonlyArray2<f32>,
-    svfEaveg: PyReadonlyArray2<f32>,
-    svfSaveg: PyReadonlyArray2<f32>,
-    svfWaveg: PyReadonlyArray2<f32>,
-    svfNaveg: PyReadonlyArray2<f32>,
+pub(crate) fn lside_veg_pure(
+    svfS: ArrayView2<f32>,
+    svfW: ArrayView2<f32>,
+    svfN: ArrayView2<f32>,
+    svfE: ArrayView2<f32>,
+    svfEveg: ArrayView2<f32>,
+    svfSveg: ArrayView2<f32>,
+    svfWveg: ArrayView2<f32>,
+    svfNveg: ArrayView2<f32>,
+    svfEaveg: ArrayView2<f32>,
+    svfSaveg: ArrayView2<f32>,
+    svfWaveg: ArrayView2<f32>,
+    svfNaveg: ArrayView2<f32>,
     azimuth: f32,
     altitude: f32,
     Ta: f32,
     Tw: f32,
     SBC: f32,
     ewall: f32,
-    Ldown: PyReadonlyArray2<f32>,
+    Ldown: ArrayView2<f32>,
     esky: f32,
     t: f32,
-    F_sh: PyReadonlyArray2<f32>,
+    F_sh: ArrayView2<f32>,
     CI: f32,
-    LupE: PyReadonlyArray2<f32>,
-    LupS: PyReadonlyArray2<f32>,
-    LupW: PyReadonlyArray2<f32>,
-    LupN: PyReadonlyArray2<f32>,
+    LupE: ArrayView2<f32>,
+    LupS: ArrayView2<f32>,
+    LupW: ArrayView2<f32>,
+    LupN: ArrayView2<f32>,
     anisotropic_longwave: bool,
-) -> PyResult<Py<LsideVegResult>> {
-    // Borrow arrays
-    let svfS = svfS.as_array();
-    let svfW = svfW.as_array();
-    let svfN = svfN.as_array();
-    let svfE = svfE.as_array();
-    let svfEveg = svfEveg.as_array();
-    let svfSveg = svfSveg.as_array();
-    let svfWveg = svfWveg.as_array();
-    let svfNveg = svfNveg.as_array();
-    let svfEaveg = svfEaveg.as_array();
-    let svfSaveg = svfSaveg.as_array();
-    let svfWaveg = svfWaveg.as_array();
-    let svfNaveg = svfNaveg.as_array();
-    let Ldown = Ldown.as_array();
-    let LupE = LupE.as_array();
-    let LupS = LupS.as_array();
-    let LupW = LupW.as_array();
-    let LupN = LupN.as_array();
-    let F_sh = F_sh.as_array();
-
-    // Shape validation (all must match shape of svfE)
+    valid: Option<ArrayView2<u8>>,
+) -> LsideVegPureResult {
     let shape = svfE.shape();
     let (rows, cols) = (shape[0], shape[1]);
     let vikttot: f32 = 4.4897;
     let TaK = Ta + 273.15;
     let TaK_pow4 = TaK.powi(4);
-    // F_sh is per-cell; scaling to -1..1 handled inside loop per original Python (2*F_sh -1). No global scalar.
     let c = 1.0 - CI;
     let Lsky_allsky = esky * SBC * TaK_pow4 * (1.0 - c) + c * SBC * TaK_pow4;
     let altitude_day = altitude > 0.0;
@@ -88,13 +60,11 @@ pub fn lside_veg(
     let sun_west = azimuth > (360.0 - t) || azimuth <= (180.0 - t);
     let sun_north = azimuth > (90.0 - t) && azimuth <= (270.0 - t);
 
-    // Precompute azimuth temperature offsets (constant per grid)
     let temp_e = TaK + Tw * ((azimuth - 180.0 + t) * std::f32::consts::PI / 180.0).sin();
     let temp_s = TaK + Tw * ((azimuth - 270.0 + t) * std::f32::consts::PI / 180.0).sin();
     let temp_w = TaK + Tw * ((azimuth + t) * std::f32::consts::PI / 180.0).sin();
     let temp_n = TaK + Tw * ((azimuth - 90.0 + t) * std::f32::consts::PI / 180.0).sin();
 
-    // Polynomial from Lvikt_veg
     #[inline]
     fn poly(x: f32) -> f32 {
         63.227 * x.powi(6) - 161.51 * x.powi(5) + 156.91 * x.powi(4) - 70.424 * x.powi(3)
@@ -102,7 +72,6 @@ pub fn lside_veg(
             - 0.4863 * x
     }
 
-    // Pre-allocate flat Vecs for each direction
     let npix = rows * cols;
     let mut least_vec = vec![0.0f32; npix];
     let mut lsouth_vec = vec![0.0f32; npix];
@@ -118,6 +87,15 @@ pub fn lside_veg(
         .for_each(|(idx, (((least, lsouth), lwest), lnorth))| {
             let r = idx / cols;
             let c = idx % cols;
+            if let Some(ref v) = valid {
+                if v[[r, c]] == 0 {
+                    *least = f32::NAN;
+                    *lsouth = f32::NAN;
+                    *lwest = f32::NAN;
+                    *lnorth = f32::NAN;
+                    return;
+                }
+            }
             let compute = |svf: f32,
                            svfveg: f32,
                            svfaveg: f32,
@@ -204,19 +182,285 @@ pub fn lside_veg(
             );
         });
 
-    // Convert flat Vecs to Array2s
-    let least = Array2::from_shape_vec((rows, cols), least_vec).unwrap();
-    let lsouth = Array2::from_shape_vec((rows, cols), lsouth_vec).unwrap();
-    let lwest = Array2::from_shape_vec((rows, cols), lwest_vec).unwrap();
-    let lnorth = Array2::from_shape_vec((rows, cols), lnorth_vec).unwrap();
+    LsideVegPureResult {
+        least: Array2::from_shape_vec((rows, cols), least_vec).unwrap(),
+        lsouth: Array2::from_shape_vec((rows, cols), lsouth_vec).unwrap(),
+        lwest: Array2::from_shape_vec((rows, cols), lwest_vec).unwrap(),
+        lnorth: Array2::from_shape_vec((rows, cols), lnorth_vec).unwrap(),
+    }
+}
+
+/// Pure result type for kside_veg isotropic path (no PyO3 dependency).
+pub(crate) struct KsideVegPureResult {
+    pub keast: Array2<f32>,
+    pub ksouth: Array2<f32>,
+    pub kwest: Array2<f32>,
+    pub knorth: Array2<f32>,
+    pub kside_i: Array2<f32>,
+}
+
+/// Pure-ndarray implementation of Kside_veg_v2022a (isotropic path).
+/// The anisotropic shortwave uses `anisotropic_sky_pure()` in the fused pipeline.
+#[allow(non_snake_case)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn kside_veg_isotropic_pure(
+    radI: f32,
+    radD: f32,
+    radG: f32,
+    shadow: ArrayView2<f32>,
+    svfS: ArrayView2<f32>,
+    svfW: ArrayView2<f32>,
+    svfN: ArrayView2<f32>,
+    svfE: ArrayView2<f32>,
+    svfEveg: ArrayView2<f32>,
+    svfSveg: ArrayView2<f32>,
+    svfWveg: ArrayView2<f32>,
+    svfNveg: ArrayView2<f32>,
+    azimuth: f32,
+    altitude: f32,
+    psi: f32,
+    t: f32,
+    albedo: f32,
+    F_sh: ArrayView2<f32>,
+    KupE: ArrayView2<f32>,
+    KupS: ArrayView2<f32>,
+    KupW: ArrayView2<f32>,
+    KupN: ArrayView2<f32>,
+    cyl: bool,
+    valid: Option<ArrayView2<u8>>,
+) -> KsideVegPureResult {
+    let shape = svfE.shape();
+    let (rows, cols) = (shape[0], shape[1]);
+    let deg2rad = std::f32::consts::PI / 180.0;
+    let vikttot = 4.4897f32;
+
+    let mut Keast = Array2::<f32>::zeros((rows, cols));
+    let mut Ksouth = Array2::<f32>::zeros((rows, cols));
+    let mut Kwest = Array2::<f32>::zeros((rows, cols));
+    let mut Knorth = Array2::<f32>::zeros((rows, cols));
+    let mut KsideI = Array2::<f32>::zeros((rows, cols));
+
+    #[inline]
+    fn kvikt_veg(svf: f32, svfveg: f32, vikttot: f32) -> (f32, f32) {
+        let poly = |x: f32| -> f32 {
+            63.227 * x.powi(6) - 161.51 * x.powi(5) + 156.91 * x.powi(4) - 70.424 * x.powi(3)
+                + 16.773 * x.powi(2)
+                - 0.4863 * x
+        };
+        let viktwall = (vikttot - poly(svf)) / vikttot;
+        let svfvegbu = svfveg + svf - 1.0;
+        let viktveg_tot = (vikttot - poly(svfvegbu)) / vikttot;
+        let viktveg = viktveg_tot - viktwall;
+        (viktveg, viktwall)
+    }
+
+    // Precompute svfviktbuveg arrays
+    let mut svfviktbuvegE = Array2::<f32>::zeros((rows, cols));
+    let mut svfviktbuvegS = Array2::<f32>::zeros((rows, cols));
+    let mut svfviktbuvegW = Array2::<f32>::zeros((rows, cols));
+    let mut svfviktbuvegN = Array2::<f32>::zeros((rows, cols));
+
+    for r in 0..rows {
+        for c in 0..cols {
+            if let Some(ref v) = valid {
+                if v[[r, c]] == 0 {
+                    continue;
+                }
+            }
+            let (vveg, vwall) = kvikt_veg(svfE[(r, c)], svfEveg[(r, c)], vikttot);
+            svfviktbuvegE[(r, c)] = vwall + vveg * (1.0 - psi);
+            let (vveg, vwall) = kvikt_veg(svfS[(r, c)], svfSveg[(r, c)], vikttot);
+            svfviktbuvegS[(r, c)] = vwall + vveg * (1.0 - psi);
+            let (vveg, vwall) = kvikt_veg(svfW[(r, c)], svfWveg[(r, c)], vikttot);
+            svfviktbuvegW[(r, c)] = vwall + vveg * (1.0 - psi);
+            let (vveg, vwall) = kvikt_veg(svfN[(r, c)], svfNveg[(r, c)], vikttot);
+            svfviktbuvegN[(r, c)] = vwall + vveg * (1.0 - psi);
+        }
+    }
+
+    // Direct radiation
+    if cyl {
+        for r in 0..rows {
+            for c in 0..cols {
+                KsideI[(r, c)] = shadow[(r, c)] * radI * (altitude * deg2rad).cos();
+            }
+        }
+    } else {
+        for r in 0..rows {
+            for c in 0..cols {
+                let sh_val = shadow[(r, c)];
+                if azimuth > (360.0 - t) || azimuth <= (180.0 - t) {
+                    Keast[(r, c)] = radI
+                        * sh_val
+                        * (altitude * deg2rad).cos()
+                        * ((azimuth + t) * deg2rad).sin();
+                }
+                if azimuth > (90.0 - t) && azimuth <= (270.0 - t) {
+                    Ksouth[(r, c)] = radI
+                        * sh_val
+                        * (altitude * deg2rad).cos()
+                        * ((azimuth - 90.0 + t) * deg2rad).sin();
+                }
+                if azimuth > (180.0 - t) && azimuth <= (360.0 - t) {
+                    Kwest[(r, c)] = radI
+                        * sh_val
+                        * (altitude * deg2rad).cos()
+                        * ((azimuth - 180.0 + t) * deg2rad).sin();
+                }
+                if azimuth <= (90.0 - t) || azimuth > (270.0 - t) {
+                    Knorth[(r, c)] = radI
+                        * sh_val
+                        * (altitude * deg2rad).cos()
+                        * ((azimuth - 270.0 + t) * deg2rad).sin();
+                }
+            }
+        }
+    }
+
+    // Isotropic diffuse/reflected radiation
+    let ke_slice = Keast.as_slice_mut().unwrap();
+    let ks_slice = Ksouth.as_slice_mut().unwrap();
+    let kw_slice = Kwest.as_slice_mut().unwrap();
+    let kn_slice = Knorth.as_slice_mut().unwrap();
+    let fsh_slice = F_sh.as_slice().unwrap();
+    let svf_e_slice = svfviktbuvegE.as_slice().unwrap();
+    let svf_s_slice = svfviktbuvegS.as_slice().unwrap();
+    let svf_w_slice = svfviktbuvegW.as_slice().unwrap();
+    let svf_n_slice = svfviktbuvegN.as_slice().unwrap();
+    let kup_e_slice = KupE.as_slice().unwrap();
+    let kup_s_slice = KupS.as_slice().unwrap();
+    let kup_w_slice = KupW.as_slice().unwrap();
+    let kup_n_slice = KupN.as_slice().unwrap();
+    let valid_slice = valid.as_ref().map(|v| v.as_slice().unwrap());
+    ke_slice
+        .par_iter_mut()
+        .zip(ks_slice.par_iter_mut())
+        .zip(kw_slice.par_iter_mut())
+        .zip(kn_slice.par_iter_mut())
+        .enumerate()
+        .for_each(|(idx, (((ke, ks), kw), kn))| {
+            if let Some(ref vs) = valid_slice {
+                if vs[idx] == 0 {
+                    *ke = f32::NAN;
+                    *ks = f32::NAN;
+                    *kw = f32::NAN;
+                    *kn = f32::NAN;
+                    return;
+                }
+            }
+            let fsh = fsh_slice[idx];
+            let svf_e = svf_e_slice[idx];
+            let svf_s = svf_s_slice[idx];
+            let svf_w = svf_w_slice[idx];
+            let svf_n = svf_n_slice[idx];
+            let kup_e = kup_e_slice[idx];
+            let kup_s = kup_s_slice[idx];
+            let kup_w = kup_w_slice[idx];
+            let kup_n = kup_n_slice[idx];
+            let mix = radG * (1.0 - fsh) + radD * fsh;
+            *ke += (radD * (1.0 - svf_e) + albedo * (svf_e * mix) + kup_e) * 0.5;
+            *ks += (radD * (1.0 - svf_s) + albedo * (svf_s * mix) + kup_s) * 0.5;
+            *kw += (radD * (1.0 - svf_w) + albedo * (svf_w * mix) + kup_w) * 0.5;
+            *kn += (radD * (1.0 - svf_n) + albedo * (svf_n * mix) + kup_n) * 0.5;
+        });
+
+    KsideVegPureResult {
+        keast: Keast,
+        ksouth: Ksouth,
+        kwest: Kwest,
+        knorth: Knorth,
+        kside_i: KsideI,
+    }
+}
+
+/// Result container for lside_veg_v2022a direction-wise longwave fluxes.
+#[pyclass]
+pub struct LsideVegResult {
+    #[pyo3(get)]
+    pub least: Py<PyArray2<f32>>,
+    #[pyo3(get)]
+    pub lsouth: Py<PyArray2<f32>>,
+    #[pyo3(get)]
+    pub lwest: Py<PyArray2<f32>>,
+    #[pyo3(get)]
+    pub lnorth: Py<PyArray2<f32>>,
+}
+
+/// Vectorized Rust port of Python `Lside_veg_v2022a` operating on grid arrays.
+/// Returns a `LsideVegResult` pyclass with four 2D arrays (least, lsouth, lwest, lnorth).
+#[pyfunction]
+#[allow(non_snake_case)]
+#[allow(clippy::too_many_arguments)]
+pub fn lside_veg(
+    py: Python,
+    svfS: PyReadonlyArray2<f32>,
+    svfW: PyReadonlyArray2<f32>,
+    svfN: PyReadonlyArray2<f32>,
+    svfE: PyReadonlyArray2<f32>,
+    svfEveg: PyReadonlyArray2<f32>,
+    svfSveg: PyReadonlyArray2<f32>,
+    svfWveg: PyReadonlyArray2<f32>,
+    svfNveg: PyReadonlyArray2<f32>,
+    svfEaveg: PyReadonlyArray2<f32>,
+    svfSaveg: PyReadonlyArray2<f32>,
+    svfWaveg: PyReadonlyArray2<f32>,
+    svfNaveg: PyReadonlyArray2<f32>,
+    azimuth: f32,
+    altitude: f32,
+    Ta: f32,
+    Tw: f32,
+    SBC: f32,
+    ewall: f32,
+    Ldown: PyReadonlyArray2<f32>,
+    esky: f32,
+    t: f32,
+    F_sh: PyReadonlyArray2<f32>,
+    CI: f32,
+    LupE: PyReadonlyArray2<f32>,
+    LupS: PyReadonlyArray2<f32>,
+    LupW: PyReadonlyArray2<f32>,
+    LupN: PyReadonlyArray2<f32>,
+    anisotropic_longwave: bool,
+) -> PyResult<Py<LsideVegResult>> {
+    let result = lside_veg_pure(
+        svfS.as_array(),
+        svfW.as_array(),
+        svfN.as_array(),
+        svfE.as_array(),
+        svfEveg.as_array(),
+        svfSveg.as_array(),
+        svfWveg.as_array(),
+        svfNveg.as_array(),
+        svfEaveg.as_array(),
+        svfSaveg.as_array(),
+        svfWaveg.as_array(),
+        svfNaveg.as_array(),
+        azimuth,
+        altitude,
+        Ta,
+        Tw,
+        SBC,
+        ewall,
+        Ldown.as_array(),
+        esky,
+        t,
+        F_sh.as_array(),
+        CI,
+        LupE.as_array(),
+        LupS.as_array(),
+        LupW.as_array(),
+        LupN.as_array(),
+        anisotropic_longwave,
+        None,
+    );
 
     Py::new(
         py,
         LsideVegResult {
-            least: least.into_pyarray(py).unbind(),
-            lsouth: lsouth.into_pyarray(py).unbind(),
-            lwest: lwest.into_pyarray(py).unbind(),
-            lnorth: lnorth.into_pyarray(py).unbind(),
+            least: result.least.into_pyarray(py).unbind(),
+            lsouth: result.lsouth.into_pyarray(py).unbind(),
+            lwest: result.lwest.into_pyarray(py).unbind(),
+            lnorth: result.lnorth.into_pyarray(py).unbind(),
         },
     )
 }
@@ -272,9 +516,9 @@ pub fn kside_veg(
     anisotropic_diffuse: bool,         // 1 -> anisotropic
     diffsh: Option<numpy::PyReadonlyArray3<f32>>, // (rows, cols, patches)
     asvf: Option<PyReadonlyArray2<f32>>, // sky view factor angle per pixel
-    shmat: Option<numpy::PyReadonlyArray3<f32>>, // building shading matrix (1 sky visible)
-    vegshmat: Option<numpy::PyReadonlyArray3<f32>>, // vegetation shading matrix
-    vbshvegshmat: Option<numpy::PyReadonlyArray3<f32>>, // veg+building shading matrix
+    shmat: Option<numpy::PyReadonlyArray3<u8>>, // building shading matrix (uint8: 0=shadow, 255=sky)
+    vegshmat: Option<numpy::PyReadonlyArray3<u8>>, // vegetation shading matrix
+    vbshvegshmat: Option<numpy::PyReadonlyArray3<u8>>, // veg+building shading matrix
 ) -> PyResult<Py<KsideVegResult>> {
     // Borrow base 2D arrays
     let shadow = shadow.as_array();
@@ -517,12 +761,12 @@ pub fn kside_veg(
                         let angle_inc = pc.cos_alt;
                         let lum = lum_chi[i];
                         kside_d_loc += diffsh[(r, c, i)] * lum * angle_inc * pc.ster;
-                        let veg_flag = vegshmat[(r, c, i)] == 0.0 || vbshvegshmat[(r, c, i)] == 0.0;
+                        let veg_flag = vegshmat[(r, c, i)] == 0 || vbshvegshmat[(r, c, i)] == 0;
                         if veg_flag {
                             ref_veg += shaded_surface * pc.ster * angle_inc;
                         }
-                        let temp_vbsh = (1.0 - shmat[(r, c, i)]) * vbshvegshmat[(r, c, i)];
-                        if temp_vbsh == 1.0 {
+                        let temp_vbsh = shmat[(r, c, i)] == 0 && vbshvegshmat[(r, c, i)] == 255;
+                        if temp_vbsh {
                             let (sunlit_patch, shaded_patch) =
                                 crate::sunlit_shaded_patches::shaded_or_sunlit_pixel(
                                     altitude,
@@ -613,7 +857,7 @@ pub fn kside_veg(
                         if pc.is_n {
                             diff_n += diff_val * pc.w_n;
                         }
-                        let veg_flag = vegshmat[(r, c, i)] == 0.0 || vbshvegshmat[(r, c, i)] == 0.0;
+                        let veg_flag = vegshmat[(r, c, i)] == 0 || vbshvegshmat[(r, c, i)] == 0;
                         if veg_flag {
                             if pc.is_e {
                                 ref_veg_e += shaded_surface * pc.ster * cos_alt * pc.w_e;
@@ -628,8 +872,8 @@ pub fn kside_veg(
                                 ref_veg_n += shaded_surface * pc.ster * cos_alt * pc.w_n;
                             }
                         }
-                        let temp_vbsh = (1.0 - shmat[(r, c, i)]) * vbshvegshmat[(r, c, i)];
-                        if temp_vbsh == 1.0 {
+                        let temp_vbsh = shmat[(r, c, i)] == 0 && vbshvegshmat[(r, c, i)] == 255;
+                        if temp_vbsh {
                             let az_diff = (azimuth - patch_azi[i]).abs();
                             if az_diff > 90.0 && az_diff < 270.0 {
                                 let (sunlit_patch, shaded_patch) =

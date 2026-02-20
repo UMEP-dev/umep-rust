@@ -22,7 +22,7 @@ static GPU_CONTEXT: OnceLock<Option<ShadowGpuContext>> = OnceLock::new();
 static GPU_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 #[cfg(feature = "gpu")]
-fn get_gpu_context() -> Option<&'static ShadowGpuContext> {
+pub(crate) fn get_gpu_context() -> Option<&'static ShadowGpuContext> {
     // Check if GPU is enabled
     if !GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
         return None;
@@ -66,6 +66,26 @@ pub fn disable_gpu() {
 /// Check if GPU acceleration is currently enabled
 pub fn is_gpu_enabled() -> bool {
     GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(feature = "gpu")]
+#[pyfunction]
+/// Return GPU buffer limits as a dict, or None if GPU is unavailable.
+///
+/// Keys:
+///   - "max_buffer_size": u64 — largest single wgpu buffer in bytes
+///   - "backend": str — GPU backend name ("Metal", "Vulkan", "Dx12", "Gl", etc.)
+///
+/// Initialises the GPU context lazily on first call.
+pub fn gpu_limits(py: Python<'_>) -> PyResult<Option<PyObject>> {
+    let ctx = match get_gpu_context() {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("max_buffer_size", ctx.max_buffer_size)?;
+    dict.set_item("backend", format!("{:?}", ctx.backend))?;
+    Ok(Some(dict.into()))
 }
 
 /// Rust-native result struct for internal shadow calculations.
@@ -122,12 +142,48 @@ pub(crate) fn calculate_shadows_rust(
     aspect_view_opt: Option<ArrayView2<f32>>,
     walls_scheme_view_opt: Option<ArrayView2<f32>>,
     aspect_scheme_view_opt: Option<ArrayView2<f32>>,
+    need_full_wall_outputs: bool,
     min_sun_elev_deg: f32,
+    max_shadow_distance_m: f32,
 ) -> ShadowingResultRust {
     let shape = dsm_view.shape();
     let num_rows = shape[0];
     let num_cols = shape[1];
     let dim = (num_rows, num_cols);
+
+    // Handle zenith case (altitude >= 89.5°): no shadows cast from directly overhead.
+    // This avoids tan(90°) = infinity which breaks the shadow propagation loop.
+    // For SVF calculations, zenith patches represent looking straight up - all points
+    // can see the sky in this direction (no obstruction).
+    if altitude_deg >= 89.5 {
+        return ShadowingResultRust {
+            bldg_sh: Array2::<f32>::ones(dim),
+            veg_sh: Array2::<f32>::ones(dim),
+            veg_blocks_bldg_sh: Array2::<f32>::ones(dim),
+            wall_sh: if need_full_wall_outputs {
+                walls_view_opt.map(|_| Array2::<f32>::zeros(dim))
+            } else {
+                None
+            },
+            wall_sun: walls_view_opt.map(|w| w.to_owned()),
+            wall_sh_veg: if need_full_wall_outputs {
+                walls_view_opt.map(|_| Array2::<f32>::zeros(dim))
+            } else {
+                None
+            },
+            face_sh: if need_full_wall_outputs {
+                walls_view_opt.map(|_| Array2::<f32>::zeros(dim))
+            } else {
+                None
+            },
+            face_sun: if need_full_wall_outputs {
+                walls_view_opt.map(|w| w.mapv(|v| if v > 0.0 { 1.0 } else { 0.0 }))
+            } else {
+                None
+            },
+            sh_on_wall: walls_scheme_view_opt.map(|_| Array2::<f32>::zeros(dim)),
+        };
+    }
 
     // GPU acceleration path: use GPU if available for all shadow types
     #[cfg(feature = "gpu")]
@@ -141,11 +197,14 @@ pub(crate) fn calculate_shadows_rust(
                 bush_view_opt,
                 walls_view_opt,
                 aspect_view_opt,
+                walls_scheme_view_opt.is_some() && aspect_scheme_view_opt.is_some(),
+                need_full_wall_outputs,
                 azimuth_deg,
                 altitude_deg,
                 scale,
                 max_local_dsm_ht,
                 min_sun_elev_deg,
+                max_shadow_distance_m,
             ) {
                 Ok(gpu_result) => {
                     // Handle sh_on_wall if wall scheme is present
@@ -222,25 +281,26 @@ pub(crate) fn calculate_shadows_rust(
         && bush_view_opt.is_some();
 
     // Allocate arrays for vegetation only if all inputs are present
-    let (mut veg_sh, mut veg_blocks_bldg_sh, mut propagated_veg_sh_height) = if veg_inputs_present {
-        let bush_view = bush_view_opt.as_ref().unwrap();
-        let veg_canopy_dsm_view = veg_canopy_dsm_view_opt.as_ref().unwrap();
-        (
-            bush_view.mapv(|v| if v > 1.0 { 1.0 } else { 0.0 }),
-            Array2::<f32>::zeros(dim),
-            {
-                let mut arr = Array2::<f32>::zeros(dim);
-                arr.assign(veg_canopy_dsm_view);
-                arr
-            },
-        )
-    } else {
-        (
-            Array2::<f32>::zeros(dim),
-            Array2::<f32>::zeros(dim),
-            Array2::<f32>::zeros(dim),
-        )
-    };
+    let (mut veg_sh, mut veg_blocks_bldg_sh, mut propagated_veg_sh_height) =
+        if let (Some(bush_view), Some(veg_canopy_dsm_view)) =
+            (bush_view_opt, veg_canopy_dsm_view_opt)
+        {
+            (
+                bush_view.mapv(|v| if v > 1.0 { 1.0 } else { 0.0 }),
+                Array2::<f32>::zeros(dim),
+                {
+                    let mut arr = Array2::<f32>::zeros(dim);
+                    arr.assign(&veg_canopy_dsm_view);
+                    arr
+                },
+            )
+        } else {
+            (
+                Array2::<f32>::zeros(dim),
+                Array2::<f32>::zeros(dim),
+                Array2::<f32>::zeros(dim),
+            )
+        };
 
     let mut bldg_sh = Array2::<f32>::zeros(dim);
     let mut propagated_bldg_sh_height = Array2::<f32>::zeros(dim);
@@ -263,9 +323,17 @@ pub(crate) fn calculate_shadows_rust(
     let mut ds: f32;
     let mut index = 0.0;
 
-    // clamp elevation used for reach computation
+    // Horizontal reach: derived from height, optionally capped by max_shadow_distance_m.
+    // On mountainous terrain the height-derived reach can be huge, so the distance
+    // cap prevents tracing rays for kilometres while the dz guard (below) still
+    // uses the full terrain relief for correct vertical cutoff.
     let min_sun_elev_rad = min_sun_elev_deg.to_radians();
-    let max_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+    let height_reach_m = max_local_dsm_ht / min_sun_elev_rad.tan();
+    let max_reach_m = if max_shadow_distance_m > 0.0 {
+        height_reach_m.min(max_shadow_distance_m)
+    } else {
+        height_reach_m
+    };
     let max_radius_pixels = (max_reach_m / scale).ceil() as usize;
     let max_index = max_radius_pixels as f32; // index uses f32
 
@@ -326,27 +394,34 @@ pub(crate) fn calculate_shadows_rust(
             let mut bldg_sh_dst_slice = bldg_sh.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
 
             par_azip!((prop_h in &mut prop_bldg_h_dst_slice, &dsm_src in &dsm_src_slice) {
-                let shifted_dsm = dsm_src - dz;
-                *prop_h = prop_h.max(shifted_dsm);
+                if dsm_src.is_finite() {
+                    let shifted_dsm = dsm_src - dz;
+                    *prop_h = prop_h.max(shifted_dsm);
+                }
             });
 
             par_azip!((bldg_sh_flag in &mut bldg_sh_dst_slice, &prop_h in &prop_bldg_h_dst_slice, &dsm_target in &dsm_dst_slice) {
-                *bldg_sh_flag = if prop_h > dsm_target { 1.0 } else { 0.0 };
+                if dsm_target.is_finite() {
+                    *bldg_sh_flag = if prop_h > dsm_target { 1.0 } else { 0.0 };
+                } else {
+                    *bldg_sh_flag = f32::NAN;
+                }
             });
 
             // Vegetation shadow calculation on the slice
-            if veg_inputs_present {
-                let veg_canopy_dsm_view = veg_canopy_dsm_view_opt.as_ref().unwrap();
-                let veg_trunk_dsm_view = veg_trunk_dsm_view_opt.as_ref().unwrap();
-
+            if let (Some(veg_canopy_dsm_view), Some(veg_trunk_dsm_view)) =
+                (veg_canopy_dsm_view_opt, veg_trunk_dsm_view_opt)
+            {
                 let veg_canopy_src_slice =
                     veg_canopy_dsm_view.slice(s![xc1c..xc1c + minx, yc1c..yc1c + miny]);
                 let mut prop_veg_h_dst_slice =
                     propagated_veg_sh_height.slice_mut(s![xp1c..xp1c + minx, yp1c..yp1c + miny]);
 
                 par_azip!((prop_veg_h in &mut prop_veg_h_dst_slice, &source_veg_canopy in &veg_canopy_src_slice) {
-                    let shifted_veg_canopy = source_veg_canopy - dz;
-                    *prop_veg_h = prop_veg_h.max(shifted_veg_canopy);
+                    if source_veg_canopy.is_finite() {
+                        let shifted_veg_canopy = source_veg_canopy - dz;
+                        *prop_veg_h = prop_veg_h.max(shifted_veg_canopy);
+                    }
                 });
 
                 let veg_trunk_src_slice =
@@ -621,6 +696,7 @@ fn shade_on_walls(
 }
 
 #[pyfunction]
+#[pyo3(signature = (azimuth_deg, altitude_deg, scale, max_local_dsm_ht, dsm, veg_canopy_dsm=None, veg_trunk_dsm=None, bush=None, walls=None, aspect=None, walls_scheme=None, aspect_scheme=None, min_sun_elev_deg=None, max_shadow_distance_m=None))]
 /// Calculates shadow maps for buildings, vegetation, and walls given DSM and sun position (Python wrapper).
 ///
 /// This function handles Python type conversions and calls the internal Rust shadow calculation logic.
@@ -641,6 +717,7 @@ fn shade_on_walls(
 /// * `aspect` - Optional wall aspect/orientation layer (radians or degrees). Required if `walls` is provided.
 /// * `walls_scheme` - Optional alternative wall height layer for specific calculations
 /// * `aspect_scheme` - Optional alternative wall aspect layer
+/// * `max_shadow_distance_m` - Optional: Maximum horizontal shadow distance in metres (0 = no cap)
 ///
 /// # Returns
 /// * `ShadowingResult` struct containing various shadow maps (ground, vegetation, walls) as PyArrays.
@@ -659,6 +736,7 @@ pub fn calculate_shadows_wall_ht_25(
     walls_scheme: Option<PyReadonlyArray2<f32>>,
     aspect_scheme: Option<PyReadonlyArray2<f32>>,
     min_sun_elev_deg: Option<f32>,
+    max_shadow_distance_m: Option<f32>,
 ) -> PyResult<PyObject> {
     let dsm_view = dsm.as_array();
     let shape = dsm_view.shape();
@@ -672,9 +750,18 @@ pub fn calculate_shadows_wall_ht_25(
     let num_veg_inputs = veg_inputs_provided.iter().filter(|&&x| x).count();
 
     let (veg_canopy_dsm_view_opt, veg_trunk_dsm_view_opt, bush_view_opt) = if num_veg_inputs == 3 {
-        let veg_canopy_view = veg_canopy_dsm.as_ref().unwrap().as_array();
-        let veg_trunk_view = veg_trunk_dsm.as_ref().unwrap().as_array();
-        let bush_view = bush.as_ref().unwrap().as_array();
+        let veg_canopy_view = veg_canopy_dsm
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("veg_canopy_dsm is missing"))?
+            .as_array();
+        let veg_trunk_view = veg_trunk_dsm
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("veg_trunk_dsm is missing"))?
+            .as_array();
+        let bush_view = bush
+            .as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyValueError::new_err("bush is missing"))?
+            .as_array();
         if veg_canopy_view.shape() != shape {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "veg_canopy_dsm must have the same shape as dsm.",
@@ -756,7 +843,9 @@ pub fn calculate_shadows_wall_ht_25(
         aspect_view_opt,
         walls_scheme_view_opt,
         aspect_scheme_view_opt,
+        true,
         min_sun_elev_deg.unwrap_or(5.0_f32),
+        max_shadow_distance_m.unwrap_or(0.0_f32),
     );
 
     let py_result = ShadowingResult {

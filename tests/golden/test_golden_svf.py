@@ -1,0 +1,153 @@
+"""
+Golden Regression Tests for Sky View Factor (SVF) Calculations
+
+These tests compare the Rust SVF algorithm implementation against
+pre-computed golden fixtures generated from the UMEP Python module.
+
+All non-vegetation SVF components match to within ~2e-6 (float32 precision).
+Vegetation SVF has a known ~1.1% max difference due to different shadow
+algorithm internals (shadowingfunction_20 vs shadowingfunction_wallheight_23).
+"""
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+from solweig.rustalgos import shadowing, skyview
+
+pytestmark = pytest.mark.slow
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+# All non-vegetation SVF components match within ~2e-6 (f32 precision)
+STRICT_RTOL = 1e-5
+STRICT_ATOL = 1e-5
+
+# Vegetation SVF: max observed diff ~1.09e-2; use 1.5% margin
+VEG_RTOL = 0.015
+VEG_ATOL = 0.015
+
+
+@pytest.fixture(scope="module")
+def input_data():
+    """Load input data from golden fixtures (shared across all tests in module)."""
+    return {
+        "dsm": np.load(FIXTURES_DIR / "input_dsm.npy"),
+        "cdsm": np.load(FIXTURES_DIR / "input_cdsm.npy"),
+        "tdsm": np.load(FIXTURES_DIR / "input_tdsm.npy"),
+        "params": dict(np.load(FIXTURES_DIR / "input_params.npz")),
+    }
+
+
+@pytest.fixture(scope="module")
+def svf_golden():
+    """Load golden SVF fixtures (shared across all tests in module)."""
+    return {
+        "svf": np.load(FIXTURES_DIR / "svf_total.npy"),
+        "svf_north": np.load(FIXTURES_DIR / "svf_north.npy"),
+        "svf_east": np.load(FIXTURES_DIR / "svf_east.npy"),
+        "svf_south": np.load(FIXTURES_DIR / "svf_south.npy"),
+        "svf_west": np.load(FIXTURES_DIR / "svf_west.npy"),
+        "svf_veg": np.load(FIXTURES_DIR / "svf_veg.npy"),
+    }
+
+
+@pytest.fixture(scope="module")
+def svf_result(input_data):
+    """Compute current SVF result (computed once per module)."""
+    shadowing.disable_gpu()
+    return skyview.calculate_svf(
+        input_data["dsm"],
+        input_data["cdsm"],
+        input_data["tdsm"],
+        float(input_data["params"]["scale"]),
+        True,  # usevegdem
+        float(input_data["params"]["amaxvalue"]),
+        2,  # patch_option
+        None,  # min_sun_elev
+        None,  # progress_callback
+    )
+
+
+class TestGoldenSvf:
+    """Golden tests for SVF calculations."""
+
+    def test_svf_total_matches_golden(self, svf_result, svf_golden):
+        """Total SVF should match golden fixture (max diff ~2e-6)."""
+        np.testing.assert_allclose(
+            np.array(svf_result.svf),
+            svf_golden["svf"],
+            rtol=STRICT_RTOL,
+            atol=STRICT_ATOL,
+            err_msg="Total SVF differs from golden fixture",
+        )
+
+    def test_svf_north_matches_golden(self, svf_result, svf_golden):
+        """North SVF should match golden fixture (max diff ~1.3e-6)."""
+        np.testing.assert_allclose(
+            np.array(svf_result.svf_north),
+            svf_golden["svf_north"],
+            rtol=STRICT_RTOL,
+            atol=STRICT_ATOL,
+            err_msg="North SVF differs from golden fixture",
+        )
+
+    def test_svf_east_matches_golden(self, svf_result, svf_golden):
+        """East SVF should match golden fixture (max diff ~1.3e-6)."""
+        np.testing.assert_allclose(
+            np.array(svf_result.svf_east),
+            svf_golden["svf_east"],
+            rtol=STRICT_RTOL,
+            atol=STRICT_ATOL,
+            err_msg="East SVF differs from golden fixture",
+        )
+
+    def test_svf_south_matches_golden(self, svf_result, svf_golden):
+        """South SVF should match golden fixture (max diff ~1.3e-6)."""
+        np.testing.assert_allclose(
+            np.array(svf_result.svf_south),
+            svf_golden["svf_south"],
+            rtol=STRICT_RTOL,
+            atol=STRICT_ATOL,
+            err_msg="South SVF differs from golden fixture",
+        )
+
+    def test_svf_west_matches_golden(self, svf_result, svf_golden):
+        """West SVF should match golden fixture (max diff ~1.3e-6)."""
+        np.testing.assert_allclose(
+            np.array(svf_result.svf_west),
+            svf_golden["svf_west"],
+            rtol=STRICT_RTOL,
+            atol=STRICT_ATOL,
+            err_msg="West SVF differs from golden fixture",
+        )
+
+    def test_svf_veg_matches_golden(self, svf_result, svf_golden):
+        """Vegetation SVF should match golden fixture (max diff ~1.1e-2)."""
+        np.testing.assert_allclose(
+            np.array(svf_result.svf_veg),
+            svf_golden["svf_veg"],
+            rtol=VEG_RTOL,
+            atol=VEG_ATOL,
+            err_msg="Vegetation SVF differs from golden fixture beyond 1.5% tolerance",
+        )
+
+
+class TestGoldenSvfProperties:
+    """Verify golden fixtures maintain expected properties."""
+
+    def test_svf_range(self, svf_golden):
+        """Golden SVF values should be in valid range [0, 1]."""
+        for name, arr in svf_golden.items():
+            valid_mask = ~np.isnan(arr)
+            assert np.all(arr[valid_mask] >= 0), f"{name} has values < 0"
+            assert np.all(arr[valid_mask] <= 1), f"{name} has values > 1"
+
+    def test_svf_shape_consistency(self, svf_golden):
+        """All SVF arrays should have the same shape."""
+        shapes = [arr.shape for arr in svf_golden.values()]
+        assert all(s == shapes[0] for s in shapes), "SVF arrays have inconsistent shapes"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

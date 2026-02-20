@@ -1,0 +1,196 @@
+name: Test
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    tags-ignore:
+      - "**"
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_call: # Allow publish workflow to call this as a dependency
+
+# Cancel in-progress runs for the same branch/PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run ruff check
+        run: uv run ruff check
+
+      - name: Run ruff format check
+        run: uv run ruff format --check
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run ty
+        run: uv run ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Build Rust extension
+        run: uv run maturin develop --release
+
+      - name: Run tests (excluding slow)
+        run: uv run python -m pytest tests/ -m 'not slow' -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+  test-qgis-compat:
+    name: Test QGIS compatibility (NumPy 1.26)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install GDAL system libraries
+        run: sudo apt-get update && sudo apt-get install -y libgdal-dev gdal-bin python3-gdal
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies (QGIS compat - NumPy 1.26)
+        run: uv sync --group qgis-compat
+
+      - name: Install GDAL Python bindings matching system
+        run: uv pip install "gdal==$(gdal-config --version)"
+
+      - name: Build Rust extension
+        run: uv run maturin develop --release
+
+      - name: Verify NumPy version
+        run: uv run python -c "import numpy; assert numpy.__version__.startswith('1.26'), f'Expected NumPy 1.26.x, got {numpy.__version__}'"
+
+      - name: Verify GDAL backend is used
+        run: uv run python -c "from solweig import io; assert io.GDAL_ENV, 'Expected GDAL backend'"
+        env:
+          UMEP_USE_GDAL: "1"
+
+      - name: Run tests (excluding slow) with GDAL backend
+        run: uv run python -m pytest tests/ -m 'not slow' -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          UMEP_USE_GDAL: "1"
+
+  test-spec:
+    name: Test scientific spec/parity gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Build Rust extension
+        run: uv run maturin develop --release
+
+      - name: Verify UMEP availability for parity tests
+        run: uv run python -c "import umep"
+
+      - name: Run scientific/spec suite
+        run: uv run python -m pytest tests/spec -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+  test-gpu-gates:
+    name: Test GPU gates (correctness + performance)
+    runs-on: ubuntu-latest
+    # GPU tests require hardware; this job validates the CPU-fallback path on
+    # standard runners and is expected to pass.  For true GPU coverage, run
+    # locally or on a self-hosted GPU runner.
+    continue-on-error: true
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Build Rust extension
+        run: uv run maturin develop --release
+
+      - name: Run GPU correctness gates
+        run: uv run poe test_gpu_gates
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Run GPU performance gate
+        run: uv run poe test_gpu_perf_gate
+        env:
+          PYTHONPATH: ${{ github.workspace }}
