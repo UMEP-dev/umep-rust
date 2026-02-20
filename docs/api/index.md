@@ -8,10 +8,7 @@ SOLWEIG provides a clean, minimal API for urban microclimate calculations.
 
 | Function | Description |
 |----------|-------------|
-| [`calculate()`](functions.md#calculate) | Single timestep Tmrt calculation |
-| [`calculate_timeseries()`](functions.md#calculate_timeseries) | Multi-timestep with thermal state |
-| [`calculate_tiled()`](functions.md#calculate_tiled) | Large raster processing |
-| [`calculate_timeseries_tiled()`](functions.md#calculate_timeseries_tiled) | Tiled multi-timestep processing |
+| [`calculate()`](functions.md#calculate) | Single or multi-timestep Tmrt calculation (tiling is automatic for large rasters) |
 | [`validate_inputs()`](functions.md#validate_inputs) | Pre-flight input validation |
 | [`compute_utci_grid()`](functions.md#compute_utci_grid) | UTCI from Tmrt grid |
 | [`compute_pet_grid()`](functions.md#compute_pet_grid) | PET from Tmrt grid |

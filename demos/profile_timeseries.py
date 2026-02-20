@@ -88,9 +88,9 @@ def profile_period(weather_slice, label, surface, output_dir):
     print(f"{'=' * 70}")
 
     t_total_start = time.perf_counter()
-    solweig.calculate_timeseries(
+    solweig.calculate(
         surface=surface,
-        weather_series=weather_slice,
+        weather=weather_slice,
         output_dir=output_dir,
     )
     t_total = time.perf_counter() - t_total_start

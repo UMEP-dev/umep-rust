@@ -51,14 +51,16 @@ This represents the characteristic time for surface temperature to respond to ch
 
 ### Algorithm
 
+In Rust: `ts_wave_delay(gvf_lup, firstdaytime, timeadd, timestepdec, tgmap1)` and `ts_wave_delay_batch_pure` for batched 6-in-1 processing (center + 4 directional + ground).
+
 ```python
-def TsWaveDelay(T_current, first_morning, time_accumulated, timestep, T_previous):
+def TsWaveDelay(T_current, firstdaytime, time_accumulated, timestep, T_previous):
     """
     Apply thermal delay to ground temperature.
 
     Args:
         T_current: Current radiative equilibrium temperature
-        first_morning: True if first timestep after sunrise
+        firstdaytime: True if first timestep after sunrise
         time_accumulated: Time since last full update (fraction of day)
         timestep: Current timestep duration (fraction of day)
         T_previous: Previous delayed temperature
@@ -68,7 +70,7 @@ def TsWaveDelay(T_current, first_morning, time_accumulated, timestep, T_previous
         time_accumulated: Updated time accumulator
         T_previous: Updated previous temperature for next iteration
     """
-    if first_morning:
+    if firstdaytime:
         T_previous = T_current
 
     if time_accumulated >= 59/1440:  # ~59 minutes threshold
@@ -88,16 +90,42 @@ def TsWaveDelay(T_current, first_morning, time_accumulated, timestep, T_previous
 
 For computing the instantaneous radiative equilibrium temperature, SOLWEIG uses a linear parameterization based on solar altitude.
 
-### Linear Model
+### Sinusoidal Diurnal Model
+
+The ground temperature deviation from air temperature follows a sinusoidal diurnal phase (`rust/src/ground.rs`):
 
 ```text
-T_surface = Tstart + k × α_max
+Tgamp = TgK × altmax + Tstart
 
-where:
-    Tstart = surface temperature at sunrise (°C offset from Ta)
-    k = temperature increase per degree of solar altitude (°C/°)
-    α_max = maximum solar altitude during the day (°)
+if dectime > sunrise_frac:
+    phase = (dectime - sunrise_frac) / (TmaxLST_frac - sunrise_frac)
+    Tg = Tgamp × sin(phase × π/2)
+else:
+    Tg = 0    (pre-sunrise: no deviation from air temp)
 ```
+
+Where:
+
+- `Tgamp` = maximum temperature amplitude (°C above air temp)
+- `TgK` = temperature increase rate (°C per degree of max solar altitude)
+- `altmax` = maximum solar altitude during the day (°)
+- `Tstart` = temperature offset at sunrise (°C)
+- `dectime` = current time as fraction of day
+- `sunrise_frac` = sunrise time as fraction of day
+- `TmaxLST_frac` = time of maximum surface temperature as fraction of day
+
+### Clearness Index Correction
+
+After computing the sinusoidal Tg, a clearness index correction is applied to account for non-clear sky conditions:
+
+```text
+corr = 0.1473 × ln(90 - zenith_deg) + 0.3454
+CI_TgG = (radG / radG0) + (1 - corr)
+CI_TgG = min(CI_TgG, 1.0)
+Tg = max(Tg × CI_TgG, 0.0)
+```
+
+Where `radG` is measured global radiation and `radG0` is theoretical clear-sky radiation. Under clear skies CI_TgG ≈ 1.0; under overcast conditions CI_TgG < 1.0, reducing the ground temperature response.
 
 ### Land Cover Parameters
 
@@ -107,9 +135,11 @@ where:
 | Dark asphalt | -9.78 | 0.58 | 15:00 | Lindberg et al. (2016) |
 | Grass | -3.38 | 0.21 | 14:00 | Lindberg et al. (2016) |
 | Bare soil | -3.01 | 0.33 | 14:00 | Estimated |
-| Water | 0.0 | 0.05 | 16:00 | Estimated |
+| Water | 0.0 | 0.00 | 12:00 | Estimated |
 
 Note: Tstart is the temperature offset from air temperature at sunrise. Negative values indicate surfaces cooler than air at dawn.
+
+**Water temperature override:** When land cover is active (the normal path), water pixels (lc_grid == 3) bypass this table entirely — their ground temperature is set to `Twater - Ta` from the weather file. The TgK/TmaxLST values only apply in the rare no-landcover fallback. With TgK=0.00, Tgamp=0 making TmaxLST irrelevant.
 
 ## Properties
 
@@ -140,21 +170,24 @@ Night:    T_ground slowly approaches T_air
 
 The thermal delay model requires state to be carried between timesteps:
 
-- `T_previous`: Last computed delayed temperature
-- `time_accumulated`: Time since last weight reset
+- 6 directional `tgmap1` arrays (center, E, S, W, N, ground)
+- `tgout1` — ground temperature output history
+- `firstdaytime` flag — reset on first timestep after sunrise
+- `timeadd` accumulator — tracks time since last full update
+- `timestep_dec` — current timestep as fraction of day
 
-For accurate results, use `calculate_timeseries()` which automatically manages thermal state. Single-timestep calculations with `calculate()` will not capture thermal inertia effects.
+For accurate results, use `calculate()` with a timeseries of weather data, which automatically manages thermal state. Single-timestep calculations will not capture thermal inertia effects.
 
 ### Directional Components
 
-Ground temperature affects directional Lup components (Lup_E, Lup_S, Lup_W, Lup_N) which are computed using Ground View Factors in each direction.
+Ground temperature affects directional Lup components (Lup_E, Lup_S, Lup_W, Lup_N) which are computed using Ground View Factors in each direction. The `ts_wave_delay_batch_pure` function processes all 6 directional channels in a single call.
 
 ### Nighttime Behavior
 
-At night (sun_altitude ≤ 0):
+Pre-sunrise (dectime <= sunrise_frac):
 
-- No solar heating contribution
-- Temperature decays toward air temperature
+- Ground temperature deviation Tg = 0 (no deviation from air temperature)
+- The TsWaveDelay model handles smooth transitions via thermal inertia
 - Emissivity assumed constant (typically 0.95)
 
 ## Validation Status

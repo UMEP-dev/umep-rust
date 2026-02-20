@@ -15,24 +15,36 @@ The uniform temperature of an imaginary black enclosure that would result in the
 Total radiation absorbed by a human body from all directions:
 
 ```text
-Sstr = absK × (Kside×Fside + (Kdown+Kup)×Fup)
-     + absL × (Lside×Fside + (Ldown+Lup)×Fup)
+Isotropic sky:
+  Sstr = abs_k × (Kside_total × Fcyl + (Kdown + Kup) × Fup + Kside_dirs_sum × Fside)
+       + abs_l × ((Ldown + Lup) × Fup + Lside_dirs_sum × Fside)
+
+Anisotropic sky:
+  Sstr = abs_k × (Kside_total × Fcyl + (Kdown + Kup) × Fup + Kside_dirs_sum × Fside)
+       + abs_l × ((Ldown + Lup) × Fup + Lside_total × Fcyl + Lside_dirs_sum × Fside)
 ```
 
 Where:
 
-- absK = shortwave absorption coefficient (0.70 for clothed human)
-- absL = longwave absorption coefficient (0.97 for clothed human)
+- abs_k = shortwave absorption coefficient (0.70 for clothed human)
+- abs_l = longwave absorption coefficient (0.97 for clothed human)
+- Fcyl = cylindric projection factor for direct beam (depends on posture)
 - Fside = view factor for sides (depends on posture)
 - Fup = view factor for top/bottom (depends on posture)
+- Kside_total, Lside_total = total side radiation from anisotropic sky model
+- Kside_dirs_sum, Lside_dirs_sum = sum of N+E+S+W directional side radiation
+
+Note: In isotropic mode, `Lside_total × Fcyl` is omitted. In anisotropic mode, it accounts for the non-uniform longwave sky distribution via the cylindric projection factor.
 
 ### Mean Radiant Temperature
 
 ```text
-Tmrt = (Sstr / (absL × σ))^0.25 - 273.15
+Tmrt = (Sstr / (abs_l × σ))^0.25 - 273.15
 ```
 
-Where σ = Stefan-Boltzmann constant (5.67 × 10⁻⁸ W/m²K⁴).
+Where σ = Stefan-Boltzmann constant (5.67051 × 10⁻⁸ W/m²K⁴).
+
+Output is clamped to [-50, 80]°C to prevent physically unreasonable values.
 
 ## Absorption Coefficients
 
@@ -42,22 +54,22 @@ The human body absorbs radiation differently for shortwave (solar) and longwave 
 
 | Coefficient | Value | Description                      | Source           |
 | ----------- | ----- | -------------------------------- | ---------------- |
-| absK        | 0.70  | Shortwave (solar) absorption     | ISO 7726 Table 4 |
-| absL        | 0.97  | Longwave (thermal) absorption    | ISO 7726 Table 4 |
+| abs_k       | 0.70  | Shortwave (solar) absorption     | ISO 7726 Table 4 |
+| abs_l       | 0.97  | Longwave (thermal) absorption    | ISO 7726 Table 4 |
 
 ### Physical Basis
 
-**Shortwave (absK = 0.70):**
+**Shortwave (abs_k = 0.70):**
 
 - Represents average absorption of clothed human body in solar spectrum (0.3-3 μm)
 - Varies with clothing color and material:
-  - White clothing: absK ≈ 0.40-0.50
-  - Medium grey clothing: absK ≈ 0.70 (standard reference)
-  - Dark clothing: absK ≈ 0.85-0.90
+  - White clothing: abs_k ≈ 0.40-0.50
+  - Medium grey clothing: abs_k ≈ 0.70 (standard reference)
+  - Dark clothing: abs_k ≈ 0.85-0.90
 - 0.70 is the ISO 7726 standard value for typical outdoor clothing
-- Remaining (1 - absK) = 0.30 is reflected
+- Remaining (1 - abs_k) = 0.30 is reflected
 
-**Longwave (absL = 0.97):**
+**Longwave (abs_l = 0.97):**
 
 - Human body absorption/emission in thermal infrared spectrum (3-100 μm)
 - Based on Kirchhoff's law: absorptivity = emissivity at thermal equilibrium
@@ -74,14 +86,14 @@ The human body absorbs radiation differently for shortwave (solar) and longwave 
 
 The ISO 7726 standard (Table 4, Section 4.2.3) specifies:
 
-- absK = 0.70 for solar radiation absorption
-- absL = 0.97 for longwave radiation absorption
+- abs_k = 0.70 for solar radiation absorption
+- abs_l = 0.97 for longwave radiation absorption
 
 These values are used for standardized Mean Radiant Temperature measurements.
 
 **Implementation in SOLWEIG:**
 
-The default values in `HumanParams` (defined in `models.py`):
+The default values in `HumanParams` (defined in `pysrc/solweig/models/config.py`):
 
 ```python
 @dataclass
@@ -91,9 +103,9 @@ class HumanParams:
     abs_l: float = 0.97  # ISO 7726 standard
 ```
 
-**Historical Note on absL Discrepancy:**
+**Historical Note on abs_l Discrepancy:**
 
-Earlier SOLWEIG versions and some literature sources use absL = 0.95 instead of 0.97. Both values are physically reasonable:
+Earlier SOLWEIG versions and some literature sources use abs_l = 0.95 instead of 0.97. Both values are physically reasonable:
 
 - 0.95: Conservative estimate, more common in early thermal comfort studies
 - 0.97: ISO 7726 standard, more accurate for typical clothing
@@ -102,7 +114,7 @@ This implementation follows ISO 7726 and uses 0.97 as the default. Users can ove
 
 **Impact on Tmrt:**
 
-The difference between absL = 0.95 and 0.97 has minimal effect on calculated Tmrt:
+The difference between abs_l = 0.95 and 0.97 has minimal effect on calculated Tmrt:
 
 ```text
 Tmrt = (Sstr / (abs_l × σ))^0.25 - 273.15
@@ -116,15 +128,17 @@ For typical Sstr = 400 W/m²:
 ## Inputs
 
 | Input | Type | Description |
-| ----- | ---- | ----------- |
+| --- | --- | --- |
 | Kdown | 2D array (W/m²) | Diffuse shortwave from sky |
 | Kup | 2D array (W/m²) | Reflected shortwave from ground |
-| Kside | 2D arrays (W/m²) | Direct + reflected shortwave (E,S,W,N) |
+| Kside_dirs_sum | 2D array (W/m²) | Sum of directional shortwave (E+S+W+N) |
+| Kside_total | 2D array (W/m²) | Total side shortwave from anisotropic sky |
 | Ldown | 2D array (W/m²) | Longwave from sky |
 | Lup | 2D array (W/m²) | Longwave from ground |
-| Lside | 2D arrays (W/m²) | Longwave from walls (E,S,W,N) |
-| absK | float | Shortwave absorption (default 0.70) |
-| absL | float | Longwave absorption (default 0.97) |
+| Lside_dirs_sum | 2D array (W/m²) | Sum of directional longwave (E+S+W+N) |
+| Lside_total | 2D array (W/m²) | Total side longwave from anisotropic sky |
+| abs_k | float | Shortwave absorption (default 0.70) |
+| abs_l | float | Longwave absorption (default 0.97) |
 | posture | string | "standing" or "sitting" |
 
 ## Outputs
@@ -193,16 +207,16 @@ For a sitting person, the body is more compact with increased horizontal cross-s
 
 For direct solar radiation on vertical body surfaces, an additional projection factor f_cyl is used:
 
-| Posture  | f_cyl | Description                             |
-| -------- | ----- | --------------------------------------- |
-| Standing | 0.28  | Projected area for cylinder from sun    |
-| Sitting  | 0.20  | Reduced projection for compact posture  |
+| Posture | f_cyl | Description |
+| --- | --- | --- |
+| Standing | 0.28 | Projected area for cylinder from sun |
+| Sitting | 0.20 | Reduced projection for compact posture |
 
 The f_cyl factor accounts for the cylindrical projection of direct beam radiation, distinct from the hemispherical view factors (Fup, Fside) used for diffuse radiation.
 
 **Source Code Reference:**
 
-View factors are defined in `components/tmrt.py` and `components/radiation.py`:
+View factors are defined in `rust/src/tmrt.rs` (lines 10-18) and `pysrc/solweig/constants.py` (lines 39-47):
 
 ```python
 if posture == "standing":

@@ -25,7 +25,7 @@ from solweig.rustalgos import sky
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 # Physical constants
-SBC = 5.67e-8  # Stefan-Boltzmann constant
+SBC = 5.67051e-8  # Stefan-Boltzmann constant (CODATA 2018, closest f32)
 
 
 def generate_sky_patches(n_alt_bands=6, n_azi_per_band=12):

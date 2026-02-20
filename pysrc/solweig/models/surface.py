@@ -1770,7 +1770,7 @@ class SurfaceData:
         """
         Compute Sky View Factor (SVF) and store in self.svf.
 
-        This must be called before calculate() or calculate_timeseries()
+        This must be called before calculate()
         when constructing SurfaceData manually (not via prepare()).
 
         SVF is stored without psi (vegetation transmissivity) adjustment,

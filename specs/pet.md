@@ -28,22 +28,22 @@ Where:
 - E_re = respiratory heat loss (latent + sensible) (W)
 - S = body heat storage (W), positive = body warming
 
-**PET Definition:** The air temperature at which, in a reference indoor environment (Tmrt = Ta, v = 0.1 m/s, RH = 50%), the human body would have the same core and skin temperature as in the actual outdoor environment.
+**PET Definition:** The air temperature at which, in a reference indoor environment (Tmrt = Ta, v = 0.1 m/s, RH = 50%), the human body would have the same core and skin temperature as in the actual outdoor environment. The 50% RH reference condition is approximated by a fixed vapor pressure of 12 hPa.
 
 ### Metabolic Rate
 
 **Reference:** ISO 8996:2021 "Ergonomics of the thermal environment - Determination of metabolic rate."
 
-| Activity | Metabolic Rate (W/m²) | Description |
-|----------|----------------------|-------------|
-| Resting | 58 | Lying quietly |
-| Sitting | 65 | Office work |
-| Standing relaxed | 70 | Standing still |
+| Activity | Work Parameter (W) | Description |
+| --- | --- | --- |
+| Resting | 0 | Lying quietly |
+| Sitting | 0 | Office work |
+| Standing relaxed | 0 | Standing still |
 | Light walking | 80 | 2 km/h (SOLWEIG default) |
 | Normal walking | 110 | 4 km/h |
 | Brisk walking | 150 | 6 km/h |
 
-The default SOLWEIG value of 80 W/m² represents a person standing or slowly walking outdoors.
+The `work` parameter (in Watts total, not W/m²) is added directly to the whole-body basal metabolic rate, matching the upstream UMEP MEMI implementation: `met = metbm + work`. The default SOLWEIG value of 80 W represents light outdoor walking.
 
 ## Inputs
 
@@ -57,7 +57,7 @@ The default SOLWEIG value of 80 W/m² represents a person standing or slowly wal
 | height | float (m) | Person's height |
 | weight | float (kg) | Person's weight |
 | sex | int | 1=male, 2=female |
-| activity | float (W/m²) | Metabolic activity level |
+| activity | float (W) | Activity level added to basal metabolic rate (Watts total) |
 | clothing | float (clo) | Clothing insulation |
 
 ## Outputs
@@ -74,7 +74,7 @@ The default SOLWEIG value of 80 W/m² represents a person standing or slowly wal
 | height | 1.75 m | Average height |
 | weight | 75 kg | Average weight |
 | sex | 1 (male) | Reference person |
-| activity | 80 W/m² | Light walking |
+| activity | 80 W | Light walking |
 | clothing | 0.9 clo | Summer business attire |
 
 ## Comfort Categories
@@ -160,10 +160,10 @@ The default SOLWEIG value of 80 W/m² represents a person standing or slowly wal
 
 PET requires solving the energy balance iteratively to find the equivalent temperature. The algorithm:
 
-1. Initialize with Ta as first guess
-2. Compute skin and core temperatures for actual conditions
-3. Find indoor Ta that produces same temperatures
-4. Convergence typically within 10-20 iterations (tolerance ~0.01°C)
+1. Compute skin and core temperatures for actual outdoor conditions using a 7-mode thermoregulation loop (j = 1..7), each mode representing different physiological states (sweating, vasoconstriction, etc.)
+2. Within each mode, a 4-pass bracketing scheme finds the clothing temperature (tcl) with decreasing step sizes: 1.0 → 0.1 → 0.01 → 0.001°C. Each pass runs up to 200 iterations, searching for a sign change in the energy balance.
+3. Once outdoor skin/core temperatures converge, repeat the same 4-pass bracketing for the PET reference indoor conditions (Tmrt = Ta, v = 0.1 m/s, vapor pressure = 12 hPa) to find the equivalent temperature.
+4. Effective precision: 0.001°C.
 
 ### Body Surface Area (DuBois Formula)
 
@@ -195,26 +195,40 @@ Clothing insulation is measured in clo units (1 clo = 0.155 m²K/W):
 | Winter indoor | 1.0 | Sweater, trousers |
 | Winter outdoor | 1.5-2.0 | Coat, layers |
 
-The clothing area factor accounts for increased surface area due to clothing:
+Two clothing-related factors are computed:
+
+**Clothing area factor** (linear, from ISO 9920):
 
 ```text
-f_cl = 1 + 0.15 × I_cl
+fcl = 1 + 0.15 × Icl
 ```
 
-Where I_cl is clothing insulation in clo.
+**Fraction of body covered by clothing** (cubic polynomial, from Hoeppe MEMI):
+
+```text
+facl = (-2.36 + 173.51×Icl - 100.76×Icl² + 19.28×Icl³) / 100
+```
+
+These serve different roles: `fcl` scales the total clothing surface area for heat transfer calculations, while `facl` determines the fraction of skin covered for radiation absorption.
 
 ### Convective Heat Transfer
 
-**Reference:** Fanger PO (1970) "Thermal Comfort: Analysis and Applications in Environmental Engineering." Danish Technical Press, Copenhagen.
+**Reference:** Höppe P (1999) "The physiological equivalent temperature." International Journal of Biometeorology 43:71-75.
 
-Convective heat transfer coefficient (W/m²K):
+Convective heat transfer coefficient (W/m²K), from the Hoeppe MEMI formulation:
 
 ```text
-h_c = 2.38 × |T_skin - T_air|^0.25  (natural convection)
-h_c = 12.1 × √v                      (forced convection, v in m/s)
+h_c = 2.67 + 6.5 × v^0.67
+h_c = h_c × (P / P₀)^0.55
 ```
 
-The larger of the two values is used.
+Where:
+
+- v = wind speed (m/s)
+- P = local barometric pressure (hPa)
+- P₀ = standard sea-level pressure (1013.25 hPa)
+
+The pressure correction accounts for altitude effects on air density. During the PET reference phase (indoor conditions), v = 0.1 m/s is used.
 
 ## References
 

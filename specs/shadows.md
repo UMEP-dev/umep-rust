@@ -40,22 +40,22 @@ sunlit[y,x] = 1  if  propagated_height <= DSM[y,x]
 
 ## Inputs
 
-| Input                 | Type           | Description                                                  |
-| --------------------- | -------------- | ------------------------------------------------------------ |
-| DSM                   | 2D array (m)   | Digital Surface Model - elevation including buildings        |
-| sun_altitude          | float (0-90°)  | Sun elevation above horizon                                  |
-| sun_azimuth           | float (0-360°) | Sun direction (0=N, 90=E, 180=S, 270=W)                      |
-| pixel_size            | float (m)      | Resolution of DSM                                            |
-| CDSM                  | 2D array (m)   | Canopy DSM for vegetation shadows (optional)                 |
-| TDSM                  | 2D array (m)   | Trunk DSM - height of trunk zone below canopy (optional)     |
-| bush                  | 2D array (m)   | Bush/low vegetation DSM (optional)                           |
-| walls                 | 2D array (m)   | Wall height grid (optional, enables wall shading outputs)    |
-| wall_aspect           | 2D array (rad) | Wall face orientation in radians (optional)                  |
-| walls_scheme          | 2D array       | Wall height scheme for shadow propagation (optional)         |
-| aspect_scheme         | 2D array       | Aspect scheme paired with walls_scheme (optional)            |
-| max_local_dsm_ht      | float (m)      | Maximum local DSM height, used to limit ray march steps      |
-| min_sun_elev_deg      | float (°)      | Minimum sun elevation for shadow reach limiting. Default 3.0 |
-| max_shadow_distance_m | float (m)      | Maximum shadow casting distance. Default 1000.0              |
+| Input | Type | Description |
+| --- | --- | --- |
+| DSM | 2D array (m) | Digital Surface Model - elevation including buildings |
+| sun_altitude | float (0-90°) | Sun elevation above horizon |
+| sun_azimuth | float (0-360°) | Sun direction (0=N, 90=E, 180=S, 270=W) |
+| pixel_size | float (m) | Resolution of DSM |
+| CDSM | 2D array (m) | Canopy DSM for vegetation shadows (optional) |
+| TDSM | 2D array (m) | Trunk DSM - height of trunk zone below canopy (optional) |
+| bush | 2D array (m) | Bush/low vegetation DSM (optional) |
+| walls | 2D array (m) | Wall height grid (optional, enables wall shading outputs) |
+| wall_aspect | 2D array (rad) | Wall face orientation in radians (optional) |
+| walls_scheme | 2D array | Wall height scheme for shadow propagation (optional) |
+| aspect_scheme | 2D array | Aspect scheme paired with walls_scheme (optional) |
+| max_local_dsm_ht | float (m) | Maximum local DSM height, used to limit ray march steps |
+| min_sun_elev_deg | float (°) | Minimum sun elevation for shadow reach limiting. Default 3.0 |
+| max_shadow_distance_m | float (m) | Maximum shadow casting distance. Rust default 0.0 (no cap); Python tiling caps at 1000.0 |
 
 ## Outputs
 

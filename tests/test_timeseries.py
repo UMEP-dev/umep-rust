@@ -1,5 +1,5 @@
 """
-Tests for calculate_timeseries() and validate_inputs().
+Tests for calculate() and validate_inputs().
 
 These cover the critical gap: the primary user workflow (timeseries) had
 zero dedicated tests, and validate_inputs() was untested.
@@ -18,7 +18,7 @@ from solweig.api import (
     SurfaceData,
     TimeseriesSummary,
     Weather,
-    calculate_timeseries,
+    calculate,
     validate_inputs,
 )
 from solweig.errors import GridShapeMismatch, MissingPrecomputedData
@@ -65,18 +65,18 @@ def _make_weather_series(
 
 
 # ===========================================================================
-# calculate_timeseries() tests
+# calculate() tests
 # ===========================================================================
 
 
 class TestCalculateTimeseries:
-    """Tests for the calculate_timeseries() function."""
+    """Tests for the calculate() function."""
 
     def test_returns_summary(self, flat_surface, location):
         """Returns a TimeseriesSummary with per-timestep results when requested."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt", "shadow"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt", "shadow"])
 
         assert isinstance(summary, TimeseriesSummary)
         assert len(summary) == 3
@@ -88,7 +88,7 @@ class TestCalculateTimeseries:
         """Each result has arrays matching the DSM shape."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=2)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt", "shadow"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt", "shadow"])
 
         for r in summary.results:
             assert r.tmrt.shape == (30, 30)
@@ -97,7 +97,7 @@ class TestCalculateTimeseries:
 
     def test_empty_series_returns_empty_summary(self, flat_surface, location):
         """Empty weather_series returns an empty TimeseriesSummary."""
-        summary = calculate_timeseries(flat_surface, [], location)
+        summary = calculate(flat_surface, [], location)
         assert isinstance(summary, TimeseriesSummary)
         assert len(summary) == 0
         assert summary.results == []
@@ -106,7 +106,7 @@ class TestCalculateTimeseries:
         """Works with a single-element weather_series."""
         weather_series = [Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=25.0, rh=50.0, global_rad=800.0)]
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
 
         assert len(summary) == 1
         assert summary.results[0].tmrt.shape == (30, 30)
@@ -115,7 +115,7 @@ class TestCalculateTimeseries:
         """Tmrt values are physically plausible across timesteps."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
 
         for r in summary.results:
             assert np.nanmin(r.tmrt) >= -50
@@ -125,7 +125,7 @@ class TestCalculateTimeseries:
         """UTCI and PET are None when not requested via timestep_outputs."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=2)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
 
         for r in summary.results:
             assert r.utci is None
@@ -135,7 +135,7 @@ class TestCalculateTimeseries:
         """UTCI is computed per-timestep when included in timestep_outputs."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=2)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt", "utci"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt", "utci"])
 
         for r in summary.results:
             assert r.tmrt is not None
@@ -152,7 +152,7 @@ class TestCalculateTimeseries:
             global_rad=0.0,
         )
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
 
         assert len(summary) == 3
         for r in summary.results:
@@ -175,7 +175,7 @@ class TestCalculateTimeseries:
             for h in range(4, 10)
         ]
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
 
         assert len(summary) == 6
         # Later timesteps (with sun up) should generally have higher Tmrt
@@ -192,7 +192,7 @@ class TestCalculateTimeseries:
 
         with caplog.at_level(logging.WARNING), contextlib.suppress(Exception):
             # Should work but warn about auto-extraction
-            calculate_timeseries(flat_surface, weather_series, location=None)
+            calculate(flat_surface, weather_series, location=None)
         # If it got past the location extraction, it should have warned
         # (If it raised before logging, that's also acceptable for synthetic data)
 
@@ -204,7 +204,7 @@ class TestCalculateTimeseries:
         # use_anisotropic_sky=False should override config's True
         # Since we don't have shadow matrices, aniso=True would fail.
         # If explicit=False wins, this should succeed.
-        summary = calculate_timeseries(
+        summary = calculate(
             flat_surface,
             weather_series,
             location,
@@ -219,7 +219,7 @@ class TestCalculateTimeseries:
         weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
         human = HumanParams(abs_k=0.7, abs_l=0.97, posture="standing")
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, human=human)
+        summary = calculate(flat_surface, weather_series, location, human=human)
 
         assert len(summary) == 1
 
@@ -231,7 +231,7 @@ class TestCalculateTimeseries:
             Weather(datetime=datetime(2024, 7, 15, 16, 0), ta=25.0, rh=50.0, global_rad=500.0),
         ]
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
 
         # The three timesteps should produce meaningfully different Tmrt
         means = [np.nanmean(r.tmrt) for r in summary.results]
@@ -243,7 +243,7 @@ class TestCalculateTimeseries:
         """When output_dir is provided, files are saved."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=2)
 
-        summary = calculate_timeseries(
+        summary = calculate(
             flat_surface,
             weather_series,
             location,
@@ -262,7 +262,7 @@ class TestCalculateTimeseries:
         """Explicit anisotropic request should fail without shadow matrices."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
         with pytest.raises(MissingPrecomputedData):
-            calculate_timeseries(
+            calculate(
                 flat_surface,
                 weather_series,
                 location,
@@ -273,7 +273,7 @@ class TestCalculateTimeseries:
         """Default mode (timestep_outputs=None) returns summary with empty results list."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=2)
 
-        summary = calculate_timeseries(
+        summary = calculate(
             flat_surface,
             weather_series,
             location,
@@ -303,9 +303,9 @@ class TestCalculateTimeseries:
                 state=None,
             )
 
-        monkeypatch.setattr("solweig.api.calculate", _fake_calculate)
+        monkeypatch.setattr("solweig.api._calculate_single", _fake_calculate)
 
-        summary = calculate_timeseries(
+        summary = calculate(
             flat_surface,
             weather_series,
             location,
@@ -326,19 +326,19 @@ class TestCalculateTimeseries:
             return TimeseriesSummary.empty()
 
         monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
-        monkeypatch.setattr("solweig.tiling.calculate_timeseries_tiled", _fake_tiled)
+        monkeypatch.setattr("solweig.tiling._calculate_timeseries_tiled", _fake_tiled)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location=location, config=config)
+        summary = calculate(flat_surface, weather_series, location=location, config=config)
         assert isinstance(summary, TimeseriesSummary)
         assert captured["tile_workers"] == 3
         assert captured["tile_queue_depth"] == 5
         assert captured["prefetch_tiles"] is False
         assert captured["timestep_outputs"] is None
 
-    def test_explicit_tiling_runtime_controls_override_config(self, flat_surface, location, monkeypatch):
-        """Explicit tile runtime args override ModelConfig values."""
+    def test_config_tiling_runtime_controls_forwarded(self, flat_surface, location, monkeypatch):
+        """ModelConfig tiling runtime settings are forwarded to tiled runner."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
-        config = ModelConfig(tile_workers=2, tile_queue_depth=1, prefetch_tiles=False)
+        config = ModelConfig(tile_workers=6, tile_queue_depth=9, prefetch_tiles=True)
 
         captured: dict[str, object] = {}
 
@@ -347,16 +347,13 @@ class TestCalculateTimeseries:
             return TimeseriesSummary.empty()
 
         monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
-        monkeypatch.setattr("solweig.tiling.calculate_timeseries_tiled", _fake_tiled)
+        monkeypatch.setattr("solweig.tiling._calculate_timeseries_tiled", _fake_tiled)
 
-        summary = calculate_timeseries(
+        summary = calculate(
             flat_surface,
             weather_series,
             location=location,
             config=config,
-            tile_workers=6,
-            tile_queue_depth=9,
-            prefetch_tiles=True,
         )
         assert isinstance(summary, TimeseriesSummary)
         assert captured["tile_workers"] == 6
@@ -373,9 +370,9 @@ class TestCalculateTimeseries:
             return TimeseriesSummary.empty()
 
         monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
-        monkeypatch.setattr("solweig.tiling.calculate_timeseries_tiled", _fake_tiled)
+        monkeypatch.setattr("solweig.tiling._calculate_timeseries_tiled", _fake_tiled)
 
-        summary = calculate_timeseries(
+        summary = calculate(
             flat_surface,
             weather_series,
             location=location,
@@ -384,30 +381,32 @@ class TestCalculateTimeseries:
         assert isinstance(summary, TimeseriesSummary)
         assert captured["timestep_outputs"] == ["tmrt", "shadow"]
 
-    def test_invalid_tile_workers_raises_from_api(self, flat_surface, location, monkeypatch):
-        """calculate_timeseries surfaces invalid tile_workers when tiled path is used."""
+    def test_invalid_tile_workers_raises_from_config(self, flat_surface, location, monkeypatch):
+        """Invalid tile_workers in ModelConfig raises ValueError."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
         monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
+        config = ModelConfig(tile_workers=0)
 
         with pytest.raises(ValueError, match="tile_workers must be >= 1"):
-            calculate_timeseries(
+            calculate(
                 flat_surface,
                 weather_series,
                 location=location,
-                tile_workers=0,
+                config=config,
             )
 
-    def test_invalid_tile_queue_depth_raises_from_api(self, flat_surface, location, monkeypatch):
-        """calculate_timeseries surfaces invalid tile_queue_depth when tiled path is used."""
+    def test_invalid_tile_queue_depth_raises_from_config(self, flat_surface, location, monkeypatch):
+        """Invalid tile_queue_depth in ModelConfig raises ValueError."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
         monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
+        config = ModelConfig(tile_queue_depth=-1)
 
         with pytest.raises(ValueError, match="tile_queue_depth must be >= 0"):
-            calculate_timeseries(
+            calculate(
                 flat_surface,
                 weather_series,
                 location=location,
-                tile_queue_depth=-1,
+                config=config,
             )
 
 
@@ -436,13 +435,13 @@ class TestModelConfigTilingRuntimeSerialization:
 
 
 class TestTimeseriesSummary:
-    """Tests for summary grids produced by calculate_timeseries()."""
+    """Tests for summary grids produced by calculate()."""
 
     def test_summary_grids_shapes(self, flat_surface, location):
         """All summary grids match DSM shape."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         assert summary.tmrt_mean.shape == (30, 30)
         assert summary.tmrt_max.shape == (30, 30)
@@ -459,7 +458,7 @@ class TestTimeseriesSummary:
         """Summary tmrt_mean matches manual mean of per-timestep results."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
 
         # Manual mean from per-timestep arrays
         stacked = np.stack([r.tmrt for r in summary.results], axis=0)
@@ -471,7 +470,7 @@ class TestTimeseriesSummary:
         """UTCI summary grids are computed and finite."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         # UTCI mean should have some finite values
         assert np.any(np.isfinite(summary.utci_mean))
@@ -482,7 +481,7 @@ class TestTimeseriesSummary:
         """Default thresholds produce expected dict keys."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         assert summary.heat_thresholds_day == [32.0, 38.0]
         assert summary.heat_thresholds_night == [26.0]
@@ -495,7 +494,7 @@ class TestTimeseriesSummary:
         """Custom thresholds produce matching dict keys."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=2)
 
-        summary = calculate_timeseries(
+        summary = calculate(
             flat_surface,
             weather_series,
             location,
@@ -509,7 +508,7 @@ class TestTimeseriesSummary:
         """Sun + shade hours per pixel should sum to total hours."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         assert summary.shadow_available
         total = summary.sun_hours + summary.shade_hours
@@ -525,7 +524,7 @@ class TestTimeseriesSummary:
             for h in range(2, 14)  # 2am to 1pm
         ]
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         assert summary.n_daytime + summary.n_nighttime == summary.n_timesteps
         assert summary.n_daytime > 0
@@ -535,7 +534,7 @@ class TestTimeseriesSummary:
         """Summary grids can be saved to GeoTIFF."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=2)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
         summary.to_geotiff(str(tmp_path), surface=flat_surface)
 
         summary_dir = tmp_path / "summary"
@@ -552,7 +551,7 @@ class TestTimeseriesSummary:
         """Threshold GeoTIFFs should have _day or _night suffix."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=2)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
         summary.to_geotiff(str(tmp_path), surface=flat_surface)
 
         summary_dir = tmp_path / "summary"
@@ -566,7 +565,7 @@ class TestTimeseriesSummary:
         """len(summary) returns n_timesteps."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=5)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         assert len(summary) == 5
 
@@ -574,7 +573,7 @@ class TestTimeseriesSummary:
         """summary.timeseries contains per-timestep scalar arrays."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=4)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         ts = summary.timeseries
         assert ts is not None
@@ -602,7 +601,7 @@ class TestTimeseriesSummary:
             rh=65.0,
         )
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         ts = summary.timeseries
         assert ts is not None
@@ -614,7 +613,7 @@ class TestTimeseriesSummary:
         base = datetime(2024, 7, 15, 10, 0)
         weather_series = _make_weather_series(base, n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         ts = summary.timeseries
         assert ts is not None
@@ -625,7 +624,7 @@ class TestTimeseriesSummary:
         """Spatial mean Tmrt should be finite for daytime steps."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         ts = summary.timeseries
         assert ts is not None
@@ -636,7 +635,7 @@ class TestTimeseriesSummary:
 
     def test_timeseries_none_for_empty(self, flat_surface, location):
         """Empty series should have timeseries=None."""
-        summary = calculate_timeseries(flat_surface, [], location)
+        summary = calculate(flat_surface, [], location)
 
         assert summary.timeseries is None
 
@@ -644,7 +643,7 @@ class TestTimeseriesSummary:
         """report() returns a non-empty string."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         report = summary.report()
         assert isinstance(report, str)
@@ -661,7 +660,7 @@ class TestTimeseriesSummary:
         """report() should include the simulation period."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         report = summary.report()
         assert "2024-07-15" in report
@@ -670,7 +669,7 @@ class TestTimeseriesSummary:
         """_repr_html_ returns HTML for Jupyter rendering."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         html = summary._repr_html_()
         assert html.startswith("<pre>")
@@ -679,7 +678,7 @@ class TestTimeseriesSummary:
     def test_plot_raises_without_matplotlib(self, flat_surface, location, monkeypatch):
         """plot() raises ImportError when matplotlib is not available."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         import builtins
 
@@ -705,7 +704,7 @@ class TestTimeseriesSummary:
         """plot(save_path=...) saves a figure to disk."""
         pytest.importorskip("matplotlib")
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=6)
-        summary = calculate_timeseries(flat_surface, weather_series, location)
+        summary = calculate(flat_surface, weather_series, location)
 
         out = tmp_path / "plot.png"
         summary.plot(save_path=out)
@@ -801,13 +800,13 @@ class TestValidateInputs:
 
 
 class TestTimeseriesMemory:
-    """Tests for memory optimizations in calculate_timeseries()."""
+    """Tests for memory optimizations in calculate()."""
 
     def test_state_cleared_from_results(self, flat_surface, location):
         """Returned results should have state=None to avoid ~23 MB waste per timestep."""
         weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
 
         assert len(summary) == 3
         for r in summary.results:
@@ -821,7 +820,7 @@ class TestTimeseriesMemory:
             for h in range(4, 10)
         ]
 
-        summary = calculate_timeseries(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
+        summary = calculate(flat_surface, weather_series, location, timestep_outputs=["tmrt"])
 
         # Later timesteps should have higher Tmrt (thermal state propagated correctly)
         early_tmrt = np.nanmean(summary.results[0].tmrt)

@@ -14,7 +14,7 @@ import numpy as np
 import pytest
 from conftest import make_mock_svf
 from solweig import Location, SurfaceData, Weather
-from solweig.tiling import calculate_tiled, calculate_timeseries_tiled
+from solweig.tiling import _calculate_tiled, _calculate_timeseries_tiled
 
 pytestmark = pytest.mark.slow
 
@@ -49,7 +49,7 @@ class TestTilingBenchmark:
     def test_tile_workers_scaling_sanity(self, benchmark_surface, benchmark_location, benchmark_weather_series):
         """Two workers should not be significantly slower than one worker."""
         t0 = time.perf_counter()
-        summary_1w = calculate_timeseries_tiled(
+        summary_1w = _calculate_timeseries_tiled(
             benchmark_surface,
             benchmark_weather_series,
             benchmark_location,
@@ -58,7 +58,7 @@ class TestTilingBenchmark:
             prefetch_tiles=False,
         )
         t1 = time.perf_counter()
-        summary_2w = calculate_timeseries_tiled(
+        summary_2w = _calculate_timeseries_tiled(
             benchmark_surface,
             benchmark_weather_series,
             benchmark_location,
@@ -79,7 +79,7 @@ class TestTilingBenchmark:
 
     def test_bounded_inflight_runtime_controls(self, benchmark_surface, benchmark_location, benchmark_weather_series):
         """Bounded in-flight scheduling executes correctly with small queue depth."""
-        summary = calculate_timeseries_tiled(
+        summary = _calculate_timeseries_tiled(
             benchmark_surface,
             benchmark_weather_series,
             benchmark_location,
@@ -117,7 +117,7 @@ class TestTilingBenchmark:
             ws=2.0,
         )
 
-        result = calculate_tiled(
+        result = _calculate_tiled(
             surface=surface,
             location=benchmark_location,
             weather=weather,

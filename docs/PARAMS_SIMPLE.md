@@ -88,14 +88,14 @@ import solweig
 
 surface = solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="cache/")
 weather = solweig.Weather.from_epw("weather.epw", start="2023-07-01")
-results = solweig.calculate_timeseries(surface, weather, output_dir="output/")
+results = solweig.calculate(surface, weather, output_dir="output/")
 
 # All parameters use bundled defaults - nothing to configure!
 ```
 
 ### Custom human parameters (common)
 ```python
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface, weather,
     human=solweig.HumanParams(weight=70, height=1.65, posture="sitting"),
     output_dir="output/",
@@ -104,7 +104,7 @@ results = solweig.calculate_timeseries(
 
 ### Better accuracy (anisotropic sky)
 ```python
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface, weather,
     use_anisotropic_sky=True,  # <-- Slower, more accurate
     output_dir="output/",
@@ -113,7 +113,7 @@ results = solweig.calculate_timeseries(
 
 ### Evergreen trees
 ```python
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface, weather,
     conifer=True,  # <-- Always leaf-on
     output_dir="output/",
@@ -129,7 +129,7 @@ results = solweig.calculate_timeseries(
 # }
 
 physics = solweig.load_physics("custom_trees.json")
-results = solweig.calculate_timeseries(surface, weather, physics=physics, output_dir="output/")
+results = solweig.calculate(surface, weather, physics=physics, output_dir="output/")
 ```
 
 ### Landcover material variation (advanced)
@@ -143,7 +143,7 @@ surface = solweig.SurfaceData.prepare(
     land_cover="landcover.tif",  # Grid with surface type IDs (0-7, 99-102)
     working_dir="cache/",
 )
-results = solweig.calculate_timeseries(surface, weather, materials=materials, output_dir="output/")
+results = solweig.calculate(surface, weather, materials=materials, output_dir="output/")
 ```
 
 ---
@@ -235,7 +235,7 @@ Three levels of control:
 
 ### Level 1: Direct parameters (most users)
 ```python
-calculate_timeseries(
+calculate(
     ...,
     use_anisotropic_sky=True,
     conifer=True,
@@ -247,7 +247,7 @@ calculate_timeseries(
 ```python
 physics = solweig.load_physics("my_physics.json")
 materials = solweig.load_materials("my_materials.json")
-calculate_timeseries(..., physics=physics, materials=materials)
+calculate(..., physics=physics, materials=materials)
 ```
 
 ### Level 3: Manual preprocessing (experts)
@@ -266,7 +266,7 @@ The old unified `params.json` file (220 lines with human + physics + materials) 
 ```python
 # Legacy unified params (still works for backwards compatibility)
 params = solweig.load_params("parametersforsolweig.json")
-results = solweig.calculate_timeseries(surface, weather, params=params, output_dir="output/")
+results = solweig.calculate(surface, weather, params=params, output_dir="output/")
 ```
 
 But the new three-parameter model is clearer and more flexible.

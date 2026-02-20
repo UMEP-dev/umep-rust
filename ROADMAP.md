@@ -14,28 +14,28 @@ This document outlines the development priorities for SOLWEIG.
 
 ## Next Tasks (Prioritized)
 
-| #   | Task                                      | Section | Impact                             | Status      |
-| --- | ----------------------------------------- | ------- | ---------------------------------- | ----------- |
-| 1   | ~~Result methods (compute_utci/pet)~~     | E.1     | HIGH - API discoverability         | ✅ Complete |
-| 2   | ~~Location UTC offset warning~~           | E.2     | HIGH - prevents silent bugs        | ✅ Complete |
-| 3   | ~~Structured errors + validate_inputs()~~ | E.4     | MEDIUM - better error messages     | ✅ Complete |
-| 4   | ~~Config precedence (explicit wins)~~     | E.3     | MEDIUM - API consistency           | ✅ Complete |
-| 5   | ~~API cleanup (factories, docs)~~         | E.5     | LOW - polish                       | ✅ Complete |
-| 6   | ~~Cache validation (hashes)~~             | B.3     | LOW - safety feature               | ✅ Complete |
-| 7   | ~~Tests for `calculate_timeseries()`~~    | F.1     | HIGH - primary workflow untested   | ✅ Complete |
-| 8   | ~~Fix GPU function docs~~                 | D       | HIGH - breaks new user experience  | ✅ Complete |
-| 9   | ~~Fix EPW parser tests~~                  | F       | HIGH - 8 tests failing silently    | ✅ Complete |
-| 10  | ~~Rename `algorithms/` → `physics/`~~     | B.4     | MEDIUM - misleading "Legacy" label | ✅ Complete |
-| 11  | ~~Slim down `__all__` exports~~           | E.5     | MEDIUM - internal bundles exposed  | ✅ Complete |
-| 12  | ~~Rename `config.py` → `loaders.py`~~     | B.4     | LOW - two-config ambiguity         | ✅ Complete |
-| 13  | ~~Move `cylindric_wedge` to Rust~~        | G.2     | HIGH - per-timestep hotspot        | ✅ Complete |
-| 14  | ~~GPU buffer reuse / persistence~~        | G.3     | HIGH - eliminates per-call alloc   | ✅ Complete |
-| 15  | ~~Move aniso patch loop to Rust~~         | G.2     | MEDIUM - anisotropic mode speedup  | ✅ Complete |
-| 16  | ~~QGIS plugin testing (Phase 11)~~        | D       | HIGH - blocks plugin adoption      | ✅ Complete |
-| 17  | ~~Orchestration layer unit tests~~        | F.1     | MEDIUM - regression safety         | ✅ Complete |
-| 18  | ~~API reference with mkdocstrings~~       | D       | MEDIUM - user adoption             | ✅ Complete |
-| 19  | Field-data validation                     | H       | HIGH - scientific credibility      | In Progress |
-| 20  | POI Mode                                  | C       | HIGH - 10-100x speedup             | Deferred    |
+| #   | Task                                                     | Section | Impact                             | Status      |
+| --- | -------------------------------------------------------- | ------- | ---------------------------------- | ----------- |
+| 1   | ~~Result methods (compute_utci/pet)~~                    | E.1     | HIGH - API discoverability         | ✅ Complete |
+| 2   | ~~Location UTC offset warning~~                          | E.2     | HIGH - prevents silent bugs        | ✅ Complete |
+| 3   | ~~Structured errors + validate_inputs()~~                | E.4     | MEDIUM - better error messages     | ✅ Complete |
+| 4   | ~~Config precedence (explicit wins)~~                    | E.3     | MEDIUM - API consistency           | ✅ Complete |
+| 5   | ~~API cleanup (factories, docs)~~                        | E.5     | LOW - polish                       | ✅ Complete |
+| 6   | ~~Cache validation (hashes)~~                            | B.3     | LOW - safety feature               | ✅ Complete |
+| 7   | ~~Tests for timeseries (now unified `calculate()`)~~     | F.1     | HIGH - primary workflow untested   | ✅ Complete |
+| 8   | ~~Fix GPU function docs~~                                | D       | HIGH - breaks new user experience  | ✅ Complete |
+| 9   | ~~Fix EPW parser tests~~                                 | F       | HIGH - 8 tests failing silently    | ✅ Complete |
+| 10  | ~~Rename `algorithms/` → `physics/`~~                    | B.4     | MEDIUM - misleading "Legacy" label | ✅ Complete |
+| 11  | ~~Slim down `__all__` exports~~                          | E.5     | MEDIUM - internal bundles exposed  | ✅ Complete |
+| 12  | ~~Rename `config.py` → `loaders.py`~~                    | B.4     | LOW - two-config ambiguity         | ✅ Complete |
+| 13  | ~~Move `cylindric_wedge` to Rust~~                       | G.2     | HIGH - per-timestep hotspot        | ✅ Complete |
+| 14  | ~~GPU buffer reuse / persistence~~                       | G.3     | HIGH - eliminates per-call alloc   | ✅ Complete |
+| 15  | ~~Move aniso patch loop to Rust~~                        | G.2     | MEDIUM - anisotropic mode speedup  | ✅ Complete |
+| 16  | ~~QGIS plugin testing (Phase 11)~~                       | D       | HIGH - blocks plugin adoption      | ✅ Complete |
+| 17  | ~~Orchestration layer unit tests~~                       | F.1     | MEDIUM - regression safety         | ✅ Complete |
+| 18  | ~~API reference with mkdocstrings~~                      | D       | MEDIUM - user adoption             | ✅ Complete |
+| 19  | Field-data validation                                    | H       | HIGH - scientific credibility      | In Progress |
+| 20  | POI Mode                                                 | C       | HIGH - 10-100x speedup             | Deferred    |
 
 **Current status:** Phases A, B, D, E, F.1, G.2, G.3.1–G.3.2, H.1, H.2 complete. 612+ tests total. Perez sky luminance fully ported to Rust (`crate::perez::perez_v3()`). GPU acceleration covers shadows, SVF (pipelined dispatch via `svf_accumulation.wgsl`), and anisotropic sky (`anisotropic_sky.wgsl`). Fused Rust pipeline (`pipeline.compute_timestep`) handles all per-timestep computation in a single FFI call. Next: POI mode.
 
@@ -62,7 +62,7 @@ This document outlines the development priorities for SOLWEIG.
 
 - ✅ **Full JSON parameter integration** - `parametersforsolweig.json` as single source of truth
   - Created `pysrc/solweig/data/default_materials.json` (bundled UMEP JSON with wall values filled in)
-  - Auto-load materials in `calculate()` / `calculate_timeseries()` when `materials=None`
+  - Auto-load materials in `calculate()` when `materials=None`
   - Wall params flow from JSON → Python → Rust: tgk_wall, tstart_wall, tmaxlst_wall
   - Rust `ground.rs`: 3 `Option<f32>` wall params with cobblestone defaults
   - Fixed phase clamping bug (unclamped to allow afternoon cooling per UMEP)
@@ -631,13 +631,13 @@ Python orchestration → Rust computation → Python result handling
 
 ### F.1 Critical Test Gaps
 
-| Gap                          | Risk   | What's missing                                                              |
-| ---------------------------- | ------ | --------------------------------------------------------------------------- |
-| ~~`calculate_timeseries()`~~ | HIGH   | ✅ 13 tests added in `tests/test_timeseries.py`                             |
-| ~~`validate_inputs()`~~      | MEDIUM | ✅ 8 tests added in `tests/test_timeseries.py`                              |
-| `compute_utci_grid/pet_grid` | MEDIUM | Grid-level postprocessing exported in `__all__` but untested                |
-| Orchestration unit tests     | MEDIUM | `computation.py` and `timeseries.py` only tested indirectly via integration |
-| Multi-timestep thermal state | MEDIUM | No test verifies state persistence/accumulation across timesteps            |
+| Gap                                                     | Risk   | What's missing                                                              |
+| ------------------------------------------------------- | ------ | --------------------------------------------------------------------------- |
+| ~~Timeseries mode (now unified `calculate()`)~~         | HIGH   | ✅ 13 tests added in `tests/test_timeseries.py`                             |
+| ~~`validate_inputs()`~~                                 | MEDIUM | ✅ 8 tests added in `tests/test_timeseries.py`                              |
+| `compute_utci_grid/pet_grid`                            | MEDIUM | Grid-level postprocessing exported in `__all__` but untested                |
+| Orchestration unit tests                                | MEDIUM | `computation.py` and `timeseries.py` only tested indirectly via integration |
+| Multi-timestep thermal state                            | MEDIUM | No test verifies state persistence/accumulation across timesteps            |
 
 **Current coverage by layer:**
 
@@ -687,18 +687,18 @@ Fix silent UTC offset defaulting when location is auto-extracted from CRS.
 | Task                                                                      | File                                | Status      |
 | ------------------------------------------------------------------------- | ----------------------------------- | ----------- |
 | Change `Location.from_surface()` to require explicit `utc_offset` or warn | models/weather.py                   | ✅ Complete |
-| Add warning in `calculate_timeseries()` when location=None                | timeseries.py                       | ✅ Complete |
+| Add warning in `calculate()` when location=None                           | timeseries.py                       | ✅ Complete |
 | Update quick-start guide with explicit location examples                  | docs/getting-started/quick-start.md | ✅ Complete |
 
 **Behavior after implementation:**
 
 ```python
 # This will emit a warning about UTC offset defaulting to 0
-results = calculate_timeseries(surface, weather_list)  # location=None
+results = calculate(surface, weather_list)  # location=None
 
 # Recommended: explicit location
 location = solweig.Location(latitude=37.98, longitude=23.73, utc_offset=2)
-results = calculate_timeseries(surface, weather_list, location=location)
+results = calculate(surface, weather_list, location=location)
 ```
 
 ### E.3 Config Harmonization - Explicit Wins (P1)
@@ -708,7 +708,7 @@ Change precedence so explicit parameters override `config` values (Python's "exp
 | Task                                                                         | File                  | Status      |
 | ---------------------------------------------------------------------------- | --------------------- | ----------- |
 | Change `calculate()` to let explicit params override config                  | api.py                | ✅ Complete |
-| Change `calculate_timeseries()` to let explicit params override config       | timeseries.py         | ✅ Complete |
+| Change `calculate()` to let explicit params override config (timeseries)     | timeseries.py         | ✅ Complete |
 | Change `use_anisotropic_sky` default to `None` (means "use config or False") | api.py                | ✅ Complete |
 | Add debug logging when explicit params override config                       | api.py                | ✅ Complete |
 | Document new precedence in docstrings                                        | api.py, timeseries.py | ✅ Complete |

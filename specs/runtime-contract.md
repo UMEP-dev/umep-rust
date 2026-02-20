@@ -1,14 +1,13 @@
 # Runtime Contract
 
-This document defines the normative runtime behavior for the Python API and
-its tiled/non-tiled execution paths. If implementation and documentation
-conflict, this contract is the source of truth.
+This document defines the normative runtime behavior for the unified
+`calculate()` Python API. If implementation and documentation conflict, this
+contract is the source of truth.
 
 ## Preconditions
 
-1. **SVF availability is required for all `calculate*` calls**
-   - `calculate()`, `calculate_timeseries()`, `calculate_tiled()`, and
-     `calculate_timeseries_tiled()` require SVF data to already be present on
+1. **SVF availability is required for all `calculate()` calls**
+   - `calculate()` requires SVF data to already be present on
      `surface.svf` or `precomputed.svf`.
    - SVF may be prepared by:
      - `SurfaceData.prepare(...)` (computes/caches SVF when missing), or
@@ -37,13 +36,18 @@ conflict, this contract is the source of truth.
 
 ## Default Behavior
 
-1. Default anisotropic behavior is consistent across public entry points:
-   - `calculate()` and `calculate_tiled()` use the same anisotropic default.
+1. Default anisotropic behavior is consistent across all `calculate()` calls:
+   - The unified `calculate()` function uses the same anisotropic default regardless
+     of whether tiling or timeseries mode is active.
+   - `ModelConfig.load()` must use `True` as the default for `use_anisotropic_sky`
+     when deserializing JSON that omits the key, matching the dataclass field default.
 2. Thermal state chaining for timeseries remains automatic and is unaffected by
    output streaming mode.
+3. `max_shadow_distance_m` defaults to `MAX_BUFFER_M = 1000.0` meters across all
+   entry points (`calculate()`, `calculate_buffer_distance()`).
 
 ## Documentation Requirements
 
-1. User docs and examples must state SVF is explicit at `calculate*` runtime.
+1. User docs and examples must state SVF is explicit at `calculate()` runtime.
 2. Docs must not claim anisotropic shadow matrices are auto-generated during
    calculation; preparation must be explicit via preprocessing helpers.

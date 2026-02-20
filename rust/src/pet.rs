@@ -270,11 +270,13 @@ fn pet_single(
     hc = 2.67 + 6.5 * 0.1_f32.powf(0.67);
     hc *= (P / PO).powf(0.55);
 
+    let mut count3 = 1_i32;
     while count1 <= 3 {
         let mut enbal = 0.0_f32;
 
-        while enbal * enbal2 >= 0.0 {
+        while enbal * enbal2 >= 0.0 && count3 < 200 {
             enbal2 = enbal;
+            count3 += 1;
 
             // Radiation balance
             let rbare =
@@ -315,6 +317,7 @@ fn pet_single(
             }
         }
         count1 += 1;
+        count3 = 1;
         enbal2 = 0.0;
     }
 

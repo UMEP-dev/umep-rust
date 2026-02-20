@@ -1,6 +1,6 @@
 [project]
 name = "solweig"
-version = "0.1.0b48"
+version = "0.1.0b49"
 description = "High-performance SOLWEIG urban microclimate model (Rust + Python)"
 readme = "README.md"
 requires-python = ">=3.11, <3.14"
@@ -94,6 +94,8 @@ dev = [
     "mkdocs>=1.6.0",
     "mkdocs-material>=9.5.0",
     "mkdocstrings[python]>=0.27.0",
+    "mkdocs-jupyter>=0.25.0",
+    "matplotlib>=3.7.0",
     "ipykernel>=6.31.0",
 ]
 # QGIS 4 compatibility testing - uses GDAL backend, no rasterio/geopandas
@@ -128,6 +130,7 @@ test_gpu_gates = { shell = "pytest tests/spec/test_svf.py tests/spec/test_svf_co
 test_gpu_perf_gate = { shell = "pytest tests/benchmarks/test_tiling_benchmark.py -q" }
 docs = { shell = "mkdocs serve" }
 docs_build = { shell = "mkdocs build --strict" }
+notebooks = { shell = "jupyter nbconvert --to notebook --execute docs/tutorials/*.ipynb --inplace" }
 
 [tool.ruff]
 line-length = 120

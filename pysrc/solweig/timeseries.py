@@ -1,10 +1,11 @@
 """Time-series SOLWEIG calculation with thermal state management.
 
-Provides :func:`calculate_timeseries`, a convenience wrapper around
-:func:`~solweig.api.calculate` that iterates over a list of
-:class:`~solweig.Weather` objects, carrying thermal state (ground and
-wall temperatures) forward between timesteps.  Large rasters are
-transparently routed to the tiled processing path.
+Provides :func:`_calculate_timeseries`, the internal implementation that
+iterates over a list of :class:`~solweig.Weather` objects, carrying
+thermal state (ground and wall temperatures) forward between timesteps.
+Large rasters are transparently routed to the tiled processing path.
+
+Users should call :func:`solweig._calculate_single` (the public entry point).
 """
 
 from __future__ import annotations
@@ -107,7 +108,7 @@ if TYPE_CHECKING:
     )
 
 
-def calculate_timeseries(
+def _calculate_timeseries(
     surface: SurfaceData,
     weather_series: list[Weather],
     location: Location | None = None,
@@ -204,14 +205,14 @@ def calculate_timeseries(
 
     Example:
         # Summary only (default)
-        summary = calculate_timeseries(
+        summary = _calculate_timeseries(
             surface=surface,
             weather_series=weather_list,
         )
         print(summary.tmrt_mean, summary.utci_hours_above[32])
 
         # With per-timestep arrays retained
-        summary = calculate_timeseries(
+        summary = _calculate_timeseries(
             surface=surface,
             weather_series=weather_list,
             timestep_outputs=["tmrt", "shadow"],
@@ -323,13 +324,13 @@ def calculate_timeseries(
     from .tiling import _should_use_tiling
 
     if _should_use_tiling(surface.shape[0], surface.shape[1]):
-        from .tiling import calculate_timeseries_tiled
+        from .tiling import _calculate_timeseries_tiled
 
         logger.info(
             f"Raster size {surface.dsm.shape[1]}×{surface.dsm.shape[0]} exceeds tiling threshold — "
             "switching to tiled processing."
         )
-        return calculate_timeseries_tiled(
+        return _calculate_timeseries_tiled(
             surface=surface,
             weather_series=weather_series,
             location=location,
@@ -394,8 +395,7 @@ def calculate_timeseries(
         # Summary-only mode: only need tmrt + shadow for accumulation.
         requested_outputs = {"tmrt", "shadow"}
 
-    # Import calculate here to avoid circular import
-    from .api import calculate
+    from .api import _calculate_single
 
     # Pre-compute derived weather values in parallel (sun position, radiation split)
     # This is ~4x faster than computing sequentially in the main loop
@@ -446,7 +446,7 @@ def calculate_timeseries(
     try:
         for i, weather in enumerate(weather_series):
             # Process timestep
-            result = calculate(
+            result = _calculate_single(
                 surface=surface,
                 location=location,
                 weather=weather,

@@ -495,184 +495,10 @@ GeoTIFF files organised into subfolders of the output directory:
         # Step 6: Run calculation
         os.makedirs(output_dir, exist_ok=True)
 
-        # results is used for single/tiled paths; timeseries uses n_results + tmrt_stats
-        results = None
-        n_results = 0
-        tmrt_stats = {}
-
-        if is_single:
-            results = self._run_single(
-                solweig,
-                surface,
-                location,
-                weather_series[0],
-                human,
-                use_anisotropic_sky,
-                conifer,
-                physics,
-                precomputed,
-                output_dir,
-                selected_outputs,
-                max_shadow_distance_m,
-                materials,
-                feedback,
-            )
-        else:
-            n_results, tmrt_stats = self._run_timeseries(
-                solweig,
-                surface,
-                location,
-                weather_series,
-                human,
-                use_anisotropic_sky,
-                conifer,
-                physics,
-                precomputed,
-                output_dir,
-                selected_outputs,
-                max_shadow_distance_m,
-                materials,
-                heat_thresholds_day,
-                heat_thresholds_night,
-                feedback,
-            )
-
-        if feedback.isCanceled():
-            return {}
-
-        n_timesteps = n_results if results is None else len(results)
-        calc_elapsed = time.time() - start_time
-        feedback.pushInfo(f"Calculation complete: {n_timesteps} timestep(s) in {calc_elapsed:.1f}s")
-
-        # Step 7: Add first Tmrt to canvas (single timestep only)
-        if is_single:
-            tmrt_files = sorted(Path(output_dir, "tmrt").glob("tmrt_*.tif"))
-            if tmrt_files:
-                timestamp_str = weather_series[0].datetime.strftime("%Y-%m-%d %H:%M")
-                self.add_raster_to_canvas(
-                    path=str(tmrt_files[0]),
-                    layer_name=f"Tmrt {timestamp_str}",
-                    style="tmrt",
-                    context=context,
-                )
-
-        # Report summary
-        total_elapsed = time.time() - start_time
-        utci_count = n_results if "utci" in selected_outputs else 0
-        pet_count = n_results if "pet" in selected_outputs else 0
-        if results is None:
-            # Timeseries path: use incremental stats
-            self._report_summary(n_results, total_elapsed, utci_count, pet_count, output_dir, feedback, tmrt_stats)
-        else:
-            # Single/tiled path: compute stats from results list
-            stats = {}
-            all_valid = [r.tmrt[~np.isnan(r.tmrt)] for r in results if r.tmrt is not None]
-            if all_valid:
-                stats = {
-                    "mean": np.mean([arr.mean() for arr in all_valid]),
-                    "min": float(min(arr.min() for arr in all_valid)),
-                    "max": float(max(arr.max() for arr in all_valid)),
-                }
-            self._report_summary(len(results), total_elapsed, utci_count, pet_count, output_dir, feedback, stats)
-
-        return {
-            "OUTPUT_FOLDER": output_dir,
-            "TIMESTEP_COUNT": n_timesteps,
-            "UTCI_COUNT": utci_count,
-            "PET_COUNT": pet_count,
-        }
-
-    # -------------------------------------------------------------------------
-    # Calculation helpers
-    # -------------------------------------------------------------------------
-
-    def _run_single(
-        self,
-        solweig,
-        surface,
-        location,
-        weather,
-        human,
-        use_anisotropic_sky,
-        conifer,
-        physics,
-        precomputed,
-        output_dir,
-        selected_outputs,
-        max_shadow_distance_m,
-        materials,
-        feedback,
-    ) -> list:
-        """Run single timestep with standard processing."""
-        feedback.setProgressText("Calculating Mean Radiant Temperature...")
-        feedback.setProgress(25)
-
-        try:
-            result = solweig.calculate(
-                surface=surface,
-                location=location,
-                weather=weather,
-                human=human,
-                precomputed=precomputed,
-                use_anisotropic_sky=use_anisotropic_sky,
-                conifer=conifer,
-                physics=physics,
-                materials=materials,
-                max_shadow_distance_m=max_shadow_distance_m,
-            )
-        except Exception as e:
-            raise QgsProcessingException(f"Calculation failed: {e}") from e
-
-        feedback.setProgress(80)
-
-        # Save selected outputs to component subdirectories
-        timestamp = weather.datetime.strftime("%Y%m%d_%H%M")
-        for component in selected_outputs:
-            if hasattr(result, component):
-                array = getattr(result, component)
-                if array is not None:
-                    comp_dir = os.path.join(output_dir, component)
-                    os.makedirs(comp_dir, exist_ok=True)
-                    filepath = os.path.join(comp_dir, f"{component}_{timestamp}.tif")
-                    self.save_georeferenced_output(
-                        array=array,
-                        output_path=filepath,
-                        geotransform=surface._geotransform,
-                        crs_wkt=surface._crs_wkt,
-                        feedback=feedback,
-                    )
-
-        feedback.setProgress(90)
-        return [result]
-
-    def _run_timeseries(
-        self,
-        solweig,
-        surface,
-        location,
-        weather_series,
-        human,
-        use_anisotropic_sky,
-        conifer,
-        physics,
-        precomputed,
-        output_dir,
-        selected_outputs,
-        max_shadow_distance_m,
-        materials,
-        heat_thresholds_day,
-        heat_thresholds_night,
-        feedback,
-    ) -> tuple[int, dict]:
-        """Run multi-timestep timeseries with per-timestep progress.
-
-        Delegates to solweig.calculate_timeseries() so QGIS and direct Python
-        usage follow the exact same execution path and options.
-
-        Returns (n_results, tmrt_stats).
-        """
         n_steps = len(weather_series)
-        feedback.setProgressText(f"Running timeseries ({n_steps} timesteps)...")
+        feedback.setProgressText(
+            "Calculating Mean Radiant Temperature..." if is_single else f"Running timeseries ({n_steps} timesteps)..."
+        )
         feedback.setProgress(25)
         progress_state = {"completed": 0}
 
@@ -690,9 +516,9 @@ GeoTIFF files organised into subfolders of the output directory:
 
         summary = None
         try:
-            summary = solweig.calculate_timeseries(
+            summary = solweig.calculate(
                 surface=surface,
-                weather_series=weather_series,
+                weather=weather_series,
                 location=location,
                 human=human,
                 precomputed=precomputed,
@@ -708,62 +534,56 @@ GeoTIFF files organised into subfolders of the output directory:
                 progress_callback=_qgis_progress,
             )
         except KeyboardInterrupt:
-            feedback.pushInfo("Timeseries cancelled by user.")
+            feedback.pushInfo("Calculation cancelled by user.")
         except Exception as e:
-            raise QgsProcessingException(f"Timeseries calculation failed: {e}") from e
+            raise QgsProcessingException(f"Calculation failed: {e}") from e
 
+        if feedback.isCanceled():
+            return {}
+
+        n_timesteps = summary.n_timesteps if summary is not None else 0
+        calc_elapsed = time.time() - start_time
+        feedback.pushInfo(f"Calculation complete: {n_timesteps} timestep(s) in {calc_elapsed:.1f}s")
+
+        # Step 7: Add first Tmrt to canvas (single timestep only)
+        if is_single:
+            tmrt_files = sorted(Path(output_dir, "tmrt").glob("tmrt_*.tif"))
+            if tmrt_files:
+                timestamp_str = weather_series[0].datetime.strftime("%Y-%m-%d %H:%M")
+                self.add_raster_to_canvas(
+                    path=str(tmrt_files[0]),
+                    layer_name=f"Tmrt {timestamp_str}",
+                    style="tmrt",
+                    context=context,
+                )
+
+        # Report summary
         feedback.setProgress(80)
-        # If calculate_timeseries returned normally (summary is not None),
-        # all timesteps completed.  The progress callback may report tile-level
-        # counts when tiling is active, so use n_steps directly on success.
-        if summary is not None:
-            n_results = n_steps
-        elif feedback.isCanceled():
-            n_results = 0
-        else:
-            n_results = n_steps
+        total_elapsed = time.time() - start_time
+        utci_count = n_timesteps if "utci" in selected_outputs else 0
+        pet_count = n_timesteps if "pet" in selected_outputs else 0
+        tmrt_stats = {}
+        if summary is not None and summary.tmrt_mean is not None:
+            valid = summary.tmrt_mean[~np.isnan(summary.tmrt_mean)]
+            if valid.size > 0:
+                tmrt_stats = {
+                    "mean": float(valid.mean()),
+                    "min": float(np.nanmin(summary.tmrt_min)) if summary.tmrt_min is not None else float(valid.min()),
+                    "max": float(np.nanmax(summary.tmrt_max)) if summary.tmrt_max is not None else float(valid.max()),
+                }
+            if summary.report is not None:
+                feedback.pushInfo("")
+                for line in summary.report().splitlines():
+                    feedback.pushInfo(line)
 
-        # Log the summary report
-        if summary is not None and n_results > 0:
-            feedback.pushInfo("")
-            for line in summary.report().splitlines():
-                feedback.pushInfo(line)
+        self._report_summary(n_timesteps, total_elapsed, utci_count, pet_count, output_dir, feedback, tmrt_stats)
 
-        tmrt_stats = self._compute_tmrt_stats_from_outputs(output_dir) if output_dir and n_results > 0 else {}
-        return n_results, tmrt_stats
-
-    @staticmethod
-    def _compute_tmrt_stats_from_outputs(output_dir: str) -> dict:
-        """Compute summary stats from saved Tmrt rasters (mean of per-file means)."""
-        from solweig.io import load_raster
-
-        tmrt_dir = Path(output_dir) / "tmrt"
-        tmrt_files = sorted(tmrt_dir.glob("tmrt_*.tif"))
-        if not tmrt_files:
-            return {}
-
-        mean_sum = 0.0
-        mean_count = 0
-        tmrt_min = np.inf
-        tmrt_max = -np.inf
-
-        for tif_path in tmrt_files:
-            try:
-                arr, *_ = load_raster(str(tif_path))
-            except Exception:
-                continue
-            valid = arr[np.isfinite(arr)]
-            if valid.size == 0:
-                continue
-            mean_sum += float(np.mean(valid))
-            mean_count += 1
-            tmrt_min = min(tmrt_min, float(np.min(valid)))
-            tmrt_max = max(tmrt_max, float(np.max(valid)))
-
-        if mean_count == 0:
-            return {}
-
-        return {"mean": mean_sum / mean_count, "min": float(tmrt_min), "max": float(tmrt_max)}
+        return {
+            "OUTPUT_FOLDER": output_dir,
+            "TIMESTEP_COUNT": n_timesteps,
+            "UTCI_COUNT": utci_count,
+            "PET_COUNT": pet_count,
+        }
 
     # -------------------------------------------------------------------------
     # Utility helpers

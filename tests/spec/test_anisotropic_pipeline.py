@@ -94,12 +94,14 @@ class TestAnisotropicNoVegetation:
     def test_aniso_produces_valid_tmrt(self, location, noon_weather):
         """Anisotropic sky on flat surface with shadows produces valid Tmrt."""
         surface = _make_flat_surface_with_shadows()
-        result = calculate(
+        summary = calculate(
             surface,
+            [noon_weather],
             location,
-            noon_weather,
             use_anisotropic_sky=True,
+            timestep_outputs=["tmrt"],
         )
+        result = summary.results[0]
         tmrt = result.tmrt
         assert tmrt.shape == (10, 10)
         # Should be in physically reasonable range (summer noon, open sky)
@@ -115,12 +117,14 @@ class TestAnisotropicNoVegetation:
         diffuse radiation would be attenuated to ~3%, causing kdown << global_rad.
         """
         surface = _make_flat_surface_with_shadows()
-        result = calculate(
+        summary = calculate(
             surface,
+            [noon_weather],
             location,
-            noon_weather,
             use_anisotropic_sky=True,
+            timestep_outputs=["kdown"],
         )
+        result = summary.results[0]
         # kdown should be close to global radiation for open sky
         # (800 W/m² minus some reflection, but should be > 200)
         valid = ~np.isnan(result.kdown)
@@ -139,18 +143,22 @@ class TestAnisotropicVsIsotropic:
         surface_aniso = _make_flat_surface_with_shadows()
         surface_iso = _make_flat_surface_with_shadows()
 
-        result_aniso = calculate(
+        summary_aniso = calculate(
             surface_aniso,
+            [noon_weather],
             location,
-            noon_weather,
             use_anisotropic_sky=True,
+            timestep_outputs=["tmrt"],
         )
-        result_iso = calculate(
+        result_aniso = summary_aniso.results[0]
+        summary_iso = calculate(
             surface_iso,
+            [noon_weather],
             location,
-            noon_weather,
             use_anisotropic_sky=False,
+            timestep_outputs=["tmrt"],
         )
+        result_iso = summary_iso.results[0]
 
         for label, result in [("aniso", result_aniso), ("iso", result_iso)]:
             valid = ~np.isnan(result.tmrt)
@@ -163,18 +171,22 @@ class TestAnisotropicVsIsotropic:
         surface_aniso = _make_flat_surface_with_shadows()
         surface_iso = _make_flat_surface_with_shadows()
 
-        result_aniso = calculate(
+        summary_aniso = calculate(
             surface_aniso,
+            [noon_weather],
             location,
-            noon_weather,
             use_anisotropic_sky=True,
+            timestep_outputs=["tmrt"],
         )
-        result_iso = calculate(
+        result_aniso = summary_aniso.results[0]
+        summary_iso = calculate(
             surface_iso,
+            [noon_weather],
             location,
-            noon_weather,
             use_anisotropic_sky=False,
+            timestep_outputs=["tmrt"],
         )
+        result_iso = summary_iso.results[0]
 
         tmrt_a = result_aniso.tmrt
         tmrt_i = result_iso.tmrt
@@ -220,12 +232,14 @@ class TestAnisotropicWithPartialShadows:
             _n_patches=n_patches,
         )
 
-        result = calculate(
+        summary = calculate(
             surface,
+            [noon_weather],
             location,
-            noon_weather,
             use_anisotropic_sky=True,
+            timestep_outputs=["tmrt"],
         )
+        result = summary.results[0]
 
         tmrt = result.tmrt
         valid = ~np.isnan(tmrt)
@@ -322,12 +336,14 @@ class TestAnisotropicGoldenRegression:
     def golden_result(self, location, noon_weather):
         """Compute anisotropic result for golden comparison."""
         surface = _make_flat_surface_with_shadows(shape=(5, 5))
-        return calculate(
+        summary = calculate(
             surface,
+            [noon_weather],
             location,
-            noon_weather,
             use_anisotropic_sky=True,
+            timestep_outputs=["tmrt", "shadow", "kdown"],
         )
+        return summary.results[0]
 
     def test_tmrt_golden_mean(self, golden_result):
         """Mean Tmrt should be stable across code changes."""

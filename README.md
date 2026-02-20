@@ -114,10 +114,10 @@ weather_list = solweig.Weather.from_epw(
 )
 location = solweig.Location.from_epw("data/weather.epw")
 
-# 3. Run timeseries — outputs saved as GeoTIFFs, thermal state carried between timesteps
-summary = solweig.calculate_timeseries(
+# 3. Run — outputs saved as GeoTIFFs, thermal state carried between timesteps
+summary = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     location=location,
     output_dir="output/",
     outputs=["tmrt", "shadow"],
@@ -151,11 +151,11 @@ summary.plot()
 result = solweig.calculate(surface, location, weather)
 
 # Multi-timestep with thermal inertia (auto-tiles large rasters)
-summary = solweig.calculate_timeseries(surface, weather_series, location)
+summary = solweig.calculate(surface, location, weather=weather_list)
 
 # Include UTCI and/or PET in outputs
-summary = solweig.calculate_timeseries(
-    surface, weather_series, location,
+summary = solweig.calculate(
+    surface, location, weather=weather_list,
     outputs=["tmrt", "utci", "shadow"],       # saved to disk
     timestep_outputs=["tmrt", "utci"],         # retained in memory
 )
@@ -206,7 +206,7 @@ epw_path = solweig.download_epw(latitude=37.98, longitude=23.73, output_path="at
 
 ### Timeseries summary grids
 
-When running `calculate_timeseries()`, the returned `TimeseriesSummary` provides aggregated grids across all timesteps:
+When running `calculate()` with a list of weather timesteps, the returned `TimeseriesSummary` provides aggregated grids across all timesteps:
 
 | Grid | Description |
 |------|-------------|
@@ -245,7 +245,7 @@ result = solweig.calculate(surface, location, weather, human=human)
 
 ### Model options
 
-Key parameters accepted by `calculate()` and `calculate_timeseries()`:
+Key parameters accepted by `calculate()`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -265,9 +265,9 @@ physics = solweig.load_physics("custom_physics.json")
 # Custom surface materials (albedo, emissivity per land cover class)
 materials = solweig.load_materials("site_materials.json")
 
-summary = solweig.calculate_timeseries(
+summary = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     location=location,
     physics=physics,
     materials=materials,

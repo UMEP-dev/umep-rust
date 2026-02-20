@@ -11,16 +11,18 @@ Example::
     import solweig
     from datetime import datetime
 
-    result = solweig.calculate(
+    summary = solweig.calculate(
         surface=solweig.SurfaceData(dsm=my_dsm_array),
+        weather=[solweig.Weather(datetime=datetime(2025, 7, 15, 12, 0), ta=25.0, rh=50.0, global_rad=800.0)],
         location=solweig.Location(latitude=57.7, longitude=12.0),
-        weather=solweig.Weather(datetime=datetime(2025, 7, 15, 12, 0), ta=25.0, rh=50.0, global_rad=800.0),
     )
-    print(f"Tmrt: {result.tmrt.mean():.1f} C")
+    print(f"Tmrt: {summary.tmrt_mean.mean():.1f} C")
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -60,12 +62,9 @@ from .postprocess import (
 from .summary import Timeseries, TimeseriesSummary
 from .tiling import (
     calculate_buffer_distance,
-    calculate_tiled,
-    calculate_timeseries_tiled,
     generate_tiles,
     validate_tile_size,
 )
-from .timeseries import calculate_timeseries
 from .utils import dict_to_namespace, extract_bounds, intersect_bounds, namespace_to_dict, resample_to_grid
 
 if TYPE_CHECKING:
@@ -241,7 +240,7 @@ def validate_inputs(
     return warnings
 
 
-def calculate(
+def _calculate_single(
     surface: SurfaceData,
     location: Location,
     weather: Weather,
@@ -259,83 +258,7 @@ def calculate(
     return_state_copy: bool = True,
     _requested_outputs: set[str] | None = None,
 ) -> SolweigResult:
-    """
-    Calculate mean radiant temperature (Tmrt).
-
-    This is the main entry point for SOLWEIG calculations.
-
-    Args:
-        surface: Surface/terrain data (DSM required, CDSM/DEM optional).
-        location: Geographic location (lat, lon, UTC offset).
-        weather: Weather data (datetime, temperature, humidity, radiation).
-        config: Model configuration object providing base settings.
-            Explicit parameters (human, use_anisotropic_sky, etc.) override
-            config values when provided.
-        human: Human body parameters (absorption, posture, weight, height, etc.).
-            If None, uses config.human or HumanParams defaults.
-        precomputed: Pre-computed preprocessing data (walls, SVF, shadow matrices). Optional.
-            When provided, skips expensive preprocessing computations.
-            Use PrecomputedData.load() to load from directories.
-        use_anisotropic_sky: Use anisotropic sky model for radiation.
-            If None, uses config.use_anisotropic_sky (default True).
-            Requires precomputed.shadow_matrices to be provided.
-            Uses Perez diffuse model and patch-based longwave calculation.
-        conifer: Treat vegetation as evergreen conifers (always leaf-on). Default False.
-            When False, uses seasonal leaf on/off logic (deciduous trees).
-            When True, vegetation always has leaves (transmissivity constant).
-            Only relevant when CDSM (canopy) data is provided in surface.
-        poi_coords: Optional list of (row, col) coordinates for POI mode.
-            If provided, only computes at these points (much faster).
-        state: Thermal state from previous timestep. Optional.
-            When provided, enables accurate multi-timestep simulation with
-            thermal inertia modeling (TsWaveDelay). The returned result
-            will include updated state for the next timestep.
-        physics: Physics parameters (Tree_settings, Posture geometry) from load_physics().
-            Site-independent scientific constants. If None, uses config.physics or bundled defaults.
-        materials: Material properties (albedo, emissivity per landcover class) from load_materials().
-            Site-specific landcover parameters. Only needed if surface has land_cover grid.
-            If None, uses config.materials.
-        wall_material: Wall material type for temperature model.
-            One of "brick", "concrete", "wood", "cobblestone" (case-insensitive).
-            If None (default), uses generic wall params from materials JSON.
-        return_state_copy: If True (default), return a deep-copied thermal state.
-            Set False in internal time-series loops to avoid per-step state copies.
-
-    Returns:
-        SolweigResult with Tmrt and optionally UTCI/PET grids.
-        When state parameter is provided, result.state contains the
-        updated thermal state for the next timestep.
-
-    Example:
-        # Single timestep with all defaults
-        result = calculate(
-            surface=SurfaceData(dsm=my_dsm),
-            location=Location(latitude=57.7, longitude=12.0),
-            weather=Weather(datetime=dt, ta=25, rh=50, global_rad=800),
-        )
-
-        # Multi-timestep with state management
-        state = ThermalState.initial(dsm.shape)
-        for weather in weather_list:
-            result = calculate(surface, location, weather, state=state)
-            state = result.state  # Carry forward to next timestep
-
-        # With custom human parameters
-        result = calculate(
-            surface=surface,
-            location=location,
-            weather=weather,
-            human=HumanParams(abs_k=0.65, weight=70, height=1.65),
-        )
-
-        # With config as base, explicit param override
-        config = ModelConfig(use_anisotropic_sky=True)
-        result = calculate(
-            surface, location, weather,
-            config=config,
-            use_anisotropic_sky=False,  # Explicit param wins
-        )
-    """
+    """Single-timestep Rust FFI call. Internal building block for calculate()."""
     import logging
 
     logger = logging.getLogger(__name__)
@@ -446,16 +369,113 @@ def calculate(
     )
 
 
+def calculate(
+    surface: SurfaceData,
+    weather: list[Weather],
+    location: Location | None = None,
+    config: ModelConfig | None = None,
+    human: HumanParams | None = None,
+    precomputed: PrecomputedData | None = None,
+    use_anisotropic_sky: bool | None = None,
+    conifer: bool = False,
+    physics: SimpleNamespace | None = None,
+    materials: SimpleNamespace | None = None,
+    wall_material: str | None = None,
+    max_shadow_distance_m: float | None = None,
+    output_dir: str | Path | None = None,
+    outputs: list[str] | None = None,
+    timestep_outputs: list[str] | None = None,
+    heat_thresholds_day: list[float] | None = None,
+    heat_thresholds_night: list[float] | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> TimeseriesSummary:
+    """
+    Calculate mean radiant temperature (Tmrt).
+
+    This is the single entry point for all SOLWEIG calculations. Pass a list
+    of weather snapshots (even a single-element list) and get back a
+    :class:`TimeseriesSummary`. Large rasters are automatically tiled.
+
+    Args:
+        surface: Surface/terrain data (DSM required, CDSM/DEM optional).
+        weather: List of Weather objects (one per timestep).
+        location: Geographic location (lat, lon, UTC offset). If None,
+            automatically extracted from surface's CRS metadata.
+        config: Model configuration object providing base settings.
+            Explicit parameters override config values when provided.
+        human: Human body parameters (absorption, posture, weight, height, etc.).
+            If None, uses config.human or HumanParams defaults.
+        precomputed: Pre-computed preprocessing data (walls, SVF, shadow matrices).
+        use_anisotropic_sky: Use anisotropic sky model for radiation.
+            If None, uses config.use_anisotropic_sky (default True).
+        conifer: Treat vegetation as evergreen conifers (always leaf-on).
+        physics: Physics parameters from load_physics().
+        materials: Material properties from load_materials().
+        wall_material: Wall material type ("brick", "concrete", "wood", "cobblestone").
+        max_shadow_distance_m: Maximum shadow reach in metres (default 1000.0).
+        output_dir: Directory to save results as GeoTIFFs.
+        outputs: Which per-timestep outputs to save (e.g., ["tmrt", "shadow"]).
+        timestep_outputs: Which per-timestep arrays to retain in memory.
+        heat_thresholds_day: Daytime UTCI thresholds for exceedance grids.
+        heat_thresholds_night: Nighttime UTCI thresholds for exceedance grids.
+        progress_callback: Called as progress_callback(current, total) per timestep.
+
+    Returns:
+        TimeseriesSummary with aggregated per-pixel grids (mean/max/min Tmrt
+        and UTCI, sun/shade hours, heat-stress exceedance). For a single
+        timestep, the summary fields equal the single result.
+
+    Example::
+
+        import solweig
+
+        # Single timestep
+        summary = solweig.calculate(
+            surface=surface,
+            weather=[weather],
+            location=location,
+        )
+
+        # Multi-timestep timeseries
+        summary = solweig.calculate(
+            surface=surface,
+            weather=weather_list,
+            location=location,
+            output_dir="./results",
+            outputs=["tmrt", "shadow"],
+        )
+    """
+    from .timeseries import _calculate_timeseries
+
+    return _calculate_timeseries(
+        surface=surface,
+        weather_series=weather,
+        location=location,
+        config=config,
+        human=human,
+        precomputed=precomputed,
+        use_anisotropic_sky=use_anisotropic_sky,
+        conifer=conifer,
+        physics=physics,
+        materials=materials,
+        wall_material=wall_material,
+        max_shadow_distance_m=max_shadow_distance_m,
+        output_dir=output_dir,
+        outputs=outputs,
+        timestep_outputs=timestep_outputs,
+        heat_thresholds_day=heat_thresholds_day,
+        heat_thresholds_night=heat_thresholds_night,
+        progress_callback=progress_callback,
+    )
+
+
 # =============================================================================
 # Public API - All exports
 # =============================================================================
 
 __all__ = [
-    # Main calculation functions
+    # Main calculation function
     "calculate",
-    "calculate_timeseries",
-    "calculate_tiled",
-    "calculate_timeseries_tiled",
     "validate_inputs",
     # Dataclasses - Core inputs
     "SurfaceData",

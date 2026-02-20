@@ -54,7 +54,7 @@ WALL_THICKNESS = 1.0  # Approximate thickness of concrete block walls
 # Globe thermometer constants
 GLOBE_DIAMETER = 0.040  # 40 mm ping-pong ball
 GLOBE_EMISSIVITY = 0.95  # Longwave emissivity of painted surface
-SBC = 5.67e-8  # Stefan-Boltzmann constant
+SBC = 5.67051e-8  # Stefan-Boltzmann constant (CODATA 2018, closest f32)
 
 # Site location
 LATITUDE = 43.64
@@ -495,14 +495,15 @@ class TestTmrtValidation:
         import solweig
 
         noon = [w for w in aug04_weather if w.datetime.hour == 14][0]
-        result = solweig.calculate(
+        summary = solweig.calculate(
             surface=surface,
+            weather=[noon],
             location=location,
-            weather=noon,
             wall_material="concrete",
+            timestep_outputs=["tmrt", "shadow"],
         )
 
-        tmrt_center = result.tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
+        tmrt_center = summary.results[0].tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
         print(f"\n--- Noon Tmrt at canyon center: {tmrt_center:.1f}°C (Ta={noon.ta:.1f}°C) ---")
 
         assert not np.isnan(tmrt_center), "Tmrt at canyon center is NaN"
@@ -515,10 +516,10 @@ class TestTmrtValidation:
         """Run full-day timeseries and check diurnal Tmrt pattern."""
         import solweig
 
-        summary = solweig.calculate_timeseries(
+        summary = solweig.calculate(
             surface=surface,
+            weather=aug04_weather,
             location=location,
-            weather_series=aug04_weather,
             wall_material="concrete",
             timestep_outputs=["tmrt"],
         )
@@ -555,10 +556,10 @@ class TestTmrtValidation:
         """
         import solweig
 
-        summary = solweig.calculate_timeseries(
+        summary = solweig.calculate(
             surface=surface,
+            weather=aug04_weather,
             location=location,
-            weather_series=aug04_weather,
             wall_material="concrete",
             timestep_outputs=["tmrt"],
         )
@@ -622,18 +623,19 @@ class TestTmrtValidation:
 
         # Pick early afternoon (14:00) when sun is from the south
         afternoon = [w for w in aug04_weather if w.datetime.hour == 14][0]
-        result = solweig.calculate(
+        summary = solweig.calculate(
             surface=surface,
+            weather=[afternoon],
             location=location,
-            weather=afternoon,
             wall_material="concrete",
+            timestep_outputs=["tmrt", "shadow"],
         )
 
         # Near-south-wall pixel (row 18) vs near-north-wall pixel (row 12)
         # Avoid rows immediately adjacent to walls (may be NaN in SOLWEIG)
-        tmrt_near_south = result.tmrt[18, CANYON_CENTER_COL]
-        tmrt_near_north = result.tmrt[12, CANYON_CENTER_COL]
-        tmrt_center = result.tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
+        tmrt_near_south = summary.results[0].tmrt[18, CANYON_CENTER_COL]
+        tmrt_near_north = summary.results[0].tmrt[12, CANYON_CENTER_COL]
+        tmrt_center = summary.results[0].tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
 
         print("\n--- Canyon spatial Tmrt at 14:00 ---")
         print(f"Near north wall (row 12): {tmrt_near_north:.1f}°C")
@@ -684,10 +686,10 @@ class TestTmrtValidation:
             if len(weather_list) < 20:
                 continue
 
-            summary = solweig.calculate_timeseries(
+            summary = solweig.calculate(
                 surface=surface,
+                weather=weather_list,
                 location=location,
-                weather_series=weather_list,
                 wall_material="concrete",
                 timestep_outputs=["tmrt"],
             )
@@ -789,10 +791,10 @@ class TestSkyModelComparison:
         weather_list = self._build_weather(day)
         obs_tmrt = compute_observed_tmrt(load_presti_observations(day=day))
 
-        summary_iso = solweig.calculate_timeseries(
+        summary_iso = solweig.calculate(
             surface=surface,
+            weather=weather_list,
             location=location,
-            weather_series=weather_list,
             use_anisotropic_sky=False,
             timestep_outputs=["tmrt"],
         )

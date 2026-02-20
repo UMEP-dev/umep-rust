@@ -83,7 +83,7 @@ class TestMemoryBenchmark:
         tracemalloc.reset_peak()
 
         # Run calculation
-        result = calculate(benchmark_surface, benchmark_location, benchmark_weather)
+        summary = calculate(benchmark_surface, [benchmark_weather], benchmark_location, timestep_outputs=["tmrt"])
 
         # Get peak memory
         _, peak = tracemalloc.get_traced_memory()
@@ -94,6 +94,7 @@ class TestMemoryBenchmark:
         bytes_per_pixel = peak / n_pixels
 
         # Verify result is valid (sanity check)
+        result = summary.results[0]
         assert result.tmrt is not None
         assert np.isfinite(result.tmrt).sum() > 0.8 * n_pixels
 
@@ -108,7 +109,13 @@ class TestMemoryBenchmark:
         """Verify output arrays use float32 (not float64)."""
         benchmark_surface.preprocess()
 
-        result = calculate(benchmark_surface, benchmark_location, benchmark_weather)
+        summary = calculate(
+            benchmark_surface,
+            [benchmark_weather],
+            benchmark_location,
+            timestep_outputs=["tmrt", "shadow", "kdown", "kup", "ldown", "lup"],
+        )
+        result = summary.results[0]
 
         # All output arrays should be float32
         assert result.tmrt.dtype == np.float32, f"tmrt dtype is {result.tmrt.dtype}, expected float32"

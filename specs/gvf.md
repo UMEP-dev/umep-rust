@@ -1,160 +1,175 @@
 # Ground View Factor (GVF)
 
-Fraction of the hemisphere occupied by ground and wall surfaces (as opposed to sky). Determines how much reflected shortwave and emitted longwave radiation from surfaces reaches a point.
+Computes ground- and wall-emitted radiation integrated across all visible surfaces from a point at person height. Despite the name, the primary outputs are thermal emission (Lup in W/m²) and albedo-weighted view factors, not a simple dimensionless view factor.
 
 **Reference:** Lindberg et al. (2008) Section 2.3
 
-## Equation
+## Algorithm
 
-GVF is complementary to SVF for an unobstructed point:
+GVF is computed by integrating visible ground and wall surfaces across 18 azimuth directions (5° start, 20° step, covering 360°). For each azimuth, rays march outward from each pixel to detect buildings and walls, accumulating their thermal and reflective contributions.
 
-```text
-GVF = 1 - SVF  (simplified, for flat ground)
-```
+### Integration Distances
 
-In practice, GVF accounts for the actual ground and wall surfaces visible:
+Two distance scales are used, based on person height:
 
 ```text
-GVF = Σ (surface_area × view_factor × surface_property)
+first  = round(height × pixel_scale), min 1   (near-field, ~person height in pixels)
+second = round(height × 20 × pixel_scale)      (far-field, ~20× person height in pixels)
 ```
 
-Where surface_property can be albedo (for reflected shortwave) or emissivity (for longwave).
+### Near/Far Weighting
 
-## Wall Integration Method
-
-**Reference:** Lindberg et al. (2008) Section 2.3, Holmer et al. (2015) "SOLWEIG-POI: a new model for estimating Tmrt at points of interest"
-
-When walls are present, GVF is computed using geometric integration of visible surfaces from a person's height above ground. The method considers:
-
-### Full GVF Calculation (with walls)
-
-The implementation in `gvf.py` calls the Rust `gvf_calc` function which:
-
-1. **Person height parameters**: Uses human height to determine view geometry
-
-   - `first = round(height)` - primary height parameter
-   - `second = round(height × 20)` - finer height discretization
-
-2. **Wall visibility**: For each pixel, integrates visible wall surfaces in all directions
-
-   - Wall heights (`wall_ht`) define vertical obstruction
-   - Wall aspects (`wall_asp`) define cardinal orientation
-   - Shadow fraction adjusts wall temperature contribution
-
-3. **Directional components**: Splits GVF into cardinal directions (N, E, S, W)
-
-   - Ground contribution: Based on distance and elevation angle
-   - Wall contribution: Based on wall height, orientation, and temperature
-
-4. **Temperature-weighted emission**: Longwave GVF includes thermal emission
-
-   ```text
-   Lup = ε_surface × σ × T_surface^4 × GVF
-   ```
-
-   Where:
-
-   - Sunlit walls: T_wall = T_air + Tg_wall
-   - Shaded walls: T_wall = T_air
-   - Ground: T_ground = T_air + Tg (shadow-dependent)
-
-5. **Albedo weighting**: Shortwave GVF weighted by surface albedo
-
-   ```text
-   GVF_alb = albedo × GVF
-   ```
-
-### Simplified GVF (no walls)
-
-When wall data is unavailable, uses simplified calculation:
+The final GVF is a weighted blend of near-field and far-field results:
 
 ```text
-GVF_simple = 1 - SVF
-Lup = ε_ground × σ × (T_air + Tg × shadow)^4
-GVF_alb = albedo_ground × GVF_simple
+gvf      = (gvf1 × 0.5 + gvf2 × 0.4) / 0.9
+gvf_lup  = (gvfLup1 × 0.5 + gvfLup2 × 0.4) / 0.9 + lup_local × (1 - buildings)
+gvf_alb  = (gvfalb1 × 0.5 + gvfalb2 × 0.4) / 0.9 + alb_grid × (1 - buildings) × shadow
 ```
 
-This assumes only ground surfaces contribute (no walls).
+The near-field captures local wall effects; the far-field captures distant ground/wall contributions. The `(1 - buildings)` term adds the local ground contribution for non-building pixels.
+
+### Longwave Emission (Differential Formula)
+
+The Lup contribution per azimuth uses a differential formula — computing excess emission above ambient:
+
+```text
+lup_diff = SBC × emis × (Tg × shadow + Ta + 273.15)⁴ - SBC × emis × (Ta + 273.15)⁴
+```
+
+The final `gvf_lup` adds the ambient baseline back:
+
+```text
+gvf_lup = weighted_sum(lup_diff) + SBC × emis × (Tg_local × shadow + Ta + 273.15)⁴
+          - SBC × emis × (Ta + 273.15)⁴ + that last term for non-building pixels
+```
+
+For walls, a similar differential:
+
+```text
+lwall = SBC × ewall × (tgwall + Ta + 273.15)⁴ - SBC × ewall × (Ta + 273.15)⁴
+```
+
+Where `tgwall` is the wall temperature deviation from air temperature (K), only applied to sunlit walls.
+
+### Water Temperature Override
+
+When land cover data is active (`landcover=true`), water pixels (lc_grid == 3) have their ground temperature overridden:
+
+```text
+Tg_water = Twater - Ta    (Twater from weather file)
+```
+
+This bypasses the land cover parameter table (TgK/TmaxLST) for water surfaces.
+
+### Sunwall Mask
+
+A sunwall mask identifies building pixels adjacent to sunlit walls:
+
+```text
+sunwall = 1.0 if wallsun > tolerance AND walls > 0
+```
+
+This determines whether wall-temperature terms (heated walls) or ambient-temperature terms are used for nearby building faces.
+
+### Geometry Caching
+
+The ray-tracing geometry (building blocking distances, wall influence masks) can be precomputed once and reused across timesteps. The cached path (`sun_on_surface_cached`) skips the expensive ray-marching and only recomputes the thermal-dependent outputs (`gvf_lup`, `gvfalb`). The purely geometric output (`gvfalbnosh`) is taken directly from the cache.
 
 ## Inputs
 
 | Input | Type | Description |
-| ----- | ---- | ----------- |
-| SVF arrays | 2D arrays (0-1) | Sky view factors (overall + directional) |
-| walls | 2D array (m) | Wall height grid |
-| albedo | float or 2D array | Ground surface albedo (0-1) |
-| emissivity | float or 2D array | Ground surface emissivity (~0.95) |
+| --- | --- | --- |
+| wallsun | 2D array (f32) | Sunlit wall height from shadow calculation |
+| walls | 2D array (f32) | Wall height grid |
+| buildings | 2D array (f32) | Building mask (1.0 = building, 0.0 = ground) |
+| shadow | 2D array (f32) | Combined shadow mask (0.0-1.0) |
+| dirwalls | 2D array (f32) | Wall aspect (orientation) in degrees |
+| tg | 2D array (f32) | Ground temperature deviation from air temp (°C) |
+| emis_grid | 2D array (f32) | Ground surface emissivity per pixel |
+| alb_grid | 2D array (f32) | Ground surface albedo per pixel |
+| lc_grid | 2D array (f32) | Land cover classification grid (optional) |
+| scale | float | Pixel size in meters |
+| first | float | Person height parameter (m), typically 1.1 |
+| second | float | Far-field height parameter (m), typically 22.0 |
+| tgwall | float | Wall temperature deviation from air temp (K) |
+| ta | float | Air temperature (°C) |
+| ewall | float | Wall emissivity |
+| sbc | float | Stefan-Boltzmann constant (5.67051e-8) |
+| albedo_b | float | Building wall albedo |
+| twater | float | Water temperature from weather file (°C) |
+| landcover | bool | Whether to use land cover classification |
 
 ## Outputs
 
 | Output | Type | Description |
-| ------ | ---- | ----------- |
-| gvf_lup | 2D array | Ground view factor for longwave up |
-| gvf_alb | 2D array | Ground view factor weighted by albedo |
-| gvf_east | 2D array | GVF from eastern direction |
-| gvf_south | 2D array | GVF from southern direction |
-| gvf_west | 2D array | GVF from western direction |
-| gvf_north | 2D array | GVF from northern direction |
+| --- | --- | --- |
+| gvf_lup | 2D array (W/m²) | Longwave upwelling from ground/walls (center) |
+| gvfalb | 2D array | Albedo-weighted ground view (shadow-dependent, center) |
+| gvfalbnosh | 2D array | Albedo-weighted ground view (no shadow, geometric only, center) |
+| gvf_lup_e | 2D array (W/m²) | Longwave upwelling, east-facing contribution |
+| gvfalb_e | 2D array | Albedo-weighted view, east |
+| gvfalbnosh_e | 2D array | Albedo view (no shadow), east |
+| gvf_lup_s | 2D array (W/m²) | Longwave upwelling, south-facing contribution |
+| gvfalb_s | 2D array | Albedo-weighted view, south |
+| gvfalbnosh_s | 2D array | Albedo view (no shadow), south |
+| gvf_lup_w | 2D array (W/m²) | Longwave upwelling, west-facing contribution |
+| gvfalb_w | 2D array | Albedo-weighted view, west |
+| gvfalbnosh_w | 2D array | Albedo view (no shadow), west |
+| gvf_lup_n | 2D array (W/m²) | Longwave upwelling, north-facing contribution |
+| gvfalb_n | 2D array | Albedo-weighted view, north |
+| gvfalbnosh_n | 2D array | Albedo view (no shadow), north |
+| gvf_sum | 2D array | Geometry normalization sum (used internally) |
+| gvf_norm | 2D array | Geometry normalization factor (used internally) |
+
+Note: `gvf_lup` has units of W/m² (contains emission calculation), not dimensionless. `gvfalb` already contains albedo weighting and is used directly by the radiation budget — it is not a pure view factor.
 
 ## Properties
 
-### Range Properties
+### Output Properties
 
-1. **GVF in range [0, 1]**
-   - GVF = 0: no ground/walls visible (open sky above)
-   - GVF = 1: completely enclosed (no sky visible)
+1. **gvf_lup contains thermal emission**
+   - Not a dimensionless factor — units are W/m²
+   - Includes both ground and wall longwave contributions
+   - Higher in urban canyons (more wall emission)
 
-2. **GVF + SVF ≈ 1**
-   - For horizontal surfaces: GVF ≈ 1 - SVF
-   - Small deviations due to wall contributions
+2. **gvfalb includes albedo**
+   - Already albedo-weighted; no further multiplication by albedo needed
+   - Shadow-dependent: higher in sunlit areas (more reflected shortwave)
+
+3. **gvfalbnosh is purely geometric**
+   - Independent of shadow state and weather
+   - Can be cached across timesteps (used by geometry cache)
 
 ### Geometric Properties
 
-3. **Flat open terrain has GVF ≈ 0**
-   - No walls or elevated surfaces to reflect/emit
-   - Only ground below contributes
+1. **Flat open terrain**
+   - gvf_lup ≈ local ground emission only
+   - No wall contributions
 
-4. **Urban canyon has high GVF**
-   - Walls on both sides increase GVF
-   - More reflected radiation in canyons
+2. **Urban canyon has high wall contribution**
+   - Walls on both sides increase gvf_lup
+   - More reflected and emitted radiation in canyons
 
-5. **Higher walls increase GVF**
-   - Taller buildings → more wall surface visible
-   - More longwave emission from walls
+3. **Directional asymmetry**
+   - East-facing wall contributes to western GVF (seen from west)
+   - Asymmetric building layout → asymmetric directional outputs
 
-### Directional Properties
+## Role in Radiation Budget
 
-6. **Directional GVF depends on wall orientation**
-   - East-facing wall contributes to gvf_west (seen from west)
-   - Asymmetric building layout → asymmetric directional GVF
+GVF outputs feed directly into the radiation computation:
 
-## Role in Radiation
+**Reflected Shortwave (Kup)**: Uses `gvfalb` and `gvfalbnosh` directly (albedo already baked in):
 
-GVF determines how much radiation comes from surfaces vs sky:
-
-**Reflected Shortwave (Kup)**:
 ```text
-Kup = (I + D) × GVF_alb × ground_albedo
+kup = gvfalb × rad_i × sin(altitude) + ct × gvfalbnosh
 ```
 
-**Longwave from Ground (Lup)**:
+**Longwave Upwelling (Lup)**: Uses `gvf_lup` after thermal delay smoothing:
+
 ```text
-Lup = ε × σ × Tground^4 × GVF_lup
+Lup = TsWaveDelay(gvf_lup, ...)    [smoothed across timesteps]
 ```
-
-**Longwave from Walls**:
-```text
-Lwall = ε × σ × Twall^4 × wall_view_factor
-```
-
-## Relationship to SVF
-
-| Location | SVF | GVF | Characteristic |
-| -------- | --- | --- | -------------- |
-| Open field | ~1.0 | ~0.0 | Sky-dominated |
-| Street canyon | ~0.4 | ~0.6 | Mixed |
-| Courtyard | ~0.2 | ~0.8 | Surface-dominated |
-| Under canopy | ~0.1 | ~0.9 | Enclosed |
 
 ## References
 

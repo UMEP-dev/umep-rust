@@ -16,7 +16,7 @@ The offset is a complex polynomial function (~200 terms) of:
 - Ta = air temperature (°C)
 - ΔTmrt = Tmrt - Ta (°C)
 - va = wind speed at 10m (m/s)
-- Pa = water vapor pressure (hPa)
+- Pa = water vapor pressure (kPa). Note: vapor pressure is converted from hPa to kPa (`pa = ehPa / 10.0`) before entering the polynomial.
 
 ## Inputs
 
@@ -57,11 +57,12 @@ The offset is a complex polynomial function (~200 terms) of:
    - Represents how the environment "feels"
    - Reference: walking outdoors at 4 km/h
 
-2. **Valid input ranges**
+2. **Valid input ranges (from UTCI specification)**
    - Ta: -50°C to +50°C
    - Tmrt-Ta: -30°C to +70°C
-   - va: 0.5 to 17 m/s
+   - va: 0.5 to 17 m/s (specification minimum; implementation enforces only va > 0)
    - RH: 5% to 100%
+   - Note: These ranges are from the UTCI specification. The current implementation does NOT enforce these ranges at runtime — out-of-range inputs are computed without clamping or warnings, matching upstream UMEP behavior.
 
 ### Radiation Properties
 
@@ -119,12 +120,21 @@ The offset is a complex polynomial function (~200 terms) of:
    - Model assumes standard reference height
 
 2. **Polynomial approximation**
-   - ~200 coefficient polynomial
-   - Accurate within ±0.5°C of full model
+   - 210-coefficient polynomial (6th order in 4 variables)
+   - Accurate within ±0.5°C of full Fiala model
 
-3. **Extrapolation warning**
+3. **Saturation Vapor Pressure**
+   - Computed via 8-coefficient polynomial (from UTCI_calculations.py / utci.rs)
+   - Converted from hPa to kPa before entering the UTCI polynomial
+
+4. **Return values for invalid inputs**
+   - `utci_single()` returns -999.0 for invalid inputs (Ta or wind out of range)
+   - `utci_grid()` returns NaN for invalid pixels
+   - This inconsistency exists in the current implementation
+
+5. **Extrapolation warning**
    - Results outside valid ranges may be unreliable
-   - Clamp or flag out-of-range inputs
+   - The implementation does not clamp or flag out-of-range inputs (matching upstream UMEP)
 
 ## References
 

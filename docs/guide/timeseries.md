@@ -1,21 +1,16 @@
 # Timeseries Calculations
 
-For multi-timestep simulations (hours, days, or longer), use `calculate_timeseries()`. It properly carries thermal state between timesteps and optionally saves results to disk as they're computed.
+For multi-timestep simulations (hours, days, or longer), use `calculate()` with a list of weather objects. It properly carries thermal state between timesteps and optionally saves results to disk as they're computed.
 
-## Why not loop over `calculate()`?
+## Thermal state management
 
-Ground and wall temperatures depend on accumulated heating from previous hours (thermal inertia). `calculate_timeseries()` manages this automatically via a `ThermalState` object. Looping over `calculate()` yourself loses this state, producing less accurate results — especially for ground-level longwave radiation.
+Ground and wall temperatures depend on accumulated heating from previous hours (thermal inertia). `calculate()` manages this automatically via a `ThermalState` object when given multiple weather timesteps, producing accurate results for ground-level longwave radiation.
 
 ```python
-# Don't do this — loses thermal state between timesteps
-for weather in weather_list:
-    result = solweig.calculate(surface, location, weather)
-
-# Do this instead
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
     location=location,
-    weather_series=weather_list,
+    weather=weather_list,
 )
 ```
 
@@ -39,10 +34,10 @@ weather_list = solweig.Weather.from_epw(
 location = solweig.Location.from_epw("data/weather.epw")
 
 # Calculate all timesteps
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
     location=location,
-    weather_series=weather_list,
+    weather=weather_list,
 )
 
 print(f"Processed {len(results)} timesteps")
@@ -53,10 +48,10 @@ print(f"Processed {len(results)} timesteps")
 For long simulations, save results as GeoTIFFs as they're computed rather than keeping them all in memory:
 
 ```python
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
     location=location,
-    weather_series=weather_list,
+    weather=weather_list,
     output_dir="output/",
     outputs=["tmrt", "shadow"],  # Which outputs to save
 )
@@ -86,9 +81,9 @@ Use `timestep_outputs=["tmrt", "shadow"]` to retain specific per-timestep arrays
 `report()` returns a human-readable text summary of the run:
 
 ```python
-summary = solweig.calculate_timeseries(
+summary = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     output_dir="output/",
     outputs=["tmrt", "shadow"],
 )
@@ -131,10 +126,10 @@ Requires `matplotlib` (`pip install matplotlib`).
 Use this for long runs and limited RAM.
 
 ```python
-summary = solweig.calculate_timeseries(
+summary = solweig.calculate(
     surface=surface,
     location=location,
-    weather_series=weather_list,
+    weather=weather_list,
     output_dir="output/",
     outputs=["tmrt", "shadow"],
 )
@@ -151,10 +146,10 @@ UTCI, sun/shade hours, threshold exceedance) incrementally during the loop,
 so per-timestep arrays are freed immediately.
 
 ```python
-summary = solweig.calculate_timeseries(
+summary = solweig.calculate(
     surface=surface,
     location=location,
-    weather_series=weather_list,
+    weather=weather_list,
     # No output_dir -> summary-only, minimal memory
 )
 print(summary.report())
@@ -171,9 +166,9 @@ included in the returned `TimeseriesSummary`. To also retain per-timestep
 UTCI or PET arrays, include them in `timestep_outputs`:
 
 ```python
-summary = solweig.calculate_timeseries(
+summary = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     timestep_outputs=["tmrt", "utci"],  # per-timestep Tmrt + UTCI
     output_dir="output/",
     outputs=["tmrt", "utci"],           # save both as GeoTIFF files
@@ -195,10 +190,10 @@ For very long simulations (weeks or months), process in daily chunks:
 ```python
 for chunk_start in range(0, len(weather_list), 24):
     chunk = weather_list[chunk_start:chunk_start + 24]
-    results = solweig.calculate_timeseries(
+    results = solweig.calculate(
         surface=surface,
         location=location,
-        weather_series=chunk,
+        weather=chunk,
         output_dir=f"output/",
     )
 ```
@@ -215,7 +210,7 @@ SVF is prepared explicitly (via `SurfaceData.prepare()` or `surface.compute_svf(
 
 ## Run metadata
 
-`calculate_timeseries()` automatically saves a `run_metadata.json` file capturing all parameters used. Load it later for reproducibility:
+`calculate()` automatically saves a `run_metadata.json` file capturing all parameters used. Load it later for reproducibility:
 
 ```python
 metadata = solweig.load_run_metadata("output/run_metadata.json")

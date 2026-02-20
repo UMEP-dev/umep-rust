@@ -534,14 +534,19 @@ class TestFullPipelineValidation:
         # Pick noon
         noon = [w for w in met if w.datetime.hour == 12][0]
 
-        result = solweig.calculate(surface=surface, location=location, weather=noon)
+        summary = solweig.calculate(
+            surface=surface,
+            weather=[noon],
+            location=location,
+            timestep_outputs=["tmrt", "shadow"],
+        )
 
         # WOI pixel (row=22, col=28) - at ground level near building wall
-        woi_tmrt = result.tmrt[22, 28]
+        woi_tmrt = summary.results[0].tmrt[22, 28]
 
         print("\n--- Single Timestep (2023-07-15 12:00) ---")
         print(f"WOI Tmrt:    {woi_tmrt:.1f}°C")
-        print(f"Tmrt range:  {np.nanmin(result.tmrt):.1f} to {np.nanmax(result.tmrt):.1f}°C")
+        print(f"Tmrt range:  {np.nanmin(summary.results[0].tmrt):.1f} to {np.nanmax(summary.results[0].tmrt):.1f}°C")
         print(f"Air temp:    {noon.ta:.1f}°C")
 
         # Tmrt should be reasonable (not NaN, not extreme)
@@ -562,10 +567,10 @@ class TestFullPipelineValidation:
             end="2023-07-15",
         )
 
-        summary = solweig.calculate_timeseries(
+        summary = solweig.calculate(
             surface=surface,
+            weather=met,
             location=location,
-            weather_series=met,
             timestep_outputs=["tmrt"],
         )
         results = summary.results

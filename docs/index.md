@@ -28,18 +28,18 @@ weather_list = solweig.Weather.from_epw("weather.epw", start="2025-07-01", end="
 location = solweig.Location.from_epw("weather.epw")
 
 # Run — results saved as GeoTIFFs
-solweig.calculate_timeseries(
+solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     location=location,
     output_dir="output/",
 )
 ```
 
-That's it. `SurfaceData.prepare()` computes/caches walls and SVF; then `calculate_timeseries()` computes shadows, radiation, and Tmrt.
+That's it. `SurfaceData.prepare()` computes/caches walls and SVF; then `calculate()` computes shadows, radiation, and Tmrt.
 
 !!! note "SVF Rule"
-    `calculate()` / `calculate_timeseries()` require SVF to already be available on `surface` (or via `precomputed.svf`).
+    `calculate()` requires SVF to already be available on `surface` (or via `precomputed.svf`).
     Use `SurfaceData.prepare(...)` for automatic SVF preparation/caching, or call `surface.compute_svf()` explicitly for in-memory/manual surfaces.
 
 !!! note "Anisotropic Rule"
@@ -70,6 +70,16 @@ SOLWEIG models the complete radiation budget experienced by a person standing ou
 
     [:octicons-arrow-right-24: Installation](getting-started/installation.md)
     [:octicons-arrow-right-24: Quick Start](getting-started/quick-start.md)
+
+-   :material-school:{ .lg .middle } **Tutorials**
+
+    ---
+
+    Step-by-step notebooks with real Athens data and visual outputs
+
+    [:octicons-arrow-right-24: Athens Quick Start](tutorials/01-athens-quickstart.ipynb)
+    [:octicons-arrow-right-24: Timeseries Analysis](tutorials/02-timeseries-analysis.ipynb)
+    [:octicons-arrow-right-24: Thermal Comfort](tutorials/03-thermal-comfort.ipynb)
 
 -   :material-book-open-variant:{ .lg .middle } **User Guide**
 

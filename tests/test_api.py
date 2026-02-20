@@ -16,14 +16,15 @@ from solweig.api import (
     ModelConfig,
     SolweigResult,
     SurfaceData,
+    TimeseriesSummary,
     Weather,
     calculate,
     calculate_buffer_distance,
-    calculate_tiled,
     generate_tiles,
 )
 from solweig.errors import MissingPrecomputedData
 from solweig.models.surface import _max_shadow_height
+from solweig.tiling import _calculate_tiled
 
 
 class TestSurfaceData:
@@ -485,15 +486,16 @@ class TestConfigPrecedence:
         # Config says use anisotropic, but explicit param says don't
         # This should NOT raise MissingPrecomputedData since explicit False wins
         config = ModelConfig(use_anisotropic_sky=True)
-        result = calculate(
+        summary = calculate(
             surface,
+            [weather],
             location,
-            weather,
             config=config,
             use_anisotropic_sky=False,  # Explicit wins
         )
 
-        assert result.tmrt is not None
+        assert isinstance(summary, TimeseriesSummary)
+        assert summary.tmrt_mean is not None
 
     def test_explicit_human_overrides_config(self):
         """Explicit human params override config.human."""
@@ -512,16 +514,17 @@ class TestConfigPrecedence:
         explicit_human = HumanParams(posture="standing", abs_k=0.8)
 
         config = ModelConfig(human=config_human)
-        result = calculate(
+        summary = calculate(
             surface,
+            [weather],
             location,
-            weather,
             config=config,
             human=explicit_human,  # Should use standing, abs_k=0.8
         )
 
         # Result should exist (test doesn't crash)
-        assert result.tmrt is not None
+        assert isinstance(summary, TimeseriesSummary)
+        assert summary.tmrt_mean is not None
 
     def test_none_param_uses_config_value(self):
         """When explicit param is None, config value is used."""
@@ -540,15 +543,16 @@ class TestConfigPrecedence:
         config = ModelConfig(human=config_human)
 
         # human=None means use config's human
-        result = calculate(
+        summary = calculate(
             surface,
+            [weather],
             location,
-            weather,
             config=config,
             human=None,  # Should fall back to config.human
         )
 
-        assert result.tmrt is not None
+        assert isinstance(summary, TimeseriesSummary)
+        assert summary.tmrt_mean is not None
 
     def test_no_config_uses_defaults(self):
         """When no config provided, defaults are used."""
@@ -563,9 +567,10 @@ class TestConfigPrecedence:
         )
 
         # No config, no explicit params - should use defaults
-        result = calculate(surface, location, weather)
+        summary = calculate(surface, [weather], location)
 
-        assert result.tmrt is not None
+        assert isinstance(summary, TimeseriesSummary)
+        assert summary.tmrt_mean is not None
 
 
 @pytest.mark.slow
@@ -588,7 +593,11 @@ class TestCalculateIntegration:
             global_rad=800.0,
         )
 
-        result = calculate(surface, location, weather)
+        summary = calculate(surface, [weather], location, timestep_outputs=["tmrt", "shadow"])
+
+        assert isinstance(summary, TimeseriesSummary)
+        assert len(summary.results) == 1
+        result = summary.results[0]
 
         # Check output structure
         assert result.tmrt.shape == (30, 30)
@@ -617,7 +626,10 @@ class TestCalculateIntegration:
             global_rad=0.0,
         )
 
-        result = calculate(surface, location, weather)
+        summary = calculate(surface, [weather], location, timestep_outputs=["tmrt", "kdown", "kup"])
+
+        assert len(summary.results) == 1
+        result = summary.results[0]
 
         # At night, Tmrt is computed from full longwave balance (no shortwave).
         # Under open sky (SVF~1) the cold sky pulls Tmrt well below Ta — typically
@@ -643,7 +655,7 @@ class TestCalculateIntegration:
         )
 
         with pytest.raises(MissingPrecomputedData):
-            calculate(surface, location, weather, use_anisotropic_sky=True)
+            calculate(surface, [weather], location, use_anisotropic_sky=True)
 
     def test_shadows_exist(self):
         """Shadows are cast by buildings during daytime."""
@@ -660,7 +672,10 @@ class TestCalculateIntegration:
             global_rad=600.0,
         )
 
-        result = calculate(surface, location, weather)
+        summary = calculate(surface, [weather], location, timestep_outputs=["shadow"])
+
+        assert len(summary.results) == 1
+        result = summary.results[0]
 
         # Should have some shadow pixels (not all 0 or all 1)
         assert result.shadow is not None
@@ -679,8 +694,11 @@ class TestCalculateIntegration:
             global_rad=800.0,
         )
 
-        # Calculate Tmrt (UTCI not computed by default)
-        result = calculate(surface, location, weather)
+        # Calculate Tmrt (UTCI not auto-computed on per-timestep results)
+        summary = calculate(surface, [weather], location, timestep_outputs=["tmrt"])
+
+        assert len(summary.results) == 1
+        result = summary.results[0]
 
         assert result.tmrt is not None
         assert result.utci is None  # Not auto-computed - use compute_utci_grid()
@@ -698,12 +716,12 @@ class TestCalculateIntegration:
         )
 
         # Different postures should give slightly different results
-        result_standing = calculate(surface, location, weather, human=HumanParams(posture="standing"))
-        result_sitting = calculate(surface, location, weather, human=HumanParams(posture="sitting"))
+        summary_standing = calculate(surface, [weather], location, human=HumanParams(posture="standing"))
+        summary_sitting = calculate(surface, [weather], location, human=HumanParams(posture="sitting"))
 
         # Results should exist and be valid
-        assert result_standing.tmrt is not None
-        assert result_sitting.tmrt is not None
+        assert summary_standing.tmrt_mean is not None
+        assert summary_sitting.tmrt_mean is not None
 
 
 @pytest.mark.slow
@@ -793,8 +811,11 @@ class TestTiledProcessing:
         )
 
         # Run both methods (UTCI/PET not auto-computed in new API)
-        result_nontiled = calculate(surface, location, weather)
-        result_tiled = calculate_tiled(surface, location, weather, tile_size=256)
+        summary_nontiled = calculate(surface, [weather], location, timestep_outputs=["tmrt", "shadow"])
+        result_tiled = _calculate_tiled(surface, location, weather, tile_size=256)
+
+        assert len(summary_nontiled.results) == 1
+        result_nontiled = summary_nontiled.results[0]
 
         # Compare Tmrt
         valid = np.isfinite(result_nontiled.tmrt) & np.isfinite(result_tiled.tmrt)
@@ -828,7 +849,7 @@ class TestTiledProcessing:
             global_rad=600.0,
         )
 
-        result = calculate_tiled(surface, location, weather, tile_size=256)
+        result = _calculate_tiled(surface, location, weather, tile_size=256)
 
         # Check output structure
         assert result.tmrt.shape == (80, 80)
@@ -856,7 +877,7 @@ class TestTiledProcessing:
         )
 
         # This should work without errors (falls back to non-tiled)
-        result = calculate_tiled(surface, location, weather, tile_size=256)
+        result = _calculate_tiled(surface, location, weather, tile_size=256)
 
         assert result.tmrt.shape == (40, 40)
         assert result.shadow is not None

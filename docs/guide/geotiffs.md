@@ -84,9 +84,9 @@ location = solweig.Location.from_epw("data/weather.epw")
 The simplest approach — results are saved as they're computed:
 
 ```python
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     location=location,
     output_dir="output/",
     outputs=["tmrt", "shadow"],
@@ -152,15 +152,14 @@ solweig.io.save_raster(
 
 ## Large rasters
 
-For rasters too large to fit in memory, SOLWEIG supports tiled processing:
+For rasters too large to fit in memory, SOLWEIG automatically tiles the computation:
 
 ```python
-results = solweig.calculate_tiled(
+results = solweig.calculate(
     surface=surface,
     location=location,
     weather=weather,
-    tile_size=500,  # Process in 500×500 pixel tiles
 )
 ```
 
-See [Timeseries](timeseries.md) for combining tiled processing with multi-timestep simulations.
+Tiling is handled internally — no explicit tiling call is needed.

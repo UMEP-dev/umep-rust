@@ -48,13 +48,13 @@ Ground temperature requires previous timesteps for accurate modeling:
 
 ```python
 # CORRECT: Full timeseries preserves thermal state
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
 )
 
-# WRONG: Single timestep loses thermal history
-result = solweig.calculate(surface, location, weather_noon)
+# CAUTION: Single timestep loses thermal history
+result = solweig.calculate(surface=surface, weather=weather_noon)
 ```
 
 ## Implementation

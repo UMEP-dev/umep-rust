@@ -17,7 +17,7 @@ Run metadata is a complete record of all parameters and configuration used in a 
 
 ## Automatic Metadata Saving
 
-When you use `calculate_timeseries()` with `output_dir` specified, metadata is **automatically saved**:
+When you use `calculate()` with `output_dir` specified, metadata is **automatically saved**:
 
 ```python
 import solweig
@@ -26,7 +26,7 @@ surface = solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="cache/")
 weather = solweig.Weather.from_epw("weather.epw", start="2023-07-01")
 
 # This automatically saves run_metadata.json to output_dir
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface, weather,
     human=solweig.HumanParams(weight=70, height=1.65),
     use_anisotropic_sky=True,
@@ -131,7 +131,7 @@ human = solweig.HumanParams(weight=70)
 metadata = solweig.create_run_metadata(
     surface=surface,
     location=location,
-    weather_series=weather,
+    weather=weather,
     human=human,
     physics=None,
     materials=None,
@@ -197,7 +197,7 @@ Document exact parameters for reproducible science:
 
 ```python
 # Run calculation
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface, weather,
     human=solweig.HumanParams(weight=75, height=1.80),
     use_anisotropic_sky=True,
@@ -268,7 +268,7 @@ When using custom physics or materials files, the **full parameters are saved** 
 physics = solweig.load_physics("custom_trees.json")
 
 # Calculate with custom physics
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface, weather,
     physics=physics,
     output_dir="output/",
@@ -292,7 +292,7 @@ Create a metadata dictionary for a SOLWEIG run.
 
 - `surface`: SurfaceData object
 - `location`: Location object
-- `weather_series`: List of Weather objects
+- `weather`: List of Weather objects
 - `human`: HumanParams object (or None for defaults)
 - `physics`: Physics parameters from load_physics() (or None)
 - `materials`: Materials from load_materials() (or None)

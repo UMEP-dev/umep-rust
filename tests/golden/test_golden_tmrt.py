@@ -18,9 +18,11 @@ from solweig.rustalgos import tmrt
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
-# Tolerance for Tmrt calculations (max observed diff ~3.05e-5)
-RTOL = 1e-4
-ATOL = 1e-4
+# Tolerance for Tmrt calculations
+# Golden fixtures use upstream SBC=5.67e-8; our code uses the more accurate
+# SBC=5.67051e-8 (CODATA 2018), producing max ~0.007°C difference.
+RTOL = 1e-3
+ATOL = 0.01
 
 
 @pytest.fixture(scope="module")

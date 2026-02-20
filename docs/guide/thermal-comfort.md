@@ -14,7 +14,7 @@ UTCI summary grids (mean, max, min, day/night averages) are always computed
 as part of `TimeseriesSummary`:
 
 ```python
-summary = solweig.calculate_timeseries(surface=surface, weather_series=weather_list)
+summary = solweig.calculate(surface=surface, weather=weather_list)
 print(summary.report())  # Includes Tmrt, UTCI, sun hours, threshold exceedance
 ```
 
@@ -23,9 +23,9 @@ print(summary.report())  # Includes Tmrt, UTCI, sun hours, threshold exceedance
 Include `"utci"` in `timestep_outputs` to retain per-timestep UTCI grids:
 
 ```python
-summary = solweig.calculate_timeseries(
+summary = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     timestep_outputs=["tmrt", "utci"],
 )
 for r in summary.results:
@@ -37,9 +37,9 @@ for r in summary.results:
 Include `"utci"` in `outputs` to save per-timestep UTCI GeoTIFFs:
 
 ```python
-summary = solweig.calculate_timeseries(
+summary = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     output_dir="output/",
     outputs=["tmrt", "utci"],
 )
@@ -97,9 +97,9 @@ PET is the air temperature of a reference indoor environment at which the human 
 Include `"pet"` in `timestep_outputs` or `outputs`:
 
 ```python
-summary = solweig.calculate_timeseries(
+summary = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     timestep_outputs=["tmrt", "pet"],
     human=solweig.HumanParams(weight=60, height=1.65, age=70),
 )

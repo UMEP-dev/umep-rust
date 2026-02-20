@@ -25,7 +25,7 @@ All raster calculations use **float32** (single precision) rather than float64:
 
 ### Integer Types
 
-- Shadow masks: uint8 or bool (0/1 values)
+- Shadow masks: f32 (0.0/1.0) during GPU compute; bitpacked uint8 for SVF shadow matrices; quantized uint8 (0-255) for the shadow_to_u8 path
 - Indices and counts: int32 or int64
 
 ## Tiling
@@ -34,7 +34,7 @@ Large rasters are processed in tiles to manage memory:
 
 ### Tile Properties
 
-1. **Tile size**: Configurable, typically 256×256 to 1024×1024 pixels
+1. **Tile size**: Configurable, typically 256×256 to 2500×2500 pixels (2500 is the fallback when GPU and RAM detection both fail); dynamically sized from GPU/RAM limits via `compute_max_tile_side()`
 2. **Overlap**: Tiles overlap by `max_shadow_reach` to avoid edge artifacts
 3. **Seamless output**: Stitched results should be identical to full-raster processing
 
@@ -46,8 +46,8 @@ Overlap must accommodate the longest possible shadow:
 max_shadow_reach = max_building_height / tan(min_sun_altitude)
 ```
 
-At min_sun_altitude = 5°:
-- 50m building → ~572m shadow → 572 pixels at 1m resolution
+At min_sun_altitude = 3° (`MIN_SUN_ELEVATION_DEG = 3.0`):
+- 30m building → ~572m shadow → 572 pixels at 1m resolution
 
 ### Tile Processing Order
 
@@ -69,6 +69,8 @@ Optional GPU support for shadow and SVF calculations:
 
 - Shadow casting (ray marching)
 - SVF patch visibility checks
+- Anisotropic sky radiation (via `aniso_gpu.rs` + `anisotropic_sky.wgsl`)
+- Shadow mask conversion (bitpacking via `shadow_to_bitpack.wgsl`, quantization via `shadow_to_u8.wgsl`)
 - Parallel pixel operations
 
 ### CPU-Only Operations
@@ -104,8 +106,9 @@ Optional GPU support for shadow and SVF calculations:
 | Operation | Memory per megapixel |
 | --------- | -------------------- |
 | Single raster (float32) | ~4 MB |
-| SVF calculation | ~50 MB (multiple arrays) |
-| Full SOLWEIG run | ~200 MB |
+| SVF calculation (CPU) | ~150 MB (multiple arrays + shadow matrices) |
+| SVF calculation (GPU) | ~384 MB (GPU buffer allocations) |
+| Full SOLWEIG run | ~400 MB |
 
 ### Memory Properties
 
@@ -117,9 +120,10 @@ Optional GPU support for shadow and SVF calculations:
 
 ### Edge Cases
 
-1. **Sun at horizon (altitude ≈ 0°)**: Shadow length approaches infinity
-   - Handled by clamping to max_shadow_reach
-   - No shadows computed when altitude ≤ 0°
+1. **Sun at low altitude**: Shadow length grows rapidly as altitude decreases
+   - Handled by clamping shadow reach to `max_shadow_distance_m` (Rust default 0.0 = no cap; Python tiling layer defaults to 1000m via `MAX_BUFFER_M`)
+   - `min_sun_elev_deg` (default 3.0°) caps the maximum shadow reach calculation rather than preventing computation entirely
+   - At altitude >= 89.5°, Rust returns all-sunlit (zenith case)
 
 2. **Very tall buildings**: May exceed shadow reach
    - Warning if buildings exceed reasonable height

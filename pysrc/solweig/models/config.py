@@ -87,7 +87,7 @@ class ModelConfig:
 
         Note: ``human`` is intentionally left as None here.
         Default ``HumanParams()`` is instantiated by ``calculate()``
-        and ``calculate_timeseries()`` when no human params are provided.
+        when no human params are provided.
         """
         pass
 
@@ -200,7 +200,7 @@ class ModelConfig:
 
         Example:
             >>> config = ModelConfig.load("my_settings.json")
-            >>> results = calculate_timeseries(surface, weather, config=config)
+            >>> results = calculate(surface, weather, config=config)
         """
         path = Path(path)
 

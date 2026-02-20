@@ -96,9 +96,9 @@ location = solweig.Location.from_epw(epw_path)  # lat, lon, UTC offset, elevatio
 #  - Human: abs_k=0.7, abs_l=0.95, standing, 75kg, 180cm, 35yo, 80W activity
 #  - Physics: Tree transmissivity=0.03, seasonal dates, posture geometry
 #  - No materials needed (no landcover grid)
-summary = solweig.calculate_timeseries(
+summary = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     location=location,
     use_anisotropic_sky=True,  # Uses precomputed SVF from prepare()
     conifer=False,  # Use seasonal leaf on/off (set True for evergreen trees)
@@ -168,9 +168,9 @@ print(f"  Date range: {metadata['timeseries']['start']} to {metadata['timeseries
 # Optional parameter customization examples:
 
 # Example 1: Custom human parameters (common use case)
-# results = solweig.calculate_timeseries(
+# results = solweig.calculate(
 #     surface=surface,
-#     weather_series=weather_list,
+#     weather=weather_list,
 #     human=solweig.HumanParams(
 #         abs_k=0.65,       # Lower shortwave absorption
 #         abs_l=0.97,       # Higher longwave absorption
@@ -188,9 +188,9 @@ print(f"  Date range: {metadata['timeseries']['start']} to {metadata['timeseries
 #   "Posture": {"Standing": {...}, "Sitting": {...}}
 # }
 # physics = solweig.load_physics("custom_trees.json")
-# results = solweig.calculate_timeseries(
+# results = solweig.calculate(
 #     surface=surface,
-#     weather_series=weather_list,
+#     weather=weather_list,
 #     physics=physics,
 #     output_dir=str(output_dir),
 # )
@@ -202,9 +202,9 @@ print(f"  Date range: {metadata['timeseries']['start']} to {metadata['timeseries
 #     working_dir="cache/",
 # )
 # materials = solweig.load_materials("site_materials.json")  # Albedo, emissivity per class
-# results = solweig.calculate_timeseries(
+# results = solweig.calculate(
 #     surface=surface_with_lc,
-#     weather_series=weather_list,
+#     weather=weather_list,
 #     materials=materials,
 #     output_dir=str(output_dir),
 # )
@@ -218,9 +218,9 @@ print(f"  Date range: {metadata['timeseries']['start']} to {metadata['timeseries
 # Step 4: Per-timestep UTCI/PET (via timestep_outputs)
 # To get per-timestep UTCI or PET arrays, include them in timestep_outputs:
 #
-# summary = solweig.calculate_timeseries(
+# summary = solweig.calculate(
 #     surface=surface,
-#     weather_series=weather_list,
+#     weather=weather_list,
 #     location=location,
 #     timestep_outputs=["tmrt", "utci"],  # retain per-timestep Tmrt + UTCI
 #     output_dir=str(output_dir),
@@ -235,17 +235,6 @@ print(f"  Date range: {metadata['timeseries']['start']} to {metadata['timeseries
 # NOTE: Legacy API (SolweigRunRust, SolweigRunCore, configs.py) removed in Phase 5.6
 # =============================================================================
 # The legacy config-file-driven API has been removed. Use the modern simplified API above.
-# For tiled processing of large rasters, use:
-#
-# results = solweig.calculate_tiled(
-#     surface=surface,
-#     location=location,
-#     weather=weather,
-#     tile_size=256,  # Tile size in pixels
-#     overlap=50,     # Overlap in pixels for shadow continuity
-#     output_dir=str(output_dir),
-# )
-#
-# Performance: The modern API with Rust algorithms is comparable to the old runner.
+# Tiling is automatic for large rasters — no explicit tiling call needed.
 
 # %%

@@ -51,7 +51,7 @@ _FALLBACK_MAX_TILE_SIZE = 2500  # Used when GPU + RAM detection both fail
 MIN_SUN_ELEVATION_DEG = 3.0  # Minimum sun elevation for shadow calculations
 MAX_BUFFER_M = 1000.0  # Default maximum buffer / shadow distance in meters
 
-# Backward-compat alias (imported by tests and calculate_timeseries_tiled docstring)
+# Backward-compat alias (imported by tests)
 MAX_TILE_SIZE = _FALLBACK_MAX_TILE_SIZE
 
 # Resource estimation constants
@@ -772,7 +772,7 @@ def generate_tiles(
     return tiles
 
 
-def calculate_tiled(
+def _calculate_tiled(
     surface: SurfaceData,
     location: Location,
     weather: Weather,
@@ -829,7 +829,7 @@ def calculate_tiled(
     if surface.svf is None and (precomputed is None or precomputed.svf is None):
         raise MissingPrecomputedData(
             "Sky View Factor (SVF) data is required but not available.",
-            "Call surface.compute_svf() before calculate_tiled(), or use SurfaceData.prepare() "
+            "Call surface.compute_svf() before calculate(), or use SurfaceData.prepare() "
             "which computes SVF automatically.",
         )
 
@@ -865,9 +865,9 @@ def calculate_tiled(
     # Check if tiling is actually needed
     if rows <= adjusted_tile_size and cols <= adjusted_tile_size:
         logger.info(f"Raster {rows}x{cols} fits in single tile, using non-tiled calculation")
-        from .api import calculate
+        from .api import _calculate_single
 
-        return calculate(
+        return _calculate_single(
             surface=surface,
             location=location,
             weather=weather,
@@ -884,7 +884,7 @@ def calculate_tiled(
     tiles = generate_tiles(rows, cols, adjusted_tile_size, buffer_pixels)
     n_tiles = len(tiles)
 
-    from .api import calculate
+    from .api import _calculate_single
 
     logger.info(
         f"Tiled processing: {rows}x{cols} raster, {n_tiles} tiles, "
@@ -928,7 +928,7 @@ def calculate_tiled(
             tile_precomputed = _slice_tile_precomputed(precomputed, tile)
 
             future = executor.submit(
-                calculate,
+                _calculate_single,
                 surface=tile_surface,
                 location=location,
                 weather=weather,
@@ -991,7 +991,7 @@ def calculate_tiled(
     )
 
 
-def calculate_timeseries_tiled(
+def _calculate_timeseries_tiled(
     surface: SurfaceData,
     weather_series: list[Weather],
     location: Location,
@@ -1021,7 +1021,7 @@ def calculate_timeseries_tiled(
     each timestep tile-by-tile, preserving thermal state accumulation across
     both tiles and timesteps.
 
-    This function is called automatically by calculate_timeseries() when the
+    This function is called automatically by calculate() when the
     raster exceeds the resource-derived maximum tile side in either dimension.
 
     Args:
@@ -1134,7 +1134,7 @@ def calculate_timeseries_tiled(
     if surface.svf is None and (precomputed is None or precomputed.svf is None):
         raise MissingPrecomputedData(
             "Sky View Factor (SVF) data is required but not available.",
-            "Call surface.compute_svf() before calculate_timeseries_tiled(), or use SurfaceData.prepare() "
+            "Call surface.compute_svf() before calculate(), or use SurfaceData.prepare() "
             "which computes SVF automatically.",
         )
 
@@ -1219,8 +1219,7 @@ def calculate_timeseries_tiled(
         else None
     )
 
-    # Import calculate
-    from .api import calculate
+    from .api import _calculate_single
 
     n_workers = _resolve_tile_workers(effective_tile_workers, n_tiles)
     if effective_prefetch_tiles is None:
@@ -1302,7 +1301,7 @@ def calculate_timeseries_tiled(
                 while completed_tiles < n_tiles:
                     while next_submit < n_tiles and len(futures) < inflight_limit:
                         future = executor.submit(
-                            calculate,
+                            _calculate_single,
                             surface=tile_surfaces[next_submit],
                             location=location,
                             weather=weather,

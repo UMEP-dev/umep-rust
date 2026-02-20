@@ -43,6 +43,9 @@ plugins:
             show_source: true
             show_root_heading: true
             members_order: source
+  - mkdocs-jupyter:
+      execute: false
+      include_source: true
 
 markdown_extensions:
   - attr_list
@@ -73,6 +76,10 @@ nav:
   - Getting Started:
       - Quick Start: getting-started/quick-start.md
       - Installation: getting-started/installation.md
+  - Tutorials:
+      - Athens Quick Start: tutorials/01-athens-quickstart.ipynb
+      - Timeseries Analysis: tutorials/02-timeseries-analysis.ipynb
+      - Thermal Comfort: tutorials/03-thermal-comfort.ipynb
   - User Guide:
       - Basic Usage: guide/basic-usage.md
       - Working with GeoTIFFs: guide/geotiffs.md

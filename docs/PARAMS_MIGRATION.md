@@ -45,7 +45,7 @@ The new API simplifies this:
 | `svf_path`               | `working_dir/svf/`                | ✅ AUTO     | Auto-generated and cached |
 | `aniso_path`             | `working_dir/svf/shadowmats.npz`  | ✅ AUTO     | Auto-generated if use_aniso=True |
 | `epw_path`               | `Weather.from_epw(path)`          | ✅ COMPLETE | EPW file loading |
-| `output_path`            | `calculate_timeseries(output_dir=...)` | ✅ COMPLETE | Output directory |
+| `output_path`            | `calculate(output_dir=...)` | ✅ COMPLETE | Output directory |
 
 ### Preprocessing Control
 
@@ -130,7 +130,7 @@ The following values were previously required inputs but are now **computed auto
 | Location (lat/lon)         | Manual or from EPW       | Auto from CRS    | `Location.from_surface(surface)` |
 | Shadow matrices            | Pre-computed NPZ files   | Auto-generated   | Prepared/cached during surface preparation |
 | Wall heights/aspects       | Pre-computed TIF files   | Auto-generated   | Prepared/cached during surface preparation |
-| Sky View Factor            | Pre-computed ZIP files   | Auto-generated   | Prepared via `SurfaceData.prepare()` (or `surface.compute_svf()`) before `calculate*()` |
+| Sky View Factor            | Pre-computed ZIP files   | Auto-generated   | Prepared via `SurfaceData.prepare()` (or `surface.compute_svf()`) before `calculate()` |
 
 ---
 
@@ -148,9 +148,9 @@ surface = solweig.SurfaceData.prepare(
 
 weather = solweig.Weather.from_epw("weather.epw", start="2023-07-01", end="2023-07-01")
 
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
-    weather_series=weather,
+    weather=weather,
     output_dir="output/",
 )
 # Uses bundled defaults:
@@ -162,9 +162,9 @@ results = solweig.calculate_timeseries(
 ### With direct parameters
 
 ```python
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
-    weather_series=weather,
+    weather=weather,
     use_anisotropic_sky=True,  # Enable Perez diffuse model
     conifer=True,              # Evergreen trees (always leaf-on)
     output_dir="output/",
@@ -174,9 +174,9 @@ results = solweig.calculate_timeseries(
 ### With custom human parameters
 
 ```python
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
-    weather_series=weather,
+    weather=weather,
     human=solweig.HumanParams(
         abs_k=0.65,      # Lower shortwave absorption
         abs_l=0.97,      # Higher longwave absorption
@@ -201,9 +201,9 @@ surface = solweig.SurfaceData.prepare(
     working_dir="cache/",
 )
 
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
-    weather_series=weather,
+    weather=weather,
     params=params,  # Uses custom albedo/emissivity per class
     output_dir="output/",
 )
@@ -218,7 +218,7 @@ print(f"Default Tmrt absK: {params.Tmrt_params.Value.absK}")
 print(f"Default tree transmissivity: {params.Tree_settings.Value.Transmissivity}")
 
 # Can pass explicitly, but not necessary (loaded automatically if params=None)
-results = solweig.calculate_timeseries(..., params=params)
+results = solweig.calculate(..., params=params)
 ```
 
 ---
@@ -243,7 +243,7 @@ If you're migrating from the old config-based API, use this checklist:
 
 - [ ] **File paths**: Replace config.ini paths with `SurfaceData.prepare()` arguments
 - [ ] **EPW loading**: Use `Weather.from_epw()` instead of manual parsing
-- [ ] **Output directory**: Use `calculate_timeseries(output_dir=...)` instead of config
+- [ ] **Output directory**: Use `calculate(output_dir=...)` instead of config
 - [ ] **Model flags**: Use direct parameters (`use_anisotropic_sky`, `conifer`) instead of config flags
 
 ### ⏳ TODO (Future Work)

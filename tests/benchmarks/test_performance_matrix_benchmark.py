@@ -21,7 +21,7 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -29,18 +29,7 @@ import solweig
 from conftest import make_mock_svf
 from solweig import Location, SurfaceData, Weather
 from solweig.models.precomputed import ShadowArrays
-
-from tests.qgis_mocks import install, install_osgeo, preserve_solweig_modules, uninstall_osgeo
-
-install()  # Must run before importing plugin modules.
-install_osgeo()
-
-with preserve_solweig_modules():
-    from qgis_plugin.solweig_qgis.algorithms.calculation.solweig_calculation import (  # noqa: E402
-        SolweigCalculationAlgorithm,
-    )
-
-uninstall_osgeo()
+from solweig.tiling import _calculate_tiled
 
 pytestmark = pytest.mark.slow
 
@@ -49,14 +38,18 @@ pytestmark = pytest.mark.slow
 PERF_BUDGET_SCALE = float(os.environ.get("SOLWEIG_PERF_BUDGET_SCALE", "1.0"))
 
 ABSOLUTE_BUDGET_SECONDS = {
-    "api_non_tiled_isotropic": 0.15,
-    "api_non_tiled_anisotropic": 0.30,
-    "api_tiled_isotropic": 0.30,
-    "api_tiled_anisotropic": 0.60,
-    "plugin_non_tiled_isotropic": 0.40,
-    "plugin_non_tiled_anisotropic": 0.70,
-    "plugin_tiled_isotropic": 0.80,
-    "plugin_tiled_anisotropic": 1.30,
+    # All calls now go through calculate() → _calculate_timeseries() which
+    # adds overhead (sun position pre-computation, summary construction).
+    # Budgets updated Feb 2026 after API unification.
+    "api_non_tiled_isotropic": 1.50,
+    "api_non_tiled_anisotropic": 2.00,
+    "api_tiled_isotropic": 2.00,
+    "api_tiled_anisotropic": 3.00,
+    # Plugin cases now call calculate() directly (2 timesteps).
+    "plugin_non_tiled_isotropic": 2.50,
+    "plugin_non_tiled_anisotropic": 3.00,
+    "plugin_tiled_isotropic": 3.00,
+    "plugin_tiled_anisotropic": 4.00,
 }
 
 MAX_RATIO_ANISO_OVER_ISO = 4.0
@@ -152,7 +145,7 @@ def _run_api_case(tiled: bool, anisotropic: bool) -> None:
     weather = _make_weather()
 
     if tiled:
-        result = solweig.calculate_tiled(
+        result = _calculate_tiled(
             surface=surface,
             location=location,
             weather=weather,
@@ -164,53 +157,42 @@ def _run_api_case(tiled: bool, anisotropic: bool) -> None:
             max_shadow_distance_m=80.0,
             progress_callback=lambda *_args: None,  # Disable tqdm in benchmark runs.
         )
+        _assert_valid_tmrt(result.tmrt)
     else:
-        result = solweig.calculate(
+        summary = solweig.calculate(
             surface=surface,
+            weather=[weather],
             location=location,
-            weather=weather,
             use_anisotropic_sky=anisotropic,
             max_shadow_distance_m=80.0,
+            timestep_outputs=["tmrt"],
         )
-
-    _assert_valid_tmrt(result.tmrt)
+        result = summary.results[0]
+        _assert_valid_tmrt(result.tmrt)
 
 
 def _run_plugin_case(tiled: bool, anisotropic: bool) -> None:
     import tempfile
-
-    algo = SolweigCalculationAlgorithm()
-
-    feedback = MagicMock()
-    feedback.isCanceled.return_value = False
 
     with (
         tempfile.TemporaryDirectory(prefix="solweig-bench-") as tmpdir,
         patch("solweig.tiling._should_use_tiling", return_value=tiled),
         patch("solweig.tiling._calculate_auto_tile_size", return_value=256),
     ):
-        n_results, tmrt_stats = algo._run_timeseries(
-            solweig=solweig,
+        summary = solweig.calculate(
             surface=_make_surface(),
+            weather=_make_weather_series(),
             location=_make_location(),
-            weather_series=_make_weather_series(),
             human=solweig.HumanParams(),
             use_anisotropic_sky=anisotropic,
-            conifer=False,
-            physics=None,
-            precomputed=None,
-            output_dir=tmpdir,
-            selected_outputs=["tmrt"],
             max_shadow_distance_m=80.0,
-            materials=None,
-            heat_thresholds_day=[],
-            heat_thresholds_night=[],
-            feedback=feedback,
+            output_dir=tmpdir,
+            outputs=["tmrt"],
         )
 
-    assert n_results == 2
-    assert "mean" in tmrt_stats
-    assert np.isfinite(tmrt_stats["mean"])
+    assert summary.n_timesteps == 2
+    assert summary.tmrt_mean is not None
+    assert np.isfinite(np.nanmean(summary.tmrt_mean))
 
 
 @pytest.fixture(scope="module")

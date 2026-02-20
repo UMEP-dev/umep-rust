@@ -83,7 +83,7 @@ def profile_calculation(size: int) -> dict:
     weather = Weather(datetime=datetime(2024, 7, 21, 12, 0), ta=30.0, rh=50.0, global_rad=800.0, ws=2.0)
 
     # Run calculation
-    result = calculate(surface, location, weather)
+    result = calculate(surface, [weather], location)
 
     after_calc = tracemalloc.get_traced_memory()
 
@@ -94,7 +94,7 @@ def profile_calculation(size: int) -> dict:
         "surface_peak": after_surface[1],
         "calc_current": after_calc[0],
         "calc_peak": after_calc[1],
-        "tmrt_mean": float(np.nanmean(result.tmrt)),
+        "tmrt_mean": float(np.nanmean(result.tmrt_mean)),
     }
 
 

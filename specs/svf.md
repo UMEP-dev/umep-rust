@@ -36,71 +36,91 @@ For option 2 (153 patches):
 
 ### Solid Angle Weight Calculation
 
-Each patch's contribution to SVF is weighted by its solid angle (steradian):
+Each patch's contribution to SVF is weighted by its solid angle. The discretized computation in `skyview.rs`:
 
 ```text
-w_patch = Δφ × (sin(θ_max) - sin(θ_min))
+n = 90
+common_w_factor = (1 / (2π)) × sin(π / (2n))
+steprad_iso = (360 / azimuth_patches) × (π / 180)
+steprad_aniso = (360 / azimuth_patches_aniso) × (π / 180)
+
+sin_term_sum = Σ sin(π(2a - 1) / (2n))    for a in annulino_start..=annulino_end
+
+weight_iso = steprad_iso × common_w_factor × sin_term_sum
+weight_aniso = steprad_aniso × common_w_factor × sin_term_sum
 ```
 
 Where:
-- Δφ = azimuthal width of patch (radians)
-- θ_min, θ_max = altitude bounds of annulus (radians)
 
-For patch in annulus i with n_i azimuthal divisions:
+- `azimuth_patches` = number of azimuthal divisions in this altitude band (isotropic)
+- `azimuth_patches_aniso` = `ceil(azimuth_patches / 2)` (directional, covering half-hemisphere)
+- `annulino_start..annulino_end` = range of annulus indices within the altitude band
 
-```text
-Δφ_i = 2π / n_i
-w_i = Δφ_i × (sin(θ_i + Δθ/2) - sin(θ_i - Δθ/2))
-```
+The isotropic weight is used for total SVF. The anisotropic weight is used for directional SVFs (N, E, S, W), with each directional component only accumulating patches whose azimuth falls within its 180° half-hemisphere.
 
 ### SVF Accumulation Formula
 
 ```text
-SVF = Σ_patches (w_patch × visibility_patch)
+SVF = Σ_patches (weight_iso × visibility_patch)
 ```
 
 Where:
-- w_patch = solid angle weight for the patch
+
+- weight_iso = pre-computed isotropic solid angle weight for the patch
 - visibility_patch = 1 if patch center is unobstructed, 0 if blocked by DSM
+
+### Last Annulus Correction
+
+A correction factor `LAST_ANNULUS_CORRECTION = 3.0459e-4` is added during finalization. This compensates for the zenith patch (90°) being represented as a single point rather than a solid angle. Without this correction, a completely unobstructed view would sum to slightly less than 1.0.
 
 ### Directional SVF
 
-Directional components split patches by azimuth quadrant:
+Directional components split patches by azimuth half-hemisphere:
 
 ```text
-SVF_east  = Σ (w_patch × visibility) for 0° ≤ azimuth < 180°
-SVF_south = Σ (w_patch × visibility) for 90° ≤ azimuth < 270°
-SVF_west  = Σ (w_patch × visibility) for 180° ≤ azimuth < 360°
-SVF_north = Σ (w_patch × visibility) for 270° ≤ azimuth < 90°
+SVF_north = Σ (weight_aniso × visibility) for azimuth ∈ [270°, 360°) ∪ [0°, 90°)
+SVF_east  = Σ (weight_aniso × visibility) for azimuth ∈ [0°, 180°)
+SVF_south = Σ (weight_aniso × visibility) for azimuth ∈ [90°, 270°)
+SVF_west  = Σ (weight_aniso × visibility) for azimuth ∈ [180°, 360°)
 ```
-
-### Algorithm Implementation
-
-The Rust implementation in `skyview.rs` computes SVF using:
-
-1. **Shadow casting**: For each patch (altitude, azimuth), cast shadows from the DSM
-2. **Weight computation**: Calculate solid angle weight using annulus bounds
-3. **Accumulation**: Sum weighted visibility across all patches per pixel
-4. **Correction factor**: Apply final correction (3.0459e-4) for numerical stability
 
 ## Inputs
 
 | Input | Type | Description |
-| ----- | ---- | ----------- |
+| --- | --- | --- |
 | DSM | 2D array (m) | Digital Surface Model |
 | CDSM | 2D array (m) | Canopy DSM for vegetation (optional) |
+| TDSM | 2D array (m) | Trunk DSM for vegetation trunk zone (optional) |
 | pixel_size | float (m) | Resolution |
+| usevegdem | bool | Whether to account for vegetation in SVF |
+| max_local_dsm_ht | float (m) | Maximum local DSM height, limits ray march steps |
+| patch_option | int (1-4) | Patch resolution option. Default 2 (153 patches) |
+| min_sun_elev_deg | float (°) | Minimum elevation for shadow rays. Default 3.0 |
 
 ## Outputs
 
 | Output | Type | Description |
-| ------ | ---- | ----------- |
+| --- | --- | --- |
 | svf | 2D array (0-1) | Overall sky view factor |
-| svf_north | 2D array (0-1) | SVF from northern sky quadrant |
-| svf_east | 2D array (0-1) | SVF from eastern sky quadrant |
-| svf_south | 2D array (0-1) | SVF from southern sky quadrant |
-| svf_west | 2D array (0-1) | SVF from western sky quadrant |
-| svf_veg | 2D array (0-1) | SVF accounting for vegetation |
+| svf_north | 2D array (0-1) | SVF from northern half-hemisphere |
+| svf_east | 2D array (0-1) | SVF from eastern half-hemisphere |
+| svf_south | 2D array (0-1) | SVF from southern half-hemisphere |
+| svf_west | 2D array (0-1) | SVF from western half-hemisphere |
+| svf_veg | 2D array (0-1) | SVF accounting for vegetation canopy |
+| svf_veg_north | 2D array (0-1) | Vegetation SVF from northern half-hemisphere |
+| svf_veg_east | 2D array (0-1) | Vegetation SVF from eastern half-hemisphere |
+| svf_veg_south | 2D array (0-1) | Vegetation SVF from southern half-hemisphere |
+| svf_veg_west | 2D array (0-1) | Vegetation SVF from western half-hemisphere |
+| svf_veg_blocks_bldg_sh | 2D array (0-1) | SVF where vegetation overlaps building shadow |
+| svf_veg_blocks_bldg_sh_north | 2D array (0-1) | Directional variant (north) |
+| svf_veg_blocks_bldg_sh_east | 2D array (0-1) | Directional variant (east) |
+| svf_veg_blocks_bldg_sh_south | 2D array (0-1) | Directional variant (south) |
+| svf_veg_blocks_bldg_sh_west | 2D array (0-1) | Directional variant (west) |
+| bldg_sh_matrix | 3D array (uint8) | Bitpacked building shadow per patch |
+| veg_sh_matrix | 3D array (uint8) | Bitpacked vegetation shadow per patch |
+| veg_blocks_bldg_sh_matrix | 3D array (uint8) | Bitpacked veg-blocks-bldg shadow per patch |
+
+The shadow matrices (3D, uint8 bitpacked) store per-patch shadow results for use by anisotropic sky radiation. The third dimension indexes over patches.
 
 ## Properties
 
@@ -144,7 +164,7 @@ The Rust implementation in `skyview.rs` computes SVF using:
 
 ## Directional SVF
 
-Directional components split the sky into quadrants:
+Directional components split the sky into half-hemispheres:
 
 ```text
          N (svf_north)
@@ -164,9 +184,9 @@ Used for calculating radiation from different sky directions, important for:
 
 Trees reduce SVF but not completely (light passes through canopy):
 
-- **SVF_veg**: Sky view through vegetation canopy
-- Accounts for leaf area index and transmissivity
-- SVF_veg ≥ SVF (vegetation blocks less than buildings)
+- **svf_veg**: Sky view through vegetation canopy
+- Accounts for the pergola shadow heuristic (see shadows.md)
+- svf_veg >= svf (vegetation blocks less than buildings)
 
 ## References
 

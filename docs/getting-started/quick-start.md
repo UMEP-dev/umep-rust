@@ -83,11 +83,11 @@ location = solweig.Location.from_epw("data/weather.epw")
 print(f"Location: {location.latitude:.1f}°N, {location.longitude:.1f}°E")
 print(f"Loaded {len(weather_list)} hourly timesteps")
 
-# --- 3. Run timeseries ---
+# --- 3. Run ---
 # Results saved as GeoTIFFs; thermal state carried between timesteps
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     location=location,
     output_dir="output/",
     outputs=["tmrt", "shadow"],
@@ -119,9 +119,9 @@ For per-timestep arrays or saved files, include `"utci"` or `"pet"` in
 `timestep_outputs` or `outputs`:
 
 ```python
-summary = solweig.calculate_timeseries(
+summary = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     outputs=["tmrt", "utci"],           # save per-timestep GeoTIFFs
     timestep_outputs=["tmrt", "utci"],  # keep per-timestep arrays in memory
     output_dir="output/",

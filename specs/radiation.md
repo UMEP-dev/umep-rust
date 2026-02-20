@@ -18,15 +18,27 @@ Total radiation = Shortwave (K) + Longwave (L)
                 = (Kdown + Kup + Kside) + (Ldown + Lup + Lside)
 ```
 
+### Source Code Locations
+
+Radiation logic is spread across multiple Rust files:
+
+- `rust/src/perez.rs` — Perez anisotropic sky model, clearness bins, luminance distribution
+- `rust/src/sky.rs` — Isotropic sky radiation, cylindric wedge luminance
+- `rust/src/patch_radiation.rs` — Per-patch sky emissivity (Martin & Berdahl band model)
+- `rust/src/emissivity_models.rs` — Sky emissivity computation
+- `rust/src/pipeline.rs` — Kdown, Kup, Ldown assembly from component outputs
+
 ## Shortwave Radiation (K)
 
 Solar radiation, wavelengths ~0.3-3 μm.
 
-### Diffuse Fraction (Reindl Model)
+### Diffuse Fraction (Preprocessing Step)
 
 Global radiation (G) is split into direct (I) and diffuse (D) using the Reindl et al. (1990) correlation.
 
 **Reference:** Reindl DT, Beckman WA, Duffie JA (1990) "Diffuse fraction correlations." Solar Energy 45(1):1-7.
+
+**Important:** In this codebase, diffuse fraction splitting is performed as a **preprocessing step** (via `clearnessindex_2013b` and `diffusefraction` in the upstream UMEP Python). The Rust pipeline receives pre-split `direct_rad` (rad_i) and `diffuse_rad` (rad_d) as inputs. The Reindl model is documented here for reference but is not computed within the Rust pipeline.
 
 The model uses piecewise correlations based on clearness index (Kt):
 
@@ -50,8 +62,6 @@ Where:
 - Ta = air temperature (°C)
 - RH = relative humidity (fraction, 0-1)
 
-When Ta and RH are unavailable, simplified correlations using only Kt are used.
-
 **Properties:**
 
 1. Clear sky: D/G ≈ 0.1-0.2 (mostly direct)
@@ -66,9 +76,9 @@ For improved accuracy, diffuse radiation can use anisotropic sky luminance distr
 
 The Perez model divides the sky into three components:
 
-1. **Isotropic background** - uniform diffuse
-2. **Circumsolar brightening** - enhanced near sun disk
-3. **Horizon brightening** - enhanced near horizon
+1. **Isotropic background** — uniform diffuse
+2. **Circumsolar brightening** — enhanced near sun disk
+3. **Horizon brightening** — enhanced near horizon
 
 #### Sky Luminance Distribution
 
@@ -88,28 +98,43 @@ Where:
 
 Sky clearness parameter ε determines coefficient bins:
 
-| Bin | ε Range    | Description     | Typical Condition    |
-| --- | ---------- | --------------- | -------------------- |
-| 1   | ε < 1.065  | Very overcast   | Heavy cloud cover    |
-| 2   | 1.065-1.23 | Overcast        | Thick clouds         |
-| 3   | 1.23-1.50  | Cloudy          | Medium clouds        |
-| 4   | 1.50-1.95  | Partly cloudy   | Scattered clouds     |
-| 5   | 1.95-2.80  | Partly clear    | Few clouds           |
-| 6   | 2.80-4.50  | Clear           | Mostly clear         |
-| 7   | 4.50-6.20  | Very clear      | Exceptionally clear  |
-| 8   | ε > 6.20   | Extremely clear | Desert/high altitude |
+| Bin | ε Range | Description | Typical Condition |
+| --- | --- | --- | --- |
+| 1 | ε < 1.065 | Very overcast | Heavy cloud cover |
+| 2 | 1.065-1.23 | Overcast | Thick clouds |
+| 3 | 1.23-1.50 | Cloudy | Medium clouds |
+| 4 | 1.50-1.95 | Partly cloudy | Scattered clouds |
+| 5 | 1.95-2.80 | Partly clear | Few clouds |
+| 6 | 2.80-4.50 | Clear | Mostly clear |
+| 7 | 4.50-6.20 | Very clear | Exceptionally clear |
+| 8 | ε > 6.20 | Extremely clear | Desert/high altitude |
 
-The clearness parameter ε is computed from:
+The clearness parameter ε is computed from (in `rust/src/perez.rs`):
 
 ```text
-ε = (D + I)/D + 5.535×10⁻⁶×θz³ / (1 + 5.535×10⁻⁶×θz³)
+ε = ((D + I) / D + 1.041 × zen³) / (1 + 1.041 × zen³)
 ```
 
-Where θz is the solar zenith angle in degrees.
+Where zen is the solar zenith angle in **radians**. Note: the UTCI specification and some literature express this with θ_z in degrees using the coefficient 5.535×10⁻⁶. Both forms are equivalent: `1.041 × zen_rad³ = 5.535×10⁻⁶ × zen_deg³`.
+
+#### Bin-0 Special Equations (Robinson Extension)
+
+For clearness bin 0 (most overcast), the c and d coefficients use different equations than bins 1-7:
+
+```text
+c = exp((brightness × (c1 + c2 × zen))^c3) - 1
+d = -exp(brightness × (d1 + d2 × zen)) + d3 + brightness × d4
+```
+
+This Robinson extension handles the overcast limiting case where the standard linear interpolation breaks down.
+
+#### Anisotropic Sky Emissivity (Martin & Berdahl Band Model)
+
+In anisotropic mode, per-patch sky emissivity is computed using the Martin & Berdahl (1984) band emissivity model (`rust/src/patch_radiation.rs`). This accounts for the angular dependence of atmospheric emission — the sky emits more longwave radiation near the horizon than at the zenith due to the longer atmospheric path length.
 
 #### Implementation in SOLWEIG
 
-The Rust implementation (`Perez_v3` in `rust/src/sky.rs` and Python wrapper in `physics/Perez_v3.py`):
+The Rust implementation (`rust/src/perez.rs`):
 
 1. Computes sky clearness bin from solar geometry and radiation
 2. Retrieves coefficients (a, b, c, d, e) for the bin
@@ -117,50 +142,57 @@ The Rust implementation (`Perez_v3` in `rust/src/sky.rs` and Python wrapper in `
 4. Normalizes to ensure integration equals diffuse radiation
 5. Returns patch luminance array for anisotropic radiation calculation
 
-The patch luminance is then used to weight diffuse radiation:
+### Kdown (Downwelling Shortwave)
+
+Shortwave radiation reaching the ground from above:
 
 ```text
-drad = Σ (D × L_patch × visibility_patch × steradian_patch)
+Kdown = rad_i × shadow × sin(altitude)
+      + drad
+      + albedo_wall × (1 - svfbuveg) × (rad_g × (1 - f_sh) + rad_d × f_sh)
 ```
 
-This provides spatially-varying diffuse radiation accounting for sky luminance distribution.
+Where:
 
-### Kdown (Diffuse from Sky)
-
-Diffuse shortwave from the sky hemisphere:
-
-```text
-Isotropic:   Kdown = D × SVF
-Anisotropic: Kdown = Σ(D × L_patch × SVF_patch)
-```
+- `rad_i × shadow × sin(altitude)` = direct beam, blocked by shadows
+- `drad` = diffuse sky component:
+  - Isotropic: `drad = rad_d × svfbuveg`
+  - Anisotropic: `drad = ani_lum × rad_d` (patch-weighted luminance)
+- `albedo_wall × (1 - svfbuveg) × (...)` = wall-reflected shortwave
+- `f_sh` = fraction of shadow (from SVF shadow matrices)
 
 **Properties:**
 
-1. Kdown proportional to SVF
-2. Higher SVF → more diffuse radiation
-3. Range: 0 to ~500 W/m² (typical clear sky diffuse)
+1. Kdown proportional to SVF (for diffuse component)
+2. Direct component blocked by shadows
+3. Range: 0 to ~1000 W/m²
 
 ### Kup (Reflected from Ground)
 
-Shortwave reflected upward from ground:
+Shortwave reflected upward from ground surfaces:
 
 ```text
-Kup = (I × shadow + D) × albedo × GVF
+ct = rad_d × svfbuveg + albedo_b × (1 - svfbuveg) × (rad_g × (1 - f_sh) + rad_d × f_sh)
+kup = gvfalb × rad_i × sin(altitude) + ct × gvfalbnosh
 ```
+
+Where:
+
+- `gvfalb` = GVF albedo-weighted view factor (shadow-dependent, from gvf.md)
+- `gvfalbnosh` = GVF albedo view factor (no shadow, geometric only)
+- `ct` = combined diffuse + wall-reflected shortwave term
+
+Note: `gvfalb` already contains albedo weighting — no additional multiplication by albedo is needed.
 
 **Properties:**
 
 1. Higher albedo → more reflection
 2. Shaded areas reflect less (no direct component)
-3. Range: 0 to ~200 W/m² (depends on albedo)
+3. Range: 0 to ~200 W/m²
 
 ### Kside (Direct + Reflected to Walls)
 
-Shortwave reaching vertical surfaces:
-
-```text
-Kside = I × cos(incidence_angle) × shadow_factor + reflected
-```
+Shortwave reaching vertical surfaces, computed per cardinal direction (N, E, S, W):
 
 **Properties:**
 
@@ -197,28 +229,32 @@ Where:
 - Clear humid sky: ε_sky ≈ 0.75-0.85
 - Cloudy sky: ε_sky → 1.0
 
-**Cloud correction:**
-When clearness index CI < 0.95 (non-clear conditions):
-
-```text
-ε_sky_effective = CI × ε_sky + (1 - CI) × 1.0
-```
-
 ### Ldown (Sky Longwave)
 
-Thermal emission from atmosphere:
+Thermal emission from atmosphere, computed in `pipeline.rs::compute_ldown`:
 
 ```text
-Ldown = ε_sky × σ × T_air^4 × SVF
-      + wall_contribution
-      + vegetation_contribution
+Ldown = (svf + svf_veg - 1) × esky × σ × Ta_K⁴
+      + (2 - svf_veg - svf_aveg) × ewall × σ × Ta_K⁴
+      + (svf_aveg - svf) × ewall × σ × (Ta + Tg_wall + 273.15)⁴
+      + (2 - svf - svf_veg) × (1 - ewall) × esky × σ × Ta_K⁴
 ```
 
-Where:
+The four terms represent:
 
-- ε_sky = sky emissivity (computed above)
-- σ = Stefan-Boltzmann constant (5.67 × 10⁻⁸ W/m²K⁴)
-- T_air = air temperature (K)
+1. Sky emission through vegetation-free sky opening
+2. Ambient-temperature wall emission (walls between vegetation and building canopy)
+3. Heated wall emission (walls warmed by sun, between veg-blocking and building canopy)
+4. Sky emission reflected off walls (non-absorbed sky radiation bounced from walls)
+
+**Cloud correction:** When clearness index CI < 0.95:
+
+```text
+Ldown_effective = Ldown_clear × (1 - c_cloud) + Ldown_cloudy × c_cloud
+c_cloud = 1 - CI
+```
+
+Where `Ldown_cloudy` uses the same formula but with esky=1.0 for the sky term.
 
 **Properties:**
 
@@ -228,11 +264,13 @@ Where:
 
 ### Lup (Ground Longwave)
 
-Thermal emission from ground surface:
+Thermal emission from ground surface, provided by the GVF module after thermal delay smoothing:
 
 ```text
-Lup = ε_ground × σ × T_ground^4 × GVF
+Lup = TsWaveDelay(gvf_lup, ...)
 ```
+
+Where `gvf_lup` is the ground-emitted longwave from the GVF integration (see gvf.md). The TsWaveDelay function applies exponential smoothing across timesteps to simulate thermal inertia (see ground_temperature.md).
 
 **Properties:**
 
@@ -242,11 +280,7 @@ Lup = ε_ground × σ × T_ground^4 × GVF
 
 ### Lside (Wall Longwave)
 
-Thermal emission from building walls:
-
-```text
-Lside = ε_wall × σ × T_wall^4 × wall_view_factor
-```
+Thermal emission from building walls, per cardinal direction:
 
 **Properties:**
 
@@ -256,16 +290,11 @@ Lside = ε_wall × σ × T_wall^4 × wall_view_factor
 
 ## Properties Summary
 
-### Conservation
-
-1. **Energy conservation**: Total radiation balanced
-2. **Reciprocity**: View factors are symmetric
-
 ### Shadow Effects
 
 1. **Shadows block direct shortwave only**
    - Diffuse and longwave unaffected by shadows
-   - Shaded areas still receive Kdown, Ldown, Lup
+   - Shaded areas still receive Kdown (diffuse), Ldown, Lup
 
 2. **Shadow reduces total K significantly**
    - Sun to shade: ΔK ≈ 200-800 W/m² (depending on direct beam)
@@ -288,44 +317,32 @@ Lside = ε_wall × σ × T_wall^4 × wall_view_factor
 
 ### Typical Values
 
-| Component      | Clear Day Noon | Shaded  | Night   |
-| -------------- | -------------- | ------- | ------- |
-| Kdown          | 100-200        | 100-200 | 0       |
-| Kup            | 50-150         | 30-100  | 0       |
-| Kside (sunlit) | 200-600        | 0       | 0       |
-| I (direct)     | 600-900        | 0       | 0       |
-| Ldown          | 300-400        | 300-400 | 250-350 |
-| Lup            | 400-600        | 350-500 | 300-450 |
-| Lside          | 350-550        | 350-500 | 300-450 |
+| Component | Clear Day Noon | Shaded | Night |
+| --- | --- | --- | --- |
+| Kdown | 100-200 | 100-200 | 0 |
+| Kup | 50-150 | 30-100 | 0 |
+| Kside (sunlit) | 200-600 | 0 | 0 |
+| I (direct) | 600-900 | 0 | 0 |
+| Ldown | 300-400 | 300-400 | 250-350 |
+| Lup | 400-600 | 350-500 | 300-450 |
+| Lside | 350-550 | 350-500 | 300-450 |
 
 All values in W/m².
 
 ## Implementation Notes
 
-### Clearness Index Calculation
+### Clearness Index
 
 **Reference:** Crawford TM, Duchon CE (1999) "An improved parameterization for estimating effective atmospheric emissivity for use in calculating daytime downwelling longwave radiation." Journal of Applied Meteorology 38:474-480.
 
-The clearness index CI is computed from global radiation compared to theoretical clear-sky radiation:
-
-```text
-I0 = Itoa × cos(zen) × Trpg × Tw × D × Tar
-CI = G / I0
-```
-
-Where transmission coefficients account for:
-
-- Trpg = Rayleigh scattering and permanent gases
-- Tw = water vapor absorption
-- Tar = aerosol attenuation
-- D = sun-earth distance correction
+The clearness index CI is pre-computed in the upstream UMEP Python preprocessing (`clearnessindex_2013b`) and supplied to the Rust pipeline as an input. It is not computed within the Rust pipeline.
 
 ### Isotropic vs Anisotropic Mode
 
 The model supports two diffuse radiation modes:
 
-1. **Isotropic** (default): Uniform diffuse sky, faster computation
-2. **Anisotropic** (Perez): Non-uniform sky luminance, requires shadow matrices
+1. **Isotropic** (faster): Uniform diffuse sky. `drad = rad_d × svfbuveg`
+2. **Anisotropic** (Perez, default): Non-uniform sky luminance, requires SVF shadow matrices from the SVF precomputation. Uses per-patch luminance weighting.
 
 Use anisotropic mode when:
 
@@ -353,4 +370,8 @@ Use anisotropic mode when:
 
 **Sky Emissivity:**
 
-- Jonsson P, Bennet C, Eliasson I, Selin Lindgren E (2006) "Suspended particulate matter and its relations to the urban climate in Dar es Salaam, Tanzania." Atmospheric Environment 40(25), 4797-4807.
+- Jonsson P, Eliasson I, Holmer B, Grimmond CSB (2006) "Longwave incoming radiation in the Tropics: Results from field work in three African cities." Theoretical and Applied Climatology 85, 185-201.
+
+**Anisotropic Emissivity:**
+
+- Martin M, Berdahl P (1984) "Characteristics of infrared sky radiation in the United States." Solar Energy 33(3-4), 321-336.

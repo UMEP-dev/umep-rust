@@ -118,13 +118,14 @@ class TestAnisoGpuCpuParity:
             if gpu_on:
                 pytest.skip("GPU feature not compiled")
 
-        result = calculate(
+        summary = calculate(
             surface,
+            [weather],
             location,
-            weather,
             use_anisotropic_sky=True,
+            timestep_outputs=["tmrt", "kdown"],
         )
-        return result
+        return summary.results[0]
 
     def test_open_sky_tmrt_parity(self, location, noon_weather, gpu_available):
         """Open sky: GPU and CPU Tmrt match within f32 tolerance."""
@@ -284,21 +285,25 @@ class TestAnisoGpuCpuParity:
                 if gpu_on:
                     pytest.skip("GPU feature not compiled")
 
-        result_gpu = calculate(
+        summary_gpu = calculate(
             surface_gpu,
+            [noon_weather],
             location,
-            noon_weather,
             use_anisotropic_sky=True,
             human=sitting,
+            timestep_outputs=["tmrt", "kdown"],
         )
+        result_gpu = summary_gpu.results[0]
         pipeline.disable_aniso_gpu()
-        result_cpu = calculate(
+        summary_cpu = calculate(
             surface_cpu,
+            [noon_weather],
             location,
-            noon_weather,
             use_anisotropic_sky=True,
             human=sitting,
+            timestep_outputs=["tmrt", "kdown"],
         )
+        result_cpu = summary_cpu.results[0]
 
         valid = ~np.isnan(result_gpu.tmrt) & ~np.isnan(result_cpu.tmrt)
         assert np.any(valid), "Should have valid Tmrt values"

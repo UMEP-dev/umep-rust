@@ -1,7 +1,7 @@
 """Timeseries summary and grid accumulation.
 
 Defines :class:`TimeseriesSummary` (the default return type of
-:func:`calculate_timeseries`) and :class:`GridAccumulator` (the
+:func:`calculate`) and :class:`GridAccumulator` (the
 internal helper that builds it incrementally during the loop).
 """
 
@@ -289,9 +289,7 @@ class TimeseriesSummary:
             RuntimeError: If no timeseries data is available.
         """
         if self.timeseries is None or self.n_timesteps == 0:
-            raise RuntimeError(
-                "No timeseries data to plot. Timeseries data is populated automatically by calculate_timeseries()."
-            )
+            raise RuntimeError("No timeseries data to plot. Timeseries data is populated automatically by calculate().")
 
         try:
             import matplotlib.dates as mdates

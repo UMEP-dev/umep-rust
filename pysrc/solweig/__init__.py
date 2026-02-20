@@ -9,20 +9,12 @@ Quick start::
     import solweig
     from datetime import datetime
 
-    result = solweig.calculate(
+    summary = solweig.calculate(
         surface=solweig.SurfaceData(dsm=my_dsm_array),
+        weather=[solweig.Weather(datetime=datetime(2025, 7, 15, 12, 0), ta=25, rh=50, global_rad=800)],
         location=solweig.Location(latitude=57.7, longitude=12.0),
-        weather=solweig.Weather(datetime=datetime(2025, 7, 15, 12, 0), ta=25, rh=50, global_rad=800),
     )
-    print(f"Tmrt: {result.tmrt.mean():.1f} C")
-
-Time series::
-
-    results = solweig.calculate_timeseries(
-        surface=surface,
-        weather_series=[weather1, weather2, weather3],
-        location=location,
-    )
+    print(f"Tmrt: {summary.tmrt_mean.mean():.1f} C")
 
 I/O helpers::
 
@@ -60,11 +52,8 @@ from .api import (  # noqa: E402
     TimeseriesSummary,
     Weather,
     calculate,
-    # Tiled processing helpers
+    # Tiling utilities
     calculate_buffer_distance,
-    calculate_tiled,
-    calculate_timeseries,
-    calculate_timeseries_tiled,
     compute_pet_grid,
     # Post-processing: Thermal comfort indices
     compute_utci_grid,
@@ -186,14 +175,11 @@ __all__ = [
     "TimeseriesSummary",
     "SolweigError",
     "calculate",
-    "calculate_timeseries",
-    "calculate_tiled",
-    "calculate_timeseries_tiled",
     "validate_inputs",
     "load_params",
     "load_physics",
     "load_materials",
-    # Tiled processing
+    # Tiling utilities
     "calculate_buffer_distance",
     "TileSpec",
     "generate_tiles",

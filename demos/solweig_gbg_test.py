@@ -62,9 +62,9 @@ weather_list = solweig.Weather.from_umep_met(
 )
 # Location from surface CRS with explicit UTC offset (Gothenburg: CET = UTC+1)
 location = solweig.Location.from_surface(surface, utc_offset=1)
-summary = solweig.calculate_timeseries(
+summary = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     location=location,
     output_dir=str(working_path / "output"),
     outputs=["tmrt", "shadow"],

@@ -105,16 +105,16 @@ result = solweig.calculate(surface, location, weather)
 ### Multiple timesteps (timeseries)
 
 ```python
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     location=location,
     output_dir="output/",          # Save GeoTIFFs as they're computed
     outputs=["tmrt", "shadow"],    # Which outputs to save
 )
 ```
 
-`calculate_timeseries` automatically carries **thermal state** between timesteps — ground and wall temperatures from one hour affect the next. This matters for accuracy; avoid looping over `calculate()` manually.
+When given a list of weather timesteps, `calculate()` automatically carries **thermal state** between timesteps — ground and wall temperatures from one hour affect the next. Large rasters are automatically tiled to fit GPU memory. This matters for accuracy; avoid looping over `calculate()` manually with single timesteps.
 
 Two common output patterns:
 
@@ -209,9 +209,9 @@ surface.preprocess()  # dsm_absolute = dem + dsm_relative
 By default, SOLWEIG uses seasonal leaf-on/leaf-off based on the date. For evergreen trees (conifers), set:
 
 ```python
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     location=location,
     conifer=True,  # Trees always have full canopy
 )
@@ -240,9 +240,9 @@ SOLWEIG supports both isotropic and anisotropic sky models. For reproducible
 behavior, set `use_anisotropic_sky` explicitly in your call:
 
 ```python
-results = solweig.calculate_timeseries(
+results = solweig.calculate(
     surface=surface,
-    weather_series=weather_list,
+    weather=weather_list,
     location=location,
     use_anisotropic_sky=True,  # More accurate, slightly slower
 )
@@ -250,7 +250,7 @@ results = solweig.calculate_timeseries(
 
 If you explicitly set `use_anisotropic_sky=True`, shadow matrices must already
 be available. They are prepared alongside SVF via `SurfaceData.prepare(...)`
-or `surface.compute_svf()`. Otherwise, `calculate*()` raises
+or `surface.compute_svf()`. Otherwise, `calculate()` raises
 `MissingPrecomputedData`.
 
 ## Input validation
