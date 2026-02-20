@@ -4,6 +4,8 @@
 
 SOLWEIG computes **Mean Radiant Temperature (Tmrt)** and thermal comfort indices (**UTCI**, **PET**) for urban environments. Give it a building height model and weather data, and it produces high-resolution maps showing where people experience heat stress — and where trees, shade, and cool surfaces make a difference.
 
+![UTCI thermal comfort map](UTCI.jpg)
+
 ## Who is this for?
 
 - **Urban planners** comparing street designs, tree planting, or cool-roof strategies
