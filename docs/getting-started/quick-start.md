@@ -173,6 +173,8 @@ surface = solweig.SurfaceData(
     pixel_size=1.0,
 )
 surface.compute_svf()           # Required before calculate()
+
+location = solweig.Location(latitude=48.8, longitude=2.3, utc_offset=1)
 ```
 
 #### Pattern 3: In-memory arrays with relative heights
@@ -229,7 +231,7 @@ weather = solweig.Weather(
     ta=32.0,
     rh=40.0,
     global_rad=850.0,
-    wind_speed=2.0,             # Optional but useful for UTCI/PET
+    ws=2.0,                     # Optional but useful for UTCI/PET
 )
 ```
 

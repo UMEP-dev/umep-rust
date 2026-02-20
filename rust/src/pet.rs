@@ -10,7 +10,7 @@ const CB: f32 = 3.64 * 1000.0;
 const EMSK: f32 = 0.99;
 const EMCL: f32 = 0.95;
 const EVAP: f32 = 2.42e6;
-const SIGMA: f32 = 5.67e-8;
+const SIGMA: f32 = 5.67051e-8;
 const CAIR: f32 = 1.01 * 1000.0;
 
 /// Calculate PET for a single point.

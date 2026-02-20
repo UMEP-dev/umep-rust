@@ -15,7 +15,7 @@ class SolweigProvider(QgsProcessingProvider):
     QGIS Processing provider for SOLWEIG algorithms.
 
     Algorithms (in workflow order):
-    1. Download EPW weather file
+    1. Download / Preview Weather File
     2. Prepare Surface Data (align, walls, SVF)
     3. SOLWEIG Calculation
     """
@@ -45,7 +45,7 @@ class SolweigProvider(QgsProcessingProvider):
 
         Called by QGIS when the provider is initialized.
         """
-        # 1. Download EPW weather file
+        # 1. Download / Preview Weather File
         from .algorithms.utilities.epw_import import EpwImportAlgorithm
 
         self.addAlgorithm(EpwImportAlgorithm())

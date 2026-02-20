@@ -634,16 +634,16 @@ def calculate_buffer_distance(
     Args:
         max_height: Maximum building/DSM height in meters.
         min_sun_elev_deg: Minimum sun elevation angle in degrees. Default 3.0.
-        max_shadow_distance_m: Maximum buffer distance in meters. Default 500.0.
+        max_shadow_distance_m: Maximum buffer distance in meters. Default 1000.0.
 
     Returns:
         Buffer distance in meters, capped at max_shadow_distance_m.
 
     Example:
         >>> calculate_buffer_distance(30.0)  # 30m building
-        500.0  # Capped (actual would be 573m)
+        572.9  # 30m / tan(3°)
         >>> calculate_buffer_distance(10.0)  # 10m building
-        190.8  # 10m / tan(3)
+        190.8  # 10m / tan(3°)
     """
     if max_height <= 0:
         return 0.0
@@ -807,7 +807,7 @@ def calculate_tiled(
         conifer: Treat vegetation as evergreen conifers. Default False.
         physics: Physics parameters. If None, uses bundled defaults.
         materials: Material properties. If None, uses bundled defaults.
-        max_shadow_distance_m: Upper bound on shadow reach in meters (default 500.0).
+        max_shadow_distance_m: Upper bound on shadow reach in meters (default 1000.0).
             The actual buffer is computed from the tallest DSM pixel via
             calculate_buffer_distance(), capped at this value.
         tile_workers: Number of worker threads for tile execution. If None,
@@ -1038,7 +1038,7 @@ def calculate_timeseries_tiled(
         materials: Material properties. If None, uses config or bundled defaults.
         wall_material: Wall material type for temperature model.
         max_shadow_distance_m: Upper bound on shadow reach in meters.
-            If None, uses config or default (500.0). The actual buffer is
+            If None, uses config or default (1000.0). The actual buffer is
             computed from the tallest DSM pixel via calculate_buffer_distance().
         tile_workers: Number of worker threads for tile execution. If None,
             uses config.tile_workers or adaptive default.

@@ -22,6 +22,8 @@ about=SOLWEIG (Solar and Longwave Environmental Irradiance Geometry) is a high-p
     - To install manually, run this in the QGIS Python Console:
       import pip; pip.main(["install", "solweig"])
 
+    Documentation: https://umep-dev.github.io/solweig/
+
     This plugin provides QGIS Processing algorithms that wrap the SOLWEIG Python library. This version of Solweig is currently in testing as a proof of concept for Rust + GPU + tiled processing to handle large rasters.
 
     Adapted from UMEP (Urban Multi-scale Environmental Predictor) by Fredrik Lindberg, Sue Grimmond, and contributors. If you use this plugin in research, please cite:
@@ -30,7 +32,7 @@ about=SOLWEIG (Solar and Longwave Environmental Irradiance Geometry) is a high-p
 
 tracker=https://github.com/UMEP-dev/solweig/issues
 repository=https://github.com/UMEP-dev/solweig
-homepage=https://umep-docs.readthedocs.io/
+homepage=https://umep-dev.github.io/solweig/
 
 hasProcessingProvider=yes
 tags=urban climate, thermal comfort, mean radiant temperature, UTCI, PET, microclimate, heat stress, urban planning

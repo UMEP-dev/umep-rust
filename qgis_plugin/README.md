@@ -6,335 +6,114 @@ QGIS Processing plugin for SOLWEIG (Solar and Longwave Environmental Irradiance 
 
 This plugin wraps SOLWEIG's Python API to provide native QGIS Processing framework integration. It enables calculation of Mean Radiant Temperature (Tmrt), UTCI, and PET thermal comfort indices directly within QGIS.
 
-**Key Features:**
+**Key features:**
 
-- Native QGIS Processing Toolbox integration
-- Model Builder and batch mode support
-- Auto-detects GDAL backend (no rasterio required in QGIS/OSGeo4W)
-- Progress reporting via QgsProcessingFeedback
-- Outputs auto-load to canvas with thermal comfort color ramps
+- Native QGIS Processing Toolbox integration (Model Builder and batch mode)
+- Automatic tiling for large rasters, sized to fit GPU memory
+- GPU acceleration (Metal / Vulkan / DirectX) with CPU fallback
+- Auto-detects GDAL backend (no rasterio required)
+- Progress reporting and cancellation via QGIS Task Manager
+- Single-timestep results auto-load to canvas with thermal comfort colour ramps
+- Automatic `solweig` library installation on first use
+
+**Documentation:** <https://umep-dev.github.io/solweig/>
+**QGIS Plugin Guide:** <https://umep-dev.github.io/solweig/guide/qgis-plugin/>
 
 ## Installation
 
-1. Copy the `solweig_qgis/` directory to your QGIS plugins folder:
-   - Windows: `%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\`
-   - macOS: `~/Library/Application Support/QGIS/QGIS3/profiles/default/python/plugins/`
-   - Linux: `~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/`
+### From QGIS Plugin Repository
 
-2. Enable the plugin in QGIS: Plugins → Manage and Install Plugins → Installed → SOLWEIG
+1. Open **Plugins** > **Manage and Install Plugins**
+2. Go to the **Settings** tab and check **"Show also experimental plugins"**
+3. Switch to the **All** tab and search for **"SOLWEIG"**
+4. Click **Install Plugin**
 
-3. Access algorithms via Processing Toolbox → SOLWEIG
+On first use the plugin checks whether the `solweig` library is installed. If it is missing or outdated, a dialog offers to install or upgrade it automatically via pip.
+
+### Development setup
+
+For development, symlink the plugin directory into your QGIS plugins folder:
+
+```bash
+# Linux
+ln -s /path/to/solweig/qgis_plugin/solweig_qgis \
+  ~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/solweig_qgis
+
+# macOS
+ln -s /path/to/solweig/qgis_plugin/solweig_qgis \
+  ~/Library/Application\ Support/QGIS/QGIS3/profiles/default/python/plugins/solweig_qgis
+
+# Windows (run as admin)
+mklink /D "%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\solweig_qgis" ^
+  "C:\path\to\solweig\qgis_plugin\solweig_qgis"
+```
+
+Then install the library in editable mode:
+
+```bash
+cd /path/to/solweig && pip install -e .
+```
 
 ## Algorithms
 
-### Preprocessing
+Three algorithms are registered in the Processing Toolbox under the **SOLWEIG** group, numbered to indicate the recommended workflow order. A fourth (2b) is available but not registered by default.
 
-| Algorithm                   | Description                                       |
-| --------------------------- | ------------------------------------------------- |
-| **Compute Sky View Factor** | Pre-compute SVF arrays for reuse across timesteps |
+| # | Algorithm | File | Registered |
+| --- | --------- | ---- | ---------- |
+| 1 | Download / Preview Weather File | `algorithms/utilities/epw_import.py` | Yes |
+| 2 | Prepare Surface Data (align, walls, SVF) | `algorithms/preprocess/surface_preprocessing.py` | Yes |
+| 2b | Recompute Sky View Factor (advanced) | `algorithms/preprocess/svf_preprocessing.py` | No |
+| 3 | SOLWEIG Calculation | `algorithms/calculation/solweig_calculation.py` | Yes |
 
-### Calculation
-
-| Algorithm                            | Description                                                |
-| ------------------------------------ | ---------------------------------------------------------- |
-| **Calculate Tmrt (Single Timestep)** | Calculate Mean Radiant Temperature for one datetime        |
-| **Calculate Tmrt (Timeseries)**      | Multi-timestep calculation with thermal state accumulation |
-| **Calculate Tmrt (Large Rasters)**   | Memory-efficient tiled processing for large areas          |
-
-### Post-Processing
-
-| Algorithm        | Description                                           |
-| ---------------- | ----------------------------------------------------- |
-| **Compute UTCI** | Universal Thermal Climate Index (fast polynomial)     |
-| **Compute PET**  | Physiological Equivalent Temperature (detailed model) |
-
-### Utilities
-
-| Algorithm                   | Description                                   |
-| --------------------------- | --------------------------------------------- |
-| **Import EPW Weather File** | Preview and validate EnergyPlus weather files |
+**Workflow:** Download weather data (1) → Prepare surface once (2) → Run calculations (3) with different weather files or date ranges without re-preparing. Step 2b is only needed to recompute SVF with different parameters without re-running the full surface preparation.
 
 ## Directory Structure
 
 ```
 qgis_plugin/
-├── README.md                       # This file
-├── build_plugin.py                 # Build script for bundled distribution
-│
-└── solweig_qgis/                   # Plugin package (install this to QGIS)
-    ├── __init__.py                 # Plugin entry point with classFactory()
-    ├── metadata.txt                # QGIS plugin metadata
-    ├── provider.py                 # SolweigProvider (registers algorithms)
-    ├── _bundled/                   # Bundled SOLWEIG library (for distribution)
-    │
+├── README.md                          # This file
+├── build_plugin.py                    # Build script for distributable ZIP
+└── solweig_qgis/                      # Plugin package
+    ├── __init__.py                    # Plugin entry point (classFactory)
+    ├── metadata.txt                   # QGIS plugin metadata
+    ├── provider.py                    # SolweigProvider (registers algorithms)
+    ├── icon.png                       # Plugin icon (32x32)
+    ├── icon.svg                       # Plugin icon (vector source)
+    ├── icon_128.png                   # Plugin icon (128x128)
     ├── algorithms/
-    │   ├── __init__.py
-    │   ├── base.py                 # SolweigAlgorithmBase (shared utilities)
-    │   │
+    │   ├── base.py                    # SolweigAlgorithmBase (shared utilities)
+    │   ├── utilities/
+    │   │   └── epw_import.py          # 1. Download / Preview Weather File
     │   ├── preprocess/
-    │   │   ├── __init__.py
-    │   │   └── svf_preprocessing.py    # "Compute Sky View Factor"
-    │   │
-    │   ├── calculation/
-    │   │   ├── __init__.py
-    │   │   ├── single_timestep.py      # "Calculate Tmrt (Single Timestep)"
-    │   │   ├── timeseries.py           # "Calculate Tmrt (Timeseries)"
-    │   │   └── tiled_processing.py     # "Calculate Tmrt (Large Rasters)"
-    │   │
-    │   ├── postprocess/
-    │   │   ├── __init__.py
-    │   │   ├── utci.py                 # "Compute UTCI"
-    │   │   └── pet.py                  # "Compute PET"
-    │   │
-    │   └── utilities/
-    │       ├── __init__.py
-    │       └── epw_import.py           # "Import EPW Weather File"
-    │
+    │   │   ├── surface_preprocessing.py   # 2. Prepare Surface Data
+    │   │   └── svf_preprocessing.py       # 2b. Recompute SVF (advanced)
+    │   └── calculation/
+    │       └── solweig_calculation.py     # 3. SOLWEIG Calculation
     └── utils/
-        ├── __init__.py
-        ├── parameters.py               # Common parameter builders
-        └── converters.py               # QGIS ↔ solweig dataclass conversion
+        ├── parameters.py              # Common parameter builders
+        └── converters.py              # QGIS ↔ solweig dataclass conversion
 ```
-
----
-
-## Implementation Checklist
-
-### Phase 1: Plugin Skeleton ✅
-
-- [x] **1.1** Create `__init__.py` with `classFactory()` entry point
-- [x] **1.2** Create `metadata.txt` with plugin metadata
-- [x] **1.3** Create `provider.py` with `SolweigProvider` class
-- [ ] **1.4** Create placeholder icon.png
-- [ ] **1.5** Test plugin loads in QGIS (empty provider)
-
-### Phase 2: Shared Utilities ✅
-
-- [x] **2.1** Create `algorithms/__init__.py`
-- [x] **2.2** Create `algorithms/base.py` with `SolweigAlgorithmBase`:
-  - [x] `load_raster_from_layer()` - QGIS layer → numpy array via GDAL
-  - [x] `load_optional_raster()` - Handle optional raster parameters
-  - [x] `save_georeferenced_output()` - Save with CRS/transform via solweig.io
-  - [x] `add_raster_to_canvas()` - Add layer to QGIS project
-  - [x] `apply_thermal_comfort_style()` - Apply UTCI/Tmrt color ramps
-- [x] **2.3** Create `utils/__init__.py`
-- [x] **2.4** Create `utils/parameters.py` with common parameter builders:
-  - [x] `add_surface_parameters()` - DSM, CDSM, DEM, TDSM, LAND_COVER
-  - [x] `add_location_parameters()` - LAT, LON, UTC_OFFSET, AUTO_EXTRACT
-  - [x] `add_weather_parameters()` - DATETIME, TA, RH, RAD, WIND
-  - [x] `add_human_parameters()` - POSTURE, ABS_K
-- [x] **2.5** Create `utils/converters.py`:
-  - [x] `create_surface_from_parameters()` - Build SurfaceData from QGIS params
-  - [x] `create_location_from_parameters()` - Build Location from params
-  - [x] `create_weather_from_parameters()` - Build Weather from params
-
-### Phase 3: Single Timestep Algorithm ✅
-
-- [x] **3.1** Create `algorithms/calculation/__init__.py`
-- [x] **3.2** Create `algorithms/calculation/single_timestep.py`:
-  - [x] Define all input parameters (surface, location, weather, human, options)
-  - [x] Define output parameters (TMRT, optional SHADOW, KDOWN)
-  - [x] Implement `processAlgorithm()`:
-    - [x] Load rasters from QGIS layers
-    - [x] Create SurfaceData, Location, Weather, HumanParams
-    - [x] Handle height conversion (relative → absolute)
-    - [x] Call `solweig.calculate()`
-    - [x] Save output GeoTIFF
-    - [x] Add to canvas with styling
-- [x] **3.3** Register in provider
-- [ ] **3.4** Test in QGIS with Gothenburg test data
-
-### Phase 4: SVF Preprocessing Algorithm ✅
-
-- [x] **4.1** Create `algorithms/preprocess/__init__.py`
-- [x] **4.2** Create `algorithms/preprocess/svf_preprocessing.py`:
-  - [x] Define input parameters (DSM, CDSM, DEM, TDSM, TRANS_VEG, OUTPUT_DIR)
-  - [x] Define output parameters (SVF_DIR, SVF_FILE)
-  - [x] Implement `processAlgorithm()`:
-    - [x] Load rasters
-    - [x] Create SurfaceData
-    - [x] Call `surface.prepare()` with working_dir
-    - [x] Report progress via feedback
-- [x] **4.3** Register in provider
-- [ ] **4.4** Test SVF computation and caching
-
-### Phase 5: Timeseries Algorithm ✅
-
-- [x] **5.1** Create `algorithms/calculation/timeseries.py`:
-  - [x] Add EPW_FILE, START_DATE, END_DATE, HOURS_FILTER parameters
-  - [x] Add OUTPUT_DIR, OUTPUTS selection parameters
-  - [x] Implement `processAlgorithm()`:
-    - [x] Load and filter weather from EPW
-    - [x] Create surface and location
-    - [x] Call `solweig.calculate_timeseries()`
-    - [x] Report progress per timestep
-    - [x] Handle cancellation
-- [x] **5.2** Register in provider
-- [ ] **5.3** Test with multi-day EPW data
-
-### Phase 6: UTCI Algorithm ✅
-
-- [x] **6.1** Create `algorithms/postprocess/__init__.py`
-- [x] **6.2** Create `algorithms/postprocess/utci.py`:
-  - [x] Define TMRT_DIR, EPW_FILE, OUTPUT_DIR parameters
-  - [x] Implement `processAlgorithm()`:
-    - [x] Load weather series from EPW
-    - [x] Call `solweig.compute_utci()`
-    - [x] Report file count
-- [x] **6.3** Register in provider
-- [ ] **6.4** Test UTCI computation
-
-### Phase 7: PET Algorithm ✅
-
-- [x] **7.1** Create `algorithms/postprocess/pet.py`:
-  - [x] Add human body parameters (AGE, WEIGHT, HEIGHT, SEX, ACTIVITY, CLOTHING)
-  - [x] Implement `processAlgorithm()` calling `solweig.compute_pet()`
-- [x] **7.2** Register in provider
-- [ ] **7.3** Test PET computation
-
-### Phase 8: EPW Import Utility ✅
-
-- [x] **8.1** Create `algorithms/utilities/__init__.py`
-- [x] **8.2** Create `algorithms/utilities/epw_import.py`:
-  - [x] Define EPW_FILE input parameter
-  - [x] Implement `processAlgorithm()`:
-    - [x] Parse EPW with `solweig.io.read_epw()`
-    - [x] Generate HTML report with location, date range, statistics
-- [x] **8.3** Register in provider
-- [ ] **8.4** Test with sample EPW files
-
-### Phase 9: Tiled Processing Algorithm ✅
-
-- [x] **9.1** Create `algorithms/calculation/tiled_processing.py`:
-  - [x] Add TILE_SIZE, AUTO_TILE_SIZE parameters
-  - [x] Implement `processAlgorithm()` calling `solweig.calculate_tiled()`
-- [x] **9.2** Register in provider
-- [ ] **9.3** Test with large raster
-
-### Phase 10: Build & Distribution ✅
-
-- [x] **10.1** Create `build_plugin.py` build script
-- [x] **10.2** Set up `_bundled/` directory support in `__init__.py`
-- [x] **10.3** Create GitHub Actions workflow for cross-platform builds
-- [x] **10.4** Update README with build instructions
-
-### Phase 11: Testing & Polish (Pending)
-
-- [ ] **11.1** Add docstrings to all algorithms
-- [ ] **11.2** Create help strings for QGIS Help panel
-- [ ] **11.3** Test full workflow in QGIS
-- [ ] **11.4** Verify outputs match standalone Python execution
-- [ ] **11.5** Create icon.png
-- [ ] **11.6** Update this README with usage examples
-
----
 
 ## Building & Distribution
 
-The plugin can be distributed in two ways:
-
-### Option A: Bundled Distribution (Recommended for Users)
-
-This bundles the compiled Rust extension and Python modules into the plugin, so users don't need to install anything separately.
+`build_plugin.py` creates a distributable ZIP for the QGIS Plugin Repository. The version is read from `pyproject.toml` (single source of truth) and stamped into `metadata.txt` before packaging.
 
 ```bash
-# Build for your current platform
 cd qgis_plugin
+
+# Build ZIP (version from pyproject.toml)
 python build_plugin.py
 
-# Create distributable ZIP
-python build_plugin.py --package --version 0.1.0
+# Override version
+python build_plugin.py --version 0.2.0
 
-# Clean build artifacts
+# Clean old ZIPs
 python build_plugin.py --clean
 ```
 
-This creates a platform-specific ZIP file (e.g., `solweig-qgis-0.1.0-linux_x86_64.zip`) that can be installed directly in QGIS.
+The GitHub Actions workflow (`.github/workflows/build-qgis-plugin.yml`) runs on version tag pushes and creates the plugin ZIP automatically.
 
-**Supported platforms (CI builds):**
-
-- Linux x86_64
-- Windows x86_64
-- macOS x86_64
-- macOS aarch64 (Apple Silicon)
-
-### Option B: Development Setup
-
-For development or if you have SOLWEIG installed via pip:
-
-1. Install SOLWEIG in your Python environment:
-
-   ```bash
-   pip install solweig
-   # or for development
-   cd /path/to/solweig && pip install -e .
-   ```
-
-2. Symlink the plugin to QGIS:
-
-   ```bash
-   # Linux
-   ln -s /path/to/solweig/qgis_plugin/solweig_qgis ~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/solweig_qgis
-
-   # macOS
-   ln -s /path/to/solweig/qgis_plugin/solweig_qgis ~/Library/Application\ Support/QGIS/QGIS3/profiles/default/python/plugins/solweig_qgis
-
-   # Windows (run as admin)
-   mklink /D "%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\solweig_qgis" "C:\path\to\solweig\qgis_plugin\solweig_qgis"
-   ```
-
-The plugin auto-detects SOLWEIG in this order:
-
-1. Bundled (`_bundled/` directory)
-2. System-installed (via pip)
-3. Development path (`../pysrc/solweig`)
-
-### CI/CD Automated Builds (Universal Plugin)
-
-The GitHub Actions workflow (`.github/workflows/build-qgis-plugin.yml`) automatically builds a **universal multi-platform plugin**:
-
-**Triggers:**
-
-- Version tags (e.g., `v0.1.0`)
-- Manual workflow dispatch
-
-**Build process:**
-
-1. Builds Rust wheels for all 4 platforms (Linux, Windows, macOS Intel, macOS ARM)
-2. Extracts Python modules from one wheel (identical across platforms)
-3. Extracts platform-specific `rustalgos` binaries to `_native/<platform>/`
-4. Creates single ZIP: `solweig-qgis-{version}-universal.zip`
-
-**At runtime**, the plugin auto-detects the platform and loads the correct binary from `_native/`
-
-**Result:** One ZIP works on all platforms - no need for separate downloads per OS
-
-## Dependencies
-
-**For bundled distribution:** No external dependencies required.
-
-**For development:** The plugin requires the SOLWEIG Python package:
-
-```bash
-pip install solweig
-```
-
-Or point to development source:
-
-```python
-import sys
-sys.path.insert(0, '/path/to/solweig/pysrc')
-```
-
-## Core Library Files Referenced
-
-| File                              | Purpose                                               |
-| --------------------------------- | ----------------------------------------------------- |
-| `pysrc/solweig/api.py`            | Entry points: `calculate()`, `calculate_timeseries()` |
-| `pysrc/solweig/progress.py`       | QgsProcessingFeedback integration                     |
-| `pysrc/solweig/io.py`             | GDAL backend, EPW parser                              |
-| `pysrc/solweig/models/surface.py` | SurfaceData with height conversion                    |
-| `pysrc/solweig/models/weather.py` | Weather.from_epw()                                    |
+To install the built ZIP in QGIS: **Plugins** > **Manage and Install Plugins** > **Install from ZIP**.
 
 ## Citation
 

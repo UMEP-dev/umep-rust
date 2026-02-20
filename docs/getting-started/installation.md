@@ -16,7 +16,7 @@ python -c "import solweig; print(solweig.__version__)"
 
 If you want to modify the code or contribute:
 
-- **Python 3.10+**
+- **Python 3.11+**
 - **Rust toolchain** — needed to compile the high-performance core ([install Rust](https://rustup.rs/))
 - **uv** — fast Python package manager ([install uv](https://docs.astral.sh/uv/getting-started/installation/))
 

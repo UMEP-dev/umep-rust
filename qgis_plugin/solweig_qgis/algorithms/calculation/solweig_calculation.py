@@ -119,19 +119,30 @@ automatically processed using overlapping tiles to manage memory.
 GeoTIFF files organised into subfolders of the output directory:
 <pre>
   output_dir/
-    tmrt/        tmrt_YYYYMMDD_HHMM.tif  (always)
+    tmrt/        tmrt_YYYYMMDD_HHMM.tif  (default on)
     shadow/      shadow_...              (if selected)
     kdown/       kdown_...               (if selected)
+    kup/         kup_...                 (if selected)
+    ldown/       ldown_...               (if selected)
+    lup/         lup_...                 (if selected)
     utci/        utci_...                (if enabled)
     pet/         pet_...                 (if enabled)
 </pre>
 
 <b>Recommended workflow:</b>
 <ol>
-<li>Run "Prepare Surface Data" to align rasters and compute walls</li>
-<li>Run "Compute Sky View Factor" on the prepared surface (optional, for anisotropic sky)</li>
+<li>Run "Download / Preview Weather File" to get an EPW file</li>
+<li>Run "Prepare Surface Data" to align rasters, compute walls and SVF</li>
 <li>Run this algorithm with the prepared surface directory</li>
-</ol>"""
+</ol>
+
+<b>Documentation:</b>
+<ul>
+<li><a href="https://umep-dev.github.io/solweig/guide/qgis-plugin/">QGIS Plugin Guide</a></li>
+<li><a href="https://umep-dev.github.io/solweig/guide/timeseries/">Timeseries Calculations</a></li>
+<li><a href="https://umep-dev.github.io/solweig/guide/thermal-comfort/">Thermal Comfort (UTCI/PET)</a></li>
+<li><a href="https://umep-dev.github.io/solweig/">SOLWEIG Documentation</a></li>
+</ul>"""
         )
 
     def group(self) -> str:

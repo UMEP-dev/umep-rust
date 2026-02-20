@@ -44,7 +44,7 @@ human = solweig.HumanParams(
     weight=70,      # kg
     height=1.75,    # m
     age=35,         # years
-    sex="male",     # or "female"
+    sex=1,          # 1=male, 2=female
     posture="standing",  # or "sitting"
 )
 

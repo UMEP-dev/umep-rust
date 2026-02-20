@@ -89,11 +89,19 @@ everything needed to run SOLWEIG Calculation directly.
     dem.tif           (if DEM provided)
     tdsm.tif          (if TDSM provided)
     land_cover.tif    (if land cover provided)
+    parametersforsolweig.json  (vegetation & material settings)
     metadata.json     (pixel size, CRS, etc.)
 </pre>
 
 <b>Next step:</b>
-Run "SOLWEIG Calculation" with the prepared surface directory."""
+Run "SOLWEIG Calculation" with the prepared surface directory.
+
+<b>Documentation:</b>
+<ul>
+<li><a href="https://umep-dev.github.io/solweig/guide/qgis-plugin/">QGIS Plugin Guide</a></li>
+<li><a href="https://umep-dev.github.io/solweig/guide/geotiffs/">Working with GeoTIFFs</a></li>
+<li><a href="https://umep-dev.github.io/solweig/">SOLWEIG Documentation</a></li>
+</ul>"""
         )
 
     def initAlgorithm(self, config=None):

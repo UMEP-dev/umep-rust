@@ -27,7 +27,7 @@ except GridShapeMismatch as e:
     print(f"  Got: {e.got}")
 except MissingPrecomputedData as e:
     print(f"Missing data: {e}")
-    print(f"  Hint: {e.hint}")
+    print(f"  Suggestion: {e.suggestion}")
 except SolweigError as e:
     # Catch any SOLWEIG error
     print(f"Error: {e}")

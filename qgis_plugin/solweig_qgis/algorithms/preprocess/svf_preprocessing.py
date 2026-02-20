@@ -38,7 +38,7 @@ class SvfPreprocessingAlgorithm(SolweigAlgorithmBase):
         return "svf_preprocessing"
 
     def displayName(self) -> str:
-        return self.tr("3. Recompute Sky View Factor (advanced)")
+        return self.tr("2b. Recompute Sky View Factor (advanced)")
 
     def shortHelpString(self) -> str:
         return self.tr(
@@ -59,7 +59,14 @@ as `svf/&lt;pixel&gt;/shadow_memmaps/` for very large grids. The SOLWEIG
 Calculation algorithm loads these automatically.
 
 <b>Typical runtime:</b>
-- 1000x1000 grid: 30-120 seconds"""
+- 1000x1000 grid: 30-120 seconds
+
+<b>Documentation:</b>
+<ul>
+<li><a href="https://umep-dev.github.io/solweig/guide/qgis-plugin/">QGIS Plugin Guide</a></li>
+<li><a href="https://umep-dev.github.io/solweig/physics/svf/">Sky View Factor</a></li>
+<li><a href="https://umep-dev.github.io/solweig/">SOLWEIG Documentation</a></li>
+</ul>"""
         )
 
     def group(self) -> str:

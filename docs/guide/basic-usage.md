@@ -10,7 +10,7 @@ Every SOLWEIG calculation needs exactly three things:
 
 A `SurfaceData` object holds the building/terrain heights and optional vegetation. The only required field is a DSM (Digital Surface Model).
 
-**From numpy arrays:**
+**From numpy arrays** (in-memory workflows):
 
 ```python
 import numpy as np
@@ -25,7 +25,7 @@ surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)
 surface.compute_svf()
 ```
 
-**From GeoTIFF files:**
+**From GeoTIFF files** (file-based workflows — walls and SVF are computed and cached to `working_dir/`):
 
 ```python
 surface = solweig.SurfaceData.prepare(
@@ -39,13 +39,13 @@ surface = solweig.SurfaceData.prepare(
 A `Location` tells SOLWEIG where the site is, so it can compute sun position correctly.
 
 ```python
-# Manual
+# Manual — when you know the coordinates
 location = solweig.Location(latitude=48.8, longitude=2.3, utc_offset=1)
 
-# From a GeoTIFF's coordinate system
+# From a GeoTIFF's coordinate system — extracts lat/lon from the DSM's CRS
 location = solweig.Location.from_surface(surface, utc_offset=1)
 
-# From an EPW weather file header
+# From an EPW weather file header — lat, lon, and UTC offset all extracted
 location = solweig.Location.from_epw("weather.epw")
 ```
 
@@ -64,9 +64,11 @@ weather = solweig.Weather(
     ta=32.0,          # Air temperature (°C)
     rh=40.0,          # Relative humidity (%)
     global_rad=850.0, # Global horizontal irradiance (W/m²)
-    wind_speed=2.0,   # Wind speed (m/s) — used for UTCI/PET
+    ws=2.0,           # Wind speed (m/s) — used for UTCI/PET
 )
 ```
+
+`ws` is optional for Tmrt calculations (defaults to 1.0 m/s) but directly affects UTCI and PET results.
 
 For timeseries, load from an EPW file:
 

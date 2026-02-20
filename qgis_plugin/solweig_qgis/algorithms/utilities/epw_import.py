@@ -72,7 +72,14 @@ Generates an HTML report with location, date range, and data statistics.
 
 <b>Data source:</b>
 PVGIS (Photovoltaic Geographical Information System) by the
-EU Joint Research Centre. Data derived from ERA5 reanalysis."""
+EU Joint Research Centre. Data derived from ERA5 reanalysis.
+
+<b>Documentation:</b>
+<ul>
+<li><a href="https://umep-dev.github.io/solweig/guide/qgis-plugin/">QGIS Plugin Guide</a></li>
+<li><a href="https://umep-dev.github.io/solweig/getting-started/quick-start/">Quick Start</a></li>
+<li><a href="https://umep-dev.github.io/solweig/">SOLWEIG Documentation</a></li>
+</ul>"""
         )
 
     def group(self) -> str:
@@ -504,6 +511,15 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis."""
             <li><strong>relative_humidity</strong>: For UTCI and PET calculations</li>
             <li><strong>ghi</strong>: Global solar radiation for shortwave radiation</li>
             <li><strong>wind_speed</strong>: For UTCI and PET calculations</li>
+        </ul>
+    </div>
+
+    <div class="card">
+        <h2>Documentation</h2>
+        <ul>
+            <li><a href="https://umep-dev.github.io/solweig/guide/qgis-plugin/">QGIS Plugin Guide</a></li>
+            <li><a href="https://umep-dev.github.io/solweig/getting-started/quick-start/">Quick Start</a></li>
+            <li><a href="https://umep-dev.github.io/solweig/">SOLWEIG Documentation</a></li>
         </ul>
     </div>
 

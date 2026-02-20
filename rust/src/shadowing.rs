@@ -844,7 +844,7 @@ pub fn calculate_shadows_wall_ht_25(
         walls_scheme_view_opt,
         aspect_scheme_view_opt,
         true,
-        min_sun_elev_deg.unwrap_or(5.0_f32),
+        min_sun_elev_deg.unwrap_or(3.0_f32),
         max_shadow_distance_m.unwrap_or(0.0_f32),
     );
 

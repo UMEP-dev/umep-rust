@@ -30,85 +30,79 @@ SOLWEIG (Solar and Longwave Environmental Irradiance Geometry) calculates mean r
 
 ## Pipeline
 
+SVF is a **precomputed static input** (depends only on DSM geometry). It is computed
+once before the timestep loop and passed into the pipeline as a read-only input.
+
+Each timestep executes the following stages in order:
+
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           INPUT DATA                                     │
-├─────────────────────────────────────────────────────────────────────────┤
-│  Geometry        │  Weather           │  Time                           │
-│  - DSM           │  - Air temp (Ta)   │  - Date/time                    │
-│  - CDSM (veg)    │  - Humidity (RH)   │  - Location (lat/lon)           │
-│  - Buildings     │  - Wind speed      │                                 │
-│  - Walls         │  - Global rad (G)  │                                 │
-└────────┬────────────────────┬─────────────────────┬────────────────────┘
-         │                    │                     │
-         ▼                    │                     │
-┌─────────────────┐           │                     │
-│    SHADOWS      │◄──────────┼─────────────────────┘
-│  (shadows.md)   │           │         Sun position
-└────────┬────────┘           │
-         │ shadow mask        │
-         ▼                    │
-┌─────────────────┐           │
-│      SVF        │           │
-│   (svf.md)      │           │
-└────────┬────────┘           │
-         │ sky view factors   │
-         ▼                    │
-┌─────────────────┐           │
-│      GVF        │           │
-│   (gvf.md)      │           │
-└────────┬────────┘           │
-         │ ground view factors│
-         ▼                    ▼
-┌─────────────────────────────────────────┐
-│             RADIATION                    │
-│          (radiation.md)                  │
-│  ┌─────────────┐    ┌─────────────┐     │
-│  │ Shortwave K │    │ Longwave L  │     │
-│  │ Kdown, Kup  │    │ Ldown, Lup  │     │
-│  │ Kside       │    │ Lside       │     │
-│  └─────────────┘    └─────────────┘     │
-└────────────────────┬────────────────────┘
-                     │ all radiation fluxes
-                     ▼
-          ┌─────────────────┐
-          │      Tmrt       │
-          │   (tmrt.md)     │
-          └────────┬────────┘
-                   │ mean radiant temperature
-         ┌─────────┴─────────┐
-         ▼                   ▼
-┌─────────────────┐  ┌─────────────────┐
-│      UTCI       │  │      PET        │
-│   (utci.md)     │  │   (pet.md)      │
-└─────────────────┘  └─────────────────┘
-     thermal comfort indices
+ PRECOMPUTED (static)                  PER-TIMESTEP PIPELINE
+┌─────────────────┐    ┌──────────────────────────────────────────────────────┐
+│      SVF        │    │                                                      │
+│   (svf.md)      │───▶│  1. SHADOWS          shadow masks (bldg, veg, wall) │
+│                 │    │     (shadows.md)                                      │
+│  sky view       │    │          │                                            │
+│  factors        │    │          ▼                                            │
+└─────────────────┘    │  2. GROUND TEMP       Tg per land-cover type         │
+                       │     (ground_temperature.md)                           │
+ INPUT DATA            │          │                                            │
+┌─────────────────┐    │          ▼                                            │
+│ Geometry        │    │  3. GVF               ground-emitted Lup, albedo,    │
+│  - DSM          │    │     (gvf.md)          wall+ground view integration   │
+│  - DEM          │───▶│          │                                            │
+│  - CDSM (veg)   │    │          ▼                                            │
+│  - TDSM (trunk) │    │  4. THERMAL DELAY     smoothed Lup via exponential   │
+│  - Land cover   │    │     (ground_temperature.md)  decay (TsWaveDelay)     │
+│  - Albedo grid  │    │          │                                            │
+│  - Emissivity   │    │          ▼                                            │
+│                 │    │  5. RADIATION          Kdown, Kup, Kside,            │
+│ Weather         │    │     (radiation.md)     Ldown, Lup, Lside             │
+│  - Air temp (Ta)│    │          │                                            │
+│  - Humidity (RH)│    │          ▼                                            │
+│  - Wind speed   │    │  6. Tmrt              mean radiant temperature       │
+│  - Direct rad   │    │     (tmrt.md)                                        │
+│  - Diffuse rad  │    │                                                      │
+│                 │    └──────────────────────────────────────────────────────┘
+│ Time            │
+│  - Date/time    │    POST-PROCESSING (Python, not in Rust pipeline)
+│  - Location     │    ┌─────────────────┐  ┌─────────────────┐
+│    (lat/lon)    │    │      UTCI       │  │      PET        │
+└─────────────────┘    │   (utci.md)     │  │   (pet.md)      │
+                       └─────────────────┘  └─────────────────┘
 ```
+
+Note: The Rust pipeline (`pipeline.rs`) fuses stages 1-6 into a single FFI call per
+timestep. UTCI and PET are computed separately via `postprocess.py` wrappers around
+their respective Rust implementations.
 
 ## Module Dependencies
 
-| Module        | Depends On                       | Produces                   |
-| ------------- | -------------------------------- | -------------------------- |
-| **Shadows**   | DSM, sun position                | Shadow mask (per timestep) |
-| **SVF**       | DSM, CDSM                        | Sky view factors (static)  |
-| **GVF**       | SVF, walls, albedo               | Ground view factors        |
-| **Radiation** | Shadows, SVF, GVF, weather       | K and L fluxes             |
-| **Tmrt**      | All radiation fluxes             | Mean radiant temperature   |
-| **UTCI**      | Tmrt, Ta, RH, wind               | Thermal comfort index      |
-| **PET**       | Tmrt, Ta, RH, wind, human params | Thermal comfort index      |
+| Module | Depends On | Produces |
+| --- | --- | --- |
+| **SVF** | DSM, CDSM, TDSM | Sky view factors + directional SVFs (static) |
+| **Shadows** | DSM, CDSM, TDSM, walls, wall aspect, sun position | Shadow masks: bldg, veg, wall sun/shade (dynamic) |
+| **Ground Temp** | Land cover params, sun altitude, clearness index, weather | Surface temperature deviation Tg per land cover |
+| **GVF** | Shadows, walls, buildings, ground temp, weather (Ta), albedo, emissivity | Lup (W/m²), albedo-weighted view, directional |
+| **Thermal Delay** | GVF Lup, previous Tgmap1, firstdaytime flag | Smoothed Lup via exponential decay |
+| **Radiation** | Shadows, SVF, GVF, thermal delay (Lup), weather, Perez coefficients | K and L fluxes (down, up, side × 4 directions) |
+| **Tmrt** | All radiation fluxes, posture view factors | Mean radiant temperature grid |
+| **UTCI** | Tmrt, Ta, RH, wind | Thermal comfort index (°C equivalent) |
+| **PET** | Tmrt, Ta, RH, wind, weight, age, height, activity (W), clothing, sex | Thermal comfort index (°C equivalent) |
 
 ## Static vs Dynamic Calculations
 
 **Calculated Once (static geometry):**
 
-- SVF - depends only on DSM geometry
-- GVF - depends on SVF and surface properties
+- SVF - depends only on DSM/CDSM/TDSM geometry
 
 **Calculated Per Timestep:**
 
 - Shadows - sun position changes
-- Radiation - sun position + weather changes
-- Tmrt - radiation changes
+- Ground temperature - depends on sun altitude, clearness index
+- GVF - depends on shadows, ground temperature, weather (Ta). Geometry (ray distances) may be cached, but the thermal integration (Lup, albedo weighting) runs every timestep.
+- Thermal delay - exponential smoothing of Lup across timesteps
+- Radiation - depends on shadows, SVF, GVF, weather
+- Tmrt - depends on all radiation fluxes
 - UTCI/PET - all inputs change
 
 ## Key Physical Principles
@@ -129,22 +123,22 @@ Total radiation at a point combines:
 - **Diffuse shortwave (D)** - reduced by low SVF
 - **Reflected shortwave** - from ground and walls
 - **Longwave from sky** - depends on SVF and cloud cover
-- **Longwave from ground** - depends on ground temperature
+- **Longwave from ground** - depends on ground temperature (via GVF Lup and thermal delay)
 - **Longwave from walls** - depends on wall temperature and view factor
 
 ### 4. Mean Radiant Temperature
 
-Tmrt integrates radiation from all directions, weighted by human body geometry:
+Tmrt integrates radiation from all 6 directions, weighted by human body geometry:
 
-```
-Tmrt = (Sstr / (ε × σ))^0.25 - 273.15
+```text
+Tmrt = (Sstr / (abs_l × σ))^0.25 - 273.15
 ```
 
-Where Sstr = absorbed radiation from all 6 directions.
+Where Sstr = absorbed shortwave and longwave radiation from all directions, weighted by posture-dependent view factors (Fup, Fside, Fcyl). `abs_l` is the longwave absorption coefficient (default 0.97).
 
 ### 5. Thermal Comfort
 
-UTCI and PET translate the physical environment (Tmrt, Ta, wind, humidity) into equivalent temperatures that represent physiological response.
+UTCI and PET translate the physical environment (Tmrt, Ta, wind, humidity) into equivalent temperatures that represent physiological response. These are computed as a **post-processing** step outside the main Rust pipeline, via `postprocess.py` wrappers.
 
 ## Coordinate Conventions
 
@@ -161,5 +155,6 @@ UTCI and PET translate the physical environment (Tmrt, Ta, wind, humidity) into 
 | Radiation        | W/m²                 |
 | Wind speed       | m/s                  |
 | Humidity         | % (relative)         |
-| SVF/GVF          | dimensionless (0-1)  |
+| SVF              | dimensionless (0-1)  |
+| GVF Lup          | W/m²                 |
 | Pixel size       | meters               |

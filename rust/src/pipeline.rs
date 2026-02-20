@@ -26,7 +26,7 @@ use crate::gpu::AnisoGpuContext;
 use std::time::Instant;
 
 const PI: f32 = std::f32::consts::PI;
-const SBC: f32 = 5.67e-8;
+const SBC: f32 = 5.67051e-8;
 const KELVIN_OFFSET: f32 = 273.15;
 
 /// Check once per process whether timing output is enabled (``SOLWEIG_TIMING=1``).

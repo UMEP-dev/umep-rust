@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use rayon::prelude::*;
 
 /// Physical constants
-const SBC: f32 = 5.67e-8; // Stefan-Boltzmann constant (W/m²/K⁴)
+const SBC: f32 = 5.67051e-8; // Stefan-Boltzmann constant (W/m²/K⁴)
 const KELVIN_OFFSET: f32 = 273.15; // Kelvin to Celsius conversion
 
 /// View factors for standing posture

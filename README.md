@@ -7,6 +7,7 @@ SOLWEIG computes **Mean Radiant Temperature (Tmrt)** and thermal comfort indices
 Adapted from the [UMEP](https://github.com/UMEP-dev/UMEP-processing) (Urban Multi-scale Environmental Predictor) platform by Fredrik Lindberg, Sue Grimmond, and contributors — see Lindberg et al. ([2008](https://doi.org/10.1007/s00484-008-0162-7), [2018](https://doi.org/10.1016/j.envsoft.2017.09.020)). Re-implemented in Rust for speed, with optional GPU acceleration.
 
 ![UTCI thermal comfort map](docs/UTCI.jpg)
+_DSM/DEM data: [PNOA-LiDAR](https://pnoa.ign.es/pnoa-lidar), Instituto Geográfico Nacional (IGN), Spain. CC BY 4.0._
 
 > **Experimental:** This package and QGIS plugin are released for testing and discussion purposes. The API is stabilising but may change. Feedback and bug reports welcome — [open an issue](https://github.com/UMEP-dev/solweig/issues).
 

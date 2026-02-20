@@ -73,6 +73,7 @@ prepared_surface/
   wall_aspect.tif            # Computed wall aspects
   cdsm.tif                   # Aligned CDSM (if provided)
   dem.tif                    # Aligned DEM (if provided)
+  tdsm.tif                   # Aligned TDSM (if provided)
   land_cover.tif             # Aligned land cover (if provided)
   svfs.zip                   # Sky View Factor arrays
   shadowmats.npz             # Shadow matrices (for anisotropic sky)

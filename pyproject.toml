@@ -114,7 +114,7 @@ qgis-compat = [
 
 [project.urls]
 homepage = "https://github.com/UMEP-dev/solweig"
-documentation = "https://github.com/UMEP-dev/solweig"
+documentation = "https://umep-dev.github.io/solweig/"
 repository = "https://github.com/UMEP-dev/solweig"
 
 [tool.poe.tasks]

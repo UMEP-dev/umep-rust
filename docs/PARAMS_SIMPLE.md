@@ -12,17 +12,17 @@ Who is experiencing the thermal environment?
 ```python
 human = HumanParams(
     abs_k=0.7,        # Shortwave absorption (0-1)
-    abs_l=0.95,       # Longwave absorption (0-1)
+    abs_l=0.97,       # Longwave absorption (0-1)
     posture="standing",  # "standing" or "sitting"
     weight=75,        # kg (for PET post-processing)
-    height=180,       # cm (for PET post-processing)
+    height=1.75,      # m (for PET post-processing)
     age=35,           # years (for PET post-processing)
     activity=80,      # W (for PET post-processing)
     clothing=0.9,     # clo (for PET post-processing)
 )
 ```
 
-**Defaults:** abs_k=0.7, abs_l=0.95, standing, 75kg, 180cm, 35yo, 80W, 0.9 clo
+**Defaults:** abs_k=0.7, abs_l=0.97, standing, 75 kg, 1.75 m, 35 yo, 80 W, 0.9 clo
 
 **When to customize:** Different body characteristics, sitting posture
 

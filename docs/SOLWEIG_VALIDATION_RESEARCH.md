@@ -247,6 +247,6 @@ This validates **implementation correctness** but not **physical accuracy** agai
 
 **UMEP/SOLWEIG resources:**
 
-- Documentation: https://umep-docs.readthedocs.io/
+- Documentation: [umep-dev.github.io/solweig](https://umep-dev.github.io/solweig/)
 - GitHub: https://github.com/UMEP-dev/UMEP
 - Zenodo (v2025): https://zenodo.org/records/15309384

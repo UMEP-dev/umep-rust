@@ -213,7 +213,7 @@ class ModelConfig:
             human = HumanParams(**data["human"])
 
         return cls(
-            use_anisotropic_sky=data.get("use_anisotropic_sky", False),
+            use_anisotropic_sky=data.get("use_anisotropic_sky", True),
             max_shadow_distance_m=data.get("max_shadow_distance_m", 1000.0),
             tile_workers=data.get("tile_workers"),
             tile_queue_depth=data.get("tile_queue_depth"),

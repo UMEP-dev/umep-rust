@@ -42,52 +42,46 @@ results = solweig.calculate_timeseries(
 
 ## What's Captured?
 
-The metadata file records everything needed to reproduce a calculation:
+The metadata file records:
 
 ### 1. Execution Info
-- Timestamp of calculation
-- SOLWEIG version used
-- Compute backend (CPU/GPU)
 
-### 2. Location
-- Latitude, longitude, altitude
-- UTC offset
+- `solweig_version`: SOLWEIG version used
+- `run_timestamp`: When the calculation was performed
 
-### 3. Model Flags
+### 2. Grid
+
+- `rows`, `cols`: Grid dimensions
+- `pixel_size`: Pixel size in metres
+- `crs`: Coordinate reference system
+
+### 3. Location
+
+- `latitude`, `longitude`, `utc_offset`
+
+### 4. Timeseries
+
+- `start`, `end`: Date range (ISO format)
+- `timesteps`: Number of timesteps
+
+### 5. Parameters
+
 - `use_anisotropic_sky`: Sky model type
 - `conifer`: Evergreen vs deciduous trees
-- `use_legacy_kelvin_offset`: Backward compatibility flag
 
-### 4. Human Parameters
-- Posture (standing/sitting)
-- Absorption coefficients (shortwave/longwave)
-- Body metrics (age, weight, height)
-- Activity level and clothing insulation
+### 6. Outputs
 
-### 5. Physics Parameters
-- Whether custom physics file was used
-- Path to custom physics file (if any)
-- Full physics parameters (if custom)
+- `directory`: Output directory path
+- `variables`: List of output types saved
 
-### 6. Materials Parameters
-- Whether materials were used
-- Path to materials file (if any)
-- Full materials parameters (if used)
+### 7. Human Parameters (if provided)
 
-### 7. Surface Inputs
-- Paths to DSM, CDSM, landcover files
-- Bounding box and pixel size
-- CRS (coordinate reference system)
-- Grid dimensions
+- `abs_k`, `abs_l`: Absorption coefficients
+- `posture`: Standing or sitting
 
-### 8. Weather Info
-- Path to EPW file or other weather source
-- Number of timesteps
-- Date range (start and end)
+### 8. Physics and Materials (if custom)
 
-### 9. Outputs
-- Output directory path
-- List of output types saved
+- Full parameter dictionaries when custom physics or materials are provided
 
 ---
 
@@ -102,12 +96,20 @@ import solweig
 metadata = solweig.load_run_metadata("output/run_metadata.json")
 
 # Inspect key parameters
-print(f"Calculation performed: {metadata['timestamp']}")
+print(f"Calculation performed: {metadata['run_timestamp']}")
 print(f"SOLWEIG version: {metadata['solweig_version']}")
 print(f"Location: {metadata['location']['latitude']:.2f}°N")
-print(f"Human posture: {metadata['human_params']['posture']}")
-print(f"Anisotropic sky: {metadata['model_flags']['use_anisotropic_sky']}")
-print(f"Weather period: {metadata['weather']['date_range']}")
+print(f"Anisotropic sky: {metadata['parameters']['use_anisotropic_sky']}")
+print(f"Weather period: {metadata['timeseries']['start']} to {metadata['timeseries']['end']}")
+print(f"Timesteps: {metadata['timeseries']['timesteps']}")
+```
+
+If human parameters were provided:
+
+```python
+if "human" in metadata:
+    print(f"Posture: {metadata['human']['posture']}")
+    print(f"abs_k: {metadata['human']['abs_k']}")
 ```
 
 ---
@@ -130,9 +132,11 @@ metadata = solweig.create_run_metadata(
     surface=surface,
     location=location,
     weather_series=weather,
-    weather_source_path="weather.epw",
     human=human,
+    physics=None,
+    materials=None,
     use_anisotropic_sky=True,
+    conifer=False,
     output_dir="output/",
     outputs=["tmrt", "shadow"],
 )
@@ -149,55 +153,36 @@ Here's what a typical `run_metadata.json` looks like:
 
 ```json
 {
-  "timestamp": "2024-07-15T14:30:22.123456",
   "solweig_version": "0.0.1a1",
-  "compute_backend": "cpu",
+  "run_timestamp": "2024-07-15T14:30:22.123456",
+  "grid": {
+    "rows": 400,
+    "cols": 400,
+    "pixel_size": 1.0,
+    "crs": "PROJCS[...]"
+  },
   "location": {
     "latitude": 37.98,
     "longitude": 23.73,
-    "altitude": 0.0,
     "utc_offset": 2
   },
-  "model_flags": {
+  "timeseries": {
+    "start": "2023-07-01T00:00:00",
+    "end": "2023-07-03T23:00:00",
+    "timesteps": 72
+  },
+  "parameters": {
     "use_anisotropic_sky": true,
-    "conifer": false,
-    "use_legacy_kelvin_offset": false
-  },
-  "human_params": {
-    "posture": "standing",
-    "abs_k": 0.7,
-    "abs_l": 0.95,
-    "age": 35,
-    "weight": 75,
-    "height": 180,
-    "activity": 80,
-    "clothing": 0.9
-  },
-  "physics": {
-    "custom": false,
-    "path": null
-  },
-  "materials": {
-    "used": false,
-    "path": null
-  },
-  "surface": {
-    "dsm_path": "/path/to/DSM.tif",
-    "cdsm_path": "/path/to/CDSM.tif",
-    "land_cover_path": null,
-    "bbox": [476800, 4205850, 477200, 4206250],
-    "pixel_size": 1.0,
-    "crs_wkt": "PROJCS[...]",
-    "shape": [400, 400]
-  },
-  "weather": {
-    "source_path": "/path/to/athens_2023.epw",
-    "num_timesteps": 72,
-    "date_range": ["2023-07-01T00:00:00", "2023-07-03T23:00:00"]
+    "conifer": false
   },
   "outputs": {
-    "output_dir": "/path/to/output",
-    "outputs": ["tmrt", "shadow"]
+    "directory": "/path/to/output",
+    "variables": ["tmrt", "shadow"]
+  },
+  "human": {
+    "abs_k": 0.7,
+    "abs_l": 0.97,
+    "posture": "standing"
   }
 }
 ```
@@ -233,11 +218,12 @@ meta_run1 = solweig.load_run_metadata("run1/run_metadata.json")
 meta_run2 = solweig.load_run_metadata("run2/run_metadata.json")
 
 # Compare key parameters
-print("Run 1 posture:", meta_run1['human_params']['posture'])
-print("Run 2 posture:", meta_run2['human_params']['posture'])
+if "human" in meta_run1 and "human" in meta_run2:
+    print("Run 1 posture:", meta_run1['human']['posture'])
+    print("Run 2 posture:", meta_run2['human']['posture'])
 
-print("Run 1 sky model:", meta_run1['model_flags']['use_anisotropic_sky'])
-print("Run 2 sky model:", meta_run2['model_flags']['use_anisotropic_sky'])
+print("Run 1 sky model:", meta_run1['parameters']['use_anisotropic_sky'])
+print("Run 2 sky model:", meta_run2['parameters']['use_anisotropic_sky'])
 ```
 
 ### Archival and Documentation
@@ -263,12 +249,12 @@ Verify parameters when results seem unexpected:
 metadata = solweig.load_run_metadata("output/run_metadata.json")
 
 # Check if anisotropic sky was actually enabled
-if not metadata['model_flags']['use_anisotropic_sky']:
+if not metadata['parameters']['use_anisotropic_sky']:
     print("Warning: Anisotropic sky was disabled!")
 
 # Check human parameters
-if metadata['human_params']['posture'] != 'standing':
-    print(f"Note: Results are for {metadata['human_params']['posture']} posture")
+if "human" in metadata and metadata['human']['posture'] != 'standing':
+    print(f"Note: Results are for {metadata['human']['posture']} posture")
 ```
 
 ---
@@ -289,44 +275,10 @@ results = solweig.calculate_timeseries(
 )
 
 # Metadata now includes:
-# - physics.custom: true
-# - physics.path: "custom_trees.json"
 # - physics.full_params: {...complete physics parameters...}
 ```
 
 This ensures the metadata is **self-contained** - you don't need to keep track of the separate physics file.
-
----
-
-## Backward Compatibility Notes
-
-The metadata system is designed to **complement**, not replace, the old config file approach.
-
-**Old workflow (still supported):**
-```python
-# Legacy API with config files
-SRR = solweig.SolweigRunRust(
-    "configsolweig.ini",
-    "parametersforsolweig.json"
-)
-SRR.run()
-# No automatic metadata saved
-```
-
-**New workflow:**
-```python
-# Simplified API with automatic metadata
-results = solweig.calculate_timeseries(
-    surface, weather,
-    output_dir="output/",
-)
-# Metadata automatically saved to output/run_metadata.json
-```
-
-The metadata format is JSON-based and **not intended** to be a drop-in replacement for the old `.ini` config format. Instead, it provides a **more complete** record that includes:
-- Runtime information (timestamp, version)
-- Derived values (auto-extracted location)
-- Complete parameter sets (physics, materials)
 
 ---
 
@@ -337,20 +289,17 @@ The metadata format is JSON-based and **not intended** to be a drop-in replaceme
 Create a metadata dictionary for a SOLWEIG run.
 
 **Parameters:**
+
 - `surface`: SurfaceData object
 - `location`: Location object
-- `weather_series`: List of Weather objects (optional)
-- `weather_source_path`: Path to EPW file (optional)
-- `human`: HumanParams object (optional, uses defaults if None)
-- `physics`: Physics parameters from load_physics() (optional)
-- `physics_path`: Path to custom physics file (optional)
-- `materials`: Materials from load_materials() (optional)
-- `materials_path`: Path to materials file (optional)
-- `use_anisotropic_sky`: Anisotropic sky flag
-- `conifer`: Conifer mode flag
-- `output_dir`: Output directory path (optional)
-- `outputs`: List of output types (optional)
-- `use_legacy_kelvin_offset`: Backward compatibility flag
+- `weather_series`: List of Weather objects
+- `human`: HumanParams object (or None for defaults)
+- `physics`: Physics parameters from load_physics() (or None)
+- `materials`: Materials from load_materials() (or None)
+- `use_anisotropic_sky`: Whether anisotropic sky model was used
+- `conifer`: Whether conifer mode was used
+- `output_dir`: Output directory path
+- `outputs`: List of output types saved
 
 **Returns:** Dictionary containing complete metadata
 
@@ -361,6 +310,7 @@ Create a metadata dictionary for a SOLWEIG run.
 Save metadata dictionary to JSON file.
 
 **Parameters:**
+
 - `metadata`: Metadata dict from create_run_metadata()
 - `output_dir`: Directory to save metadata file
 - `filename`: Filename (default: "run_metadata.json")
@@ -374,6 +324,7 @@ Save metadata dictionary to JSON file.
 Load metadata from JSON file.
 
 **Parameters:**
+
 - `metadata_path`: Path to metadata JSON file
 
 **Returns:** Metadata dictionary

@@ -57,7 +57,7 @@ class SolweigAlgorithmBase(QgsProcessingAlgorithm):
 
     def helpUrl(self) -> str:
         """Return URL to algorithm documentation."""
-        return "https://umep-docs.readthedocs.io/"
+        return "https://umep-dev.github.io/solweig/guide/qgis-plugin/"
 
     # -------------------------------------------------------------------------
     # SOLWEIG Import Helper

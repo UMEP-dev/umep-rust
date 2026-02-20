@@ -67,6 +67,16 @@ print(f"Mean UTCI: {utci.mean():.1f}°C")
 | -27 to -13 | Strong cold stress |
 | < -40 | Extreme cold stress |
 
+### Interpreting results
+
+On a hot summer day (air temperature ~32 °C, clear sky), typical values:
+
+- **Sunlit areas:** Tmrt 55–70 °C, UTCI 35–45 °C (strong to very strong heat stress)
+- **Shaded areas:** Tmrt 35–45 °C, UTCI 28–34 °C (moderate to strong heat stress)
+- **Shade benefit:** Tree shade typically reduces UTCI by 5–15 K — often enough to shift one stress category
+
+Values outside these ranges are not necessarily wrong — they depend on latitude, time of year, and surface materials — but extreme outliers (e.g., Tmrt > 80 °C or UTCI > 55 °C) may indicate input issues.
+
 ### Performance
 
 UTCI uses a fast polynomial approximation (~200 terms). Processing time is negligible compared to the main Tmrt calculation:
@@ -112,7 +122,7 @@ pet = result.compute_pet(
         weight=60,           # kg
         height=1.65,         # m
         age=70,              # years
-        sex=0,               # 0 = female, 1 = male
+        sex=2,               # 1=male, 2=female
         activity=80.0,       # metabolic rate (W)
         clothing=0.5,        # clothing insulation (clo)
         posture="standing",

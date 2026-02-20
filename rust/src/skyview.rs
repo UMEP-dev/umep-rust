@@ -400,7 +400,7 @@ fn calculate_svf_inner(
                     "GPU context became unavailable during SVF execution",
                 )
             })?;
-            let min_elev = min_sun_elev_deg.unwrap_or(5.0_f32);
+            let min_elev = min_sun_elev_deg.unwrap_or(3.0_f32);
             const MAX_INFLIGHT_SVF_SUBMITS: usize = 8;
             let progress_cap = patches.len().saturating_sub(1);
             let mut inflight_submissions: VecDeque<wgpu::SubmissionIndex> = VecDeque::new();
@@ -564,7 +564,7 @@ fn calculate_svf_inner(
                 patch.altitude,
                 scale,
                 max_local_dsm_ht,
-                min_sun_elev_deg.unwrap_or(5.0_f32),
+                min_sun_elev_deg.unwrap_or(3.0_f32),
                 max_shadow_distance_m,
             );
 

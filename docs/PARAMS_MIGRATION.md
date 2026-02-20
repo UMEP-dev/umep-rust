@@ -65,7 +65,7 @@ The new API simplifies this:
 | Old API (params.json)           | New API                           | Status      | Notes |
 |---------------------------------|-----------------------------------|-------------|-------|
 | `Tmrt_params.absK`              | `HumanParams(abs_k=0.7)`          | ✅ BUNDLED  | Default 0.7 in bundled params |
-| `Tmrt_params.absL`              | `HumanParams(abs_l=0.95)`         | ✅ BUNDLED  | Default 0.95 in bundled params |
+| `Tmrt_params.absL`              | `HumanParams(abs_l=0.97)`         | ✅ BUNDLED  | Default 0.97 in bundled params |
 | `Tmrt_params.posture`           | `HumanParams(posture="standing")` | ✅ BUNDLED  | "standing" or "sitting" |
 | `Posture.Standing.Fside`        | Internal constant                 | ✅ BUNDLED  | 0.22 (from bundled params) |
 | `Posture.Standing.Fup`          | Internal constant                 | ✅ BUNDLED  | 0.06 (from bundled params) |
@@ -79,8 +79,8 @@ The new API simplifies this:
 |---------------------------------|-----------------------------------|-------------|-------|
 | `PET_settings.Age`              | `HumanParams(age=35)`             | ✅ BUNDLED  | Default 35 in bundled params |
 | `PET_settings.Weight`           | `HumanParams(weight=75)`          | ✅ BUNDLED  | Default 75 kg in bundled params |
-| `PET_settings.Height`           | `HumanParams(height=180)`         | ✅ BUNDLED  | Default 180 cm in bundled params |
-| `PET_settings.Sex`              | `HumanParams(sex="Male")`         | ✅ BUNDLED  | "Male" or "Female" |
+| `PET_settings.Height`           | `HumanParams(height=1.75)`        | ✅ BUNDLED  | Default 1.75 m in bundled params |
+| `PET_settings.Sex`              | `HumanParams(sex=1)`              | ✅ BUNDLED  | Default 1 (1=male, 2=female) |
 | `PET_settings.Activity`         | `HumanParams(activity=80)`        | ✅ BUNDLED  | Default 80 W in bundled params |
 | `PET_settings.clo`              | `HumanParams(clothing=0.9)`       | ✅ BUNDLED  | Default 0.9 clo in bundled params |
 | `Wind_Height.magl`              | `weather.wind_speed_height`       | ⏳ TODO     | Currently assumes 10m (planned) |
@@ -154,7 +154,7 @@ results = solweig.calculate_timeseries(
     output_dir="output/",
 )
 # Uses bundled defaults:
-# - abs_k=0.7, abs_l=0.95, posture="standing"
+# - abs_k=0.7, abs_l=0.97, posture="standing"
 # - Vegetation transmissivity=0.03, deciduous trees
 # - Sky model from ModelConfig defaults (override explicitly if needed)
 ```
