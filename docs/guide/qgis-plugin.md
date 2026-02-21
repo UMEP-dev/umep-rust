@@ -2,8 +2,6 @@
 
 SOLWEIG is available as a **QGIS Processing plugin** for point-and-click spatial analysis — no Python scripting required. All algorithms run inside the QGIS Processing Toolbox and produce standard GeoTIFF outputs that load directly into the map canvas.
 
-This package is adapted from the [UMEP](https://github.com/UMEP-dev/UMEP-processing) (Urban Multi-scale Environmental Predictor) platform by Fredrik Lindberg, Sue Grimmond, and contributors. For the original model description, see Lindberg et al. (2008) [doi:10.1007/s00484-008-0162-7](https://doi.org/10.1007/s00484-008-0162-7) and for the UMEP platform, see Lindberg et al. (2018) [doi:10.1016/j.envsoft.2017.09.020](https://doi.org/10.1016/j.envsoft.2017.09.020).
-
 !!! warning "Experimental"
     This package and plugin are experimental — released for testing and discussion purposes. The API is stabilising but may change. Feedback and bug reports are welcome via [GitHub Issues](https://github.com/UMEP-dev/solweig/issues).
 
