@@ -507,14 +507,16 @@ class SurfaceData:
         if preprocess_data["compute_svf"]:
             cls._compute_and_cache_svf(surface_data, aligned_rasters, working_path, trunk_ratio, feedback=feedback)
 
-        # Preprocess layers with relative heights to absolute
+        # Preprocess layers: convert relative heights to absolute and
+        # enforce DSM >= DEM (terrain is the minimum surface elevation).
         needs_preprocess = (
             dsm_relative
             or (cdsm_relative and surface_data.cdsm is not None)
             or (tdsm_relative and surface_data.tdsm is not None)
+            or surface_data.dem is not None
         )
         if needs_preprocess:
-            logger.debug("  Preprocessing relative heights → absolute")
+            logger.debug("  Preprocessing heights")
             surface_data.preprocess()
 
         # Compute unified valid mask, apply across all layers, crop to valid bbox
@@ -586,14 +588,16 @@ class SurfaceData:
             tdsm_relative=tdsm_relative,
         )
 
-        # Preprocess relative heights to absolute
+        # Preprocess: convert relative heights to absolute and
+        # enforce DSM >= DEM (terrain is the minimum surface elevation).
         needs_preprocess = (
             dsm_relative
             or (cdsm_relative and surface_data.cdsm is not None)
             or (tdsm_relative and surface_data.tdsm is not None)
+            or surface_data.dem is not None
         )
         if needs_preprocess:
-            logger.debug("  Preprocessing relative heights → absolute")
+            logger.debug("  Preprocessing heights")
             surface_data.preprocess()
 
         # Compute walls if not provided
@@ -1832,6 +1836,18 @@ class SurfaceData:
             logger.info("Converting relative DSM to absolute: DSM = DEM + nDSM")
             self.dsm = (self.dem + self.dsm).astype(np.float32)
             self.dsm_relative = False
+
+        # Step 1b: Ensure DSM is never below DEM (terrain is the minimum surface)
+        # This handles cases where an absolute DSM has gaps or zero-valued
+        # pixels (e.g. a building-only nDSM passed without dsm_relative=True)
+        # that would otherwise sit below the terrain, producing incorrect
+        # shadows.
+        if self.dem is not None:
+            below = self.dsm < self.dem
+            if np.any(below):
+                n = int(below.sum())
+                logger.info(f"Raising {n} DSM pixels to DEM (DSM was below terrain)")
+                self.dsm = np.maximum(self.dsm, self.dem).astype(np.float32)
 
         # Step 2: Auto-generate TDSM from trunk ratio if CDSM provided but not TDSM
         if self.cdsm is not None and self.tdsm is None:

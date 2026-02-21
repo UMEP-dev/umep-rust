@@ -313,4 +313,5 @@ This means `calculate()` could not find SVF data. Make sure you used `SurfaceDat
 For end-to-end examples you can run directly:
 
 - **[demos/athens-demo.py](https://github.com/UMEP-dev/solweig/blob/main/demos/athens-demo.py)** — Full GeoTIFF workflow with tree vectors, multi-day timeseries, and UTCI post-processing.
+- **[demos/bilbao-demo.py](https://github.com/UMEP-dev/solweig/blob/main/demos/bilbao-demo.py)** — Terrain-aware shadows in a mountain valley: relative building heights (`dsm_relative=True`), separate DEM, and `max_shadow_distance_m` for hillside shadow reach.
 - **[demos/solweig_gbg_test.py](https://github.com/UMEP-dev/solweig/blob/main/demos/solweig_gbg_test.py)** — Gothenburg test data: surface preparation, SVF caching, and timeseries.
