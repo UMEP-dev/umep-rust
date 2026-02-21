@@ -92,7 +92,7 @@ print(f"Done — {len(results)} timesteps saved to output/")
 
 If disk space is limited, omit `output_dir` — the returned `TimeseriesSummary`
 contains aggregated grids (mean/max/min Tmrt, UTCI, sun hours, etc.). See
-[Timeseries](../guide/timeseries.md#choose-an-output-strategy).
+[Timeseries](../guide/timeseries.md).
 
 ### What `prepare()` does behind the scenes
 
