@@ -40,7 +40,7 @@ weather = solweig.Weather(
 )
 
 # --- 3. Calculate ---
-result = solweig.calculate(surface, location, weather)
+result = solweig.calculate(surface, location, weather, output_dir="output/")
 
 # --- 4. Inspect results ---
 print(f"Mean Tmrt:   {result.tmrt.mean():.1f}°C")
@@ -90,9 +90,8 @@ results = solweig.calculate(
 print(f"Done — {len(results)} timesteps saved to output/")
 ```
 
-If disk space is limited, omit `output_dir` — the returned `TimeseriesSummary`
-contains aggregated grids (mean/max/min Tmrt, UTCI, sun hours, etc.). See
-[Timeseries](../guide/timeseries.md).
+The returned `TimeseriesSummary` contains aggregated grids (mean/max/min Tmrt,
+UTCI, sun hours, etc.) — see [Timeseries](../guide/timeseries.md).
 
 ### What `prepare()` does behind the scenes
 

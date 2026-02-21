@@ -219,6 +219,7 @@ results = solweig.calculate(
     weather=weather_list,
     location=location,
     conifer=True,  # Trees always have full canopy
+    output_dir="output/",
 )
 ```
 
@@ -236,6 +237,7 @@ result = solweig.calculate(
         weight=65,           # kg (affects PET only)
         height=1.65,         # m (affects PET only)
     ),
+    output_dir="output/",
 )
 ```
 
@@ -254,6 +256,7 @@ results = solweig.calculate(
     weather=weather_list,
     location=location,
     use_anisotropic_sky=False,
+    output_dir="output/",
 )
 ```
 
@@ -266,7 +269,7 @@ try:
     warnings = solweig.validate_inputs(surface, location, weather)
     for w in warnings:
         print(f"Warning: {w}")
-    result = solweig.calculate(surface, location, weather)
+    result = solweig.calculate(surface, location, weather, output_dir="output/")
 except solweig.GridShapeMismatch as e:
     print(f"Grid size mismatch: {e.field} expected {e.expected}, got {e.got}")
 except solweig.MissingPrecomputedData as e:
@@ -290,7 +293,7 @@ print(f"GPU: {solweig.is_gpu_available()}")
 print(f"Backend: {solweig.get_compute_backend()}")
 ```
 
-The package falls back to CPU automatically. GPU gives ~5–10x speedup for shadow and SVF computation.
+The package falls back to CPU automatically. GPU substantially speeds up SVF and shadow computation.
 
 ### CRS must be projected (metres)
 

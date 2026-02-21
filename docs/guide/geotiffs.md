@@ -165,6 +165,7 @@ results = solweig.calculate(
     surface=surface,
     location=location,
     weather=weather,
+    output_dir="output/",
 )
 ```
 

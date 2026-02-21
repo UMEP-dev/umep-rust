@@ -36,6 +36,7 @@ summary = solweig.calculate(
     surface=solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="output"),
     weather=solweig.Weather.from_umep_met("weather.txt"),
     location=solweig.Location.from_surface(surface, utc_offset=1),
+    output_dir="output/",
 )
 summary.report()
 ```

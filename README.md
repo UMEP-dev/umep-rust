@@ -88,7 +88,7 @@ weather = solweig.Weather(
     global_rad=850.0, # Solar radiation (W/m²)
 )
 
-result = solweig.calculate(surface, location, weather)
+result = solweig.calculate(surface, location, weather, output_dir="output/")
 
 print(f"Sunlit Tmrt: {result.tmrt[result.shadow > 0.5].mean():.0f}°C")
 print(f"Shaded Tmrt: {result.tmrt[result.shadow < 0.5].mean():.0f}°C")
@@ -240,7 +240,7 @@ human = solweig.HumanParams(
     # PET-specific:
     age=35, weight=75, height=1.75, sex=1, activity=80, clothing=0.9,
 )
-result = solweig.calculate(surface, location, weather, human=human)
+result = solweig.calculate(surface, location, weather, human=human, output_dir="output/")
 ```
 
 ### Model options
@@ -270,6 +270,7 @@ summary = solweig.calculate(
     location=location,
     physics=physics,
     materials=materials,
+    output_dir="output/",
 )
 ```
 

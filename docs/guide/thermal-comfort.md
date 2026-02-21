@@ -14,7 +14,7 @@ UTCI summary grids (mean, max, min, day/night averages) are always computed
 as part of `TimeseriesSummary`:
 
 ```python
-summary = solweig.calculate(surface=surface, weather=weather_list)
+summary = solweig.calculate(surface=surface, weather=weather_list, output_dir="output/")
 print(summary.report())  # Includes Tmrt, UTCI, sun hours, threshold exceedance
 ```
 
@@ -34,7 +34,7 @@ summary = solweig.calculate(
 ### From a single result
 
 ```python
-result = solweig.calculate(surface, location, weather)
+result = solweig.calculate(surface, location, weather, output_dir="output/")
 utci = result.compute_utci(weather)
 print(f"Mean UTCI: {utci.mean():.1f}°C")
 ```
@@ -95,7 +95,7 @@ summary = solweig.calculate(
 ### Single-result PET
 
 ```python
-result = solweig.calculate(surface, location, weather)
+result = solweig.calculate(surface, location, weather, output_dir="output/")
 pet = result.compute_pet(weather)
 print(f"Mean PET: {pet.mean():.1f}°C")
 ```

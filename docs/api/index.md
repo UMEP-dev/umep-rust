@@ -49,7 +49,7 @@ import solweig
 
 # All public API is available at the top level
 surface = solweig.SurfaceData(dsm=my_dsm, pixel_size=1.0)
-result = solweig.calculate(surface, location, weather)
+result = solweig.calculate(surface, location, weather, output_dir="output/")
 ```
 
 ## Type Annotations
@@ -63,5 +63,5 @@ def process_area(dsm: np.ndarray) -> SolweigResult:
     surface: SurfaceData = SurfaceData(dsm=dsm, pixel_size=1.0)
     location: Location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
     weather: Weather = Weather(...)
-    return solweig.calculate(surface, location, weather)
+    return solweig.calculate(surface, location, weather, output_dir="output/")
 ```
