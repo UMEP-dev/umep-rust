@@ -54,9 +54,6 @@ from .api import (  # noqa: E402
     calculate,
     # Tiling utilities
     calculate_buffer_distance,
-    compute_pet_grid,
-    # Post-processing: Thermal comfort indices
-    compute_utci_grid,
     # Run metadata/provenance
     create_run_metadata,
     # I/O
@@ -183,9 +180,6 @@ __all__ = [
     "calculate_buffer_distance",
     "TileSpec",
     "generate_tiles",
-    # Post-processing: Thermal comfort
-    "compute_utci_grid",
-    "compute_pet_grid",
     # Run metadata/provenance
     "create_run_metadata",
     "save_run_metadata",

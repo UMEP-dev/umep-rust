@@ -110,7 +110,7 @@ jobs:
         run: uv sync --group qgis-compat
 
       - name: Install GDAL Python bindings matching system
-        run: uv pip install "gdal==$(gdal-config --version)"
+        run: uv pip install --no-build-isolation "gdal==$(gdal-config --version)"
 
       - name: Build Rust extension
         run: uv run maturin develop --release

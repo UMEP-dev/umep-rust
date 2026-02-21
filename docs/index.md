@@ -52,6 +52,12 @@ SOLWEIG models the complete radiation budget experienced by a person standing ou
 5. **Tmrt** — Convert absorbed radiation into a single "felt temperature"
 6. **Thermal comfort** — Optionally derive UTCI or PET indices
 
+!!! note "SVF Rule"
+    `SurfaceData.prepare()` computes SVF automatically. SVF data must exist before calling `calculate()`.
+
+!!! note "Anisotropic Rule"
+    The anisotropic sky model is on by default (`use_anisotropic_sky=True`). It requires the SVF and shadow matrices that `prepare()` provides.
+
 ## Documentation
 
 <div class="grid cards" markdown>

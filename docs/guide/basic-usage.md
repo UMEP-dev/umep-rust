@@ -241,7 +241,7 @@ result = solweig.calculate(
 
 ## Anisotropic sky model
 
-The anisotropic sky model is **on by default**. It distributes diffuse radiation
+The anisotropic sky model is **on by default** (`use_anisotropic_sky=True`). It distributes diffuse radiation
 realistically across the sky dome instead of treating it as uniform. No extra
 setup is needed — `SurfaceData.prepare()` computes everything required (SVF and
 shadow matrices).

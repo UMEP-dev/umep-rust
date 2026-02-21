@@ -55,10 +55,6 @@ from .models import (
     TileSpec,
     Weather,
 )
-from .postprocess import (
-    compute_pet_grid,
-    compute_utci_grid,
-)
 from .summary import Timeseries, TimeseriesSummary
 from .tiling import (
     calculate_buffer_distance,
@@ -489,9 +485,6 @@ __all__ = [
     "MissingPrecomputedData",
     "WeatherDataError",
     "ConfigurationError",
-    # Post-processing
-    "compute_utci_grid",
-    "compute_pet_grid",
     # Configuration loading
     "load_params",
     "load_physics",

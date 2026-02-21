@@ -10,8 +10,6 @@ SOLWEIG provides a clean, minimal API for urban microclimate calculations.
 |----------|-------------|
 | [`calculate()`](functions.md#calculate) | Single or multi-timestep Tmrt calculation (tiling is automatic for large rasters) |
 | [`validate_inputs()`](functions.md#validate_inputs) | Pre-flight input validation |
-| [`compute_utci_grid()`](functions.md#compute_utci_grid) | UTCI from Tmrt grid |
-| [`compute_pet_grid()`](functions.md#compute_pet_grid) | PET from Tmrt grid |
 
 ### Data Classes
 
