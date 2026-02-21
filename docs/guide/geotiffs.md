@@ -6,6 +6,8 @@ Most real-world SOLWEIG projects start from GeoTIFF raster files. This guide cov
 
 `SurfaceData.prepare()` is the recommended way to load GeoTIFFs. It handles everything: loading, NaN filling, wall computation, SVF computation, and caching.
 
+All input rasters must use a **projected CRS** with units in metres (e.g. UTM). Geographic CRS (lat/lon in degrees) is not supported — reproject with `gdalwarp` or your GIS tool first.
+
 ```python
 import solweig
 
@@ -18,9 +20,13 @@ surface = solweig.SurfaceData.prepare(
 )
 ```
 
+### Extent alignment
+
+When you provide multiple rasters (DSM, CDSM, DEM, etc.) that cover different areas or have different resolutions, `prepare()` automatically crops and resamples them to their **intersecting extent** — only the area covered by all inputs is used. No manual alignment is needed.
+
 ### Cropping to a bounding box
 
-Process only part of a large raster:
+To process only part of your rasters, pass a `bbox` to override the automatic intersection:
 
 ```python
 surface = solweig.SurfaceData.prepare(
@@ -31,7 +37,7 @@ surface = solweig.SurfaceData.prepare(
 )
 ```
 
-Coordinates are in the DSM's native CRS (e.g. UTM metres).
+Coordinates are in the DSM's native CRS (e.g. UTM metres). The `bbox` is intersected with the available data — pixels outside the raster extents are not extrapolated.
 
 ## What gets cached
 
@@ -61,7 +67,7 @@ surface = solweig.SurfaceData.prepare(
 )
 ```
 
-SOLWEIG also validates cached data against the current DSM — if the dimensions or extent change, the cache is automatically invalidated.
+SOLWEIG validates cached data against the current DSM — if the dimensions, extent, or pixel values change, the cache is automatically invalidated and recomputed on the next `prepare()` call. You only need `force_recompute=True` when you want to bypass this check (e.g. after changing vegetation inputs that don't affect the DSM hash).
 
 ## Extracting location from CRS
 

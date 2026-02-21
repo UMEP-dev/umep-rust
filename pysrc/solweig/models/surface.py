@@ -344,59 +344,50 @@ class SurfaceData:
         """
         Prepare surface data for SOLWEIG calculations.
 
-        Accepts either file paths (GeoTIFF) or numpy arrays. Walls, SVF,
-        and height preprocessing are handled automatically in both cases.
+        Loads inputs, computes walls, SVF, and shadow matrices, and returns
+        a ready-to-use :class:`SurfaceData`. This is the only setup step
+        needed before calling :func:`calculate`.
 
-        **File mode** (dsm is a path): loads rasters from disk, aligns
-        extents, computes/caches walls and SVF in ``working_dir``.
+        Accepts either **file paths** (GeoTIFF) or **numpy arrays**:
 
-        **Array mode** (dsm is an ndarray): works entirely in memory.
-        ``pixel_size`` is required. ``working_dir`` is not needed. All
-        provided arrays must have the same shape.
+        - *File mode* (dsm is a path): loads and aligns rasters, caches
+          results in ``working_dir`` for fast reuse.
+        - *Array mode* (dsm is an ndarray): works in memory.
+          ``pixel_size`` is required; ``working_dir`` is not needed.
 
         Args:
             dsm: DSM as a GeoTIFF path or numpy array (required).
-            working_dir: Working directory for caching (required for file mode,
-                ignored for array mode).
-            cdsm: CDSM as a GeoTIFF path or numpy array (optional).
-            dem: DEM as a GeoTIFF path or numpy array (optional).
-            tdsm: TDSM as a GeoTIFF path or numpy array (optional).
-            land_cover: Land cover as a GeoTIFF path or numpy array (optional).
-            wall_height: Wall heights as a GeoTIFF path or numpy array (optional).
-                If not provided, computed from DSM automatically.
-            wall_aspect: Wall aspects as a GeoTIFF path or numpy array (optional).
-                If not provided, computed from DSM automatically.
-            svf_dir: Directory containing SVF preprocessing files (file mode only).
+            working_dir: Cache directory (required for file mode).
+            cdsm: Canopy height model (tree tops). Optional.
+            dem: Ground elevation model. Optional.
+            tdsm: Trunk height model. Optional; auto-generated from CDSM
+                if not provided (using ``trunk_ratio``).
+            land_cover: Land cover classification grid. Optional.
+            wall_height: Pre-computed wall heights. Optional; computed
+                from DSM if not provided.
+            wall_aspect: Pre-computed wall aspects. Optional; computed
+                from DSM if not provided.
+            svf_dir: Directory with existing SVF files (file mode only).
             bbox: Bounding box [minx, miny, maxx, maxy] (file mode only).
-            pixel_size: Pixel size in meters. Required for array mode.
-                For file mode, extracted from GeoTIFF if None.
-            trunk_ratio: Ratio for auto-generating TDSM from CDSM. Default 0.25.
-            dsm_relative: Whether DSM contains relative heights. Default False.
-            cdsm_relative: Whether CDSM contains relative heights. Default True.
-            tdsm_relative: Whether TDSM contains relative heights. Default True.
-            force_recompute: If True, recompute walls/SVF (file mode only).
-            feedback: Optional QGIS QgsProcessingFeedback for progress/cancellation.
+            pixel_size: Pixel size in meters. Required for array mode;
+                extracted from GeoTIFF in file mode.
+            trunk_ratio: Trunk-to-canopy height ratio for auto TDSM. Default 0.25.
+            dsm_relative: DSM values are height above ground (not elevation). Default False.
+            cdsm_relative: CDSM values are height above ground. Default True.
+            tdsm_relative: TDSM values are height above ground. Default True.
+            force_recompute: Recompute walls/SVF even if cached (file mode only).
+            feedback: QGIS QgsProcessingFeedback for progress/cancellation.
 
         Returns:
-            SurfaceData instance ready for calculate().
+            SurfaceData ready for :func:`calculate`.
 
-        Example:
+        Example::
+
             # From GeoTIFF files
-            surface = SurfaceData.prepare(
-                dsm="data/dsm.tif",
-                working_dir="cache/",
-                cdsm="data/cdsm.tif",
-            )
+            surface = SurfaceData.prepare(dsm="dsm.tif", working_dir="cache/")
 
             # From numpy arrays
             surface = SurfaceData.prepare(dsm=dsm_array, pixel_size=1.0)
-
-            # Arrays with vegetation
-            surface = SurfaceData.prepare(
-                dsm=dsm_array,
-                cdsm=cdsm_array,
-                pixel_size=1.0,
-            )
         """
         # Array mode: delegate to in-memory preparation
         if isinstance(dsm, np.ndarray):
@@ -1873,24 +1864,17 @@ class SurfaceData:
 
     def compute_svf(self) -> None:
         """
-        Compute Sky View Factor (SVF) and store in self.svf.
+        Compute SVF and shadow matrices, storing them on this instance.
 
-        This must be called before calculate()
-        when constructing SurfaceData manually (not via prepare()).
+        Only needed when constructing SurfaceData manually.
+        :meth:`prepare` calls this automatically.
 
-        SVF is stored without psi (vegetation transmissivity) adjustment,
-        since psi depends on day-of-year and conifer flag which are not
-        known at SVF computation time. The adjustment is applied automatically
-        during calculation.
+        Example::
 
-        Also computes and stores shadow matrices in self.shadow_matrices
-        (required for anisotropic sky model).
-
-        Example:
-            surface = SurfaceData(dsm=dsm, cdsm=cdsm)
+            surface = SurfaceData(dsm=dsm, pixel_size=1.0)
             surface.preprocess()
             surface.compute_svf()
-            result = calculate(surface, location, weather)
+            result = calculate(surface, weather)
         """
         if self.svf is not None:
             return  # Already computed

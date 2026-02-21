@@ -1,13 +1,8 @@
 """
-SVF (Sky View Factor) resolution component.
+Internal SVF resolution.
 
-Resolves SVF data from two sources:
-1. Cached SVF from surface preparation (surface.svf)
-2. Pre-computed SVF (precomputed.svf)
-
-Raises MissingPrecomputedData if no SVF is available.
-SVF must be computed explicitly via surface.compute_svf() or
-SurfaceData.prepare() before calling calculate().
+Looks up SVF arrays from ``surface.svf`` or ``precomputed.svf`` at
+calculation time. Not part of the public API.
 """
 
 from __future__ import annotations
@@ -36,33 +31,10 @@ def resolve_svf(
     psi: float | None = None,
 ) -> tuple[SvfBundle, bool]:
     """
-    Resolve SVF data from available precomputed sources.
+    Look up SVF from surface or precomputed data.
 
-    Checks two sources in priority order:
-    1. surface.svf (cached/prepared) - fastest
-    2. precomputed.svf (legacy) - fast
-
-    Args:
-        surface: Surface data (may contain cached SVF)
-        precomputed: Pre-computed data (may contain SVF)
-        dsm: Digital Surface Model (reserved for compatibility; not used here)
-        cdsm: Canopy DSM (reserved for compatibility; not used here)
-        tdsm: Trunk DSM (reserved for compatibility; not used here)
-        pixel_size: Grid resolution in meters
-        use_veg: Whether vegetation is active (kept for signature compatibility)
-        max_height: Maximum building height (reserved for compatibility; not used here)
-        psi: Vegetation transmissivity (optional, for svfbuveg calculation)
-             Reserved for compatibility; not used here.
-
-    Returns:
-        Tuple of (SvfBundle, needs_psi_adjustment):
-            - SvfBundle: Complete SVF data with all directional components
-            - needs_psi_adjustment: True if svfbuveg needs recalculation with psi
-
-    Note:
-        SVF is required input to runtime calculation and must be prepared ahead
-        of time (e.g. with surface.compute_svf() or SurfaceData.prepare()).
-        This function does not compute SVF.
+    Returns (SvfBundle, needs_psi_adjustment). Raises
+    MissingPrecomputedData if SVF is not available from either source.
     """
     # Import here to avoid circular dependency
 

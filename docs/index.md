@@ -36,16 +36,7 @@ solweig.calculate(
 )
 ```
 
-That's it. `SurfaceData.prepare()` computes/caches walls and SVF; then `calculate()` computes shadows, radiation, and Tmrt.
-
-!!! note "SVF Rule"
-    `calculate()` requires SVF to already be available on `surface` (or via `precomputed.svf`).
-    `SurfaceData.prepare(...)` handles this automatically for both file paths and numpy arrays.
-
-!!! note "Anisotropic Rule"
-    If you explicitly set `use_anisotropic_sky=True`, shadow matrices must already be available
-    (`surface.shadow_matrices` or `precomputed.shadow_matrices`), prepared via
-    `SurfaceData.prepare(...)`.
+That's it. `SurfaceData.prepare()` handles all preprocessing (walls, SVF, shadow matrices); `calculate()` uses them to compute shadows, radiation, and Tmrt. The anisotropic sky model is on by default.
 
 ## How it works
 
