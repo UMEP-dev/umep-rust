@@ -12,13 +12,13 @@ repos:
         name: ruff check
         entry: uv run ruff check --fix
         language: system
-        types: [python]
+        types_or: [python, jupyter]
 
       - id: ruff-format
         name: ruff format
         entry: uv run ruff format
         language: system
-        types: [python]
+        types_or: [python, jupyter]
 
       - id: ty
         name: ty type check
