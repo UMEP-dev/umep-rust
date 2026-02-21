@@ -40,12 +40,12 @@ That's it. `SurfaceData.prepare()` computes/caches walls and SVF; then `calculat
 
 !!! note "SVF Rule"
     `calculate()` requires SVF to already be available on `surface` (or via `precomputed.svf`).
-    Use `SurfaceData.prepare(...)` for automatic SVF preparation/caching, or call `surface.compute_svf()` explicitly for in-memory/manual surfaces.
+    `SurfaceData.prepare(...)` handles this automatically for both file paths and numpy arrays.
 
 !!! note "Anisotropic Rule"
     If you explicitly set `use_anisotropic_sky=True`, shadow matrices must already be available
-    (`surface.shadow_matrices` or `precomputed.shadow_matrices`), typically prepared via
-    `SurfaceData.prepare(...)` or `surface.compute_svf()`.
+    (`surface.shadow_matrices` or `precomputed.shadow_matrices`), prepared via
+    `SurfaceData.prepare(...)`.
 
 ## How it works
 

@@ -20,9 +20,7 @@ import solweig
 dsm = np.full((200, 200), 2.0, dtype=np.float32)
 dsm[80:120, 80:120] = 15.0  # A building
 
-surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)
-# SVF is required before calculate(); compute once for this surface
-surface.compute_svf()
+surface = solweig.SurfaceData.prepare(dsm=dsm, pixel_size=1.0)
 ```
 
 **From GeoTIFF files** (file-based workflows — walls and SVF are computed and cached to `working_dir/`):
@@ -154,7 +152,7 @@ Trees reduce Tmrt significantly through shading. Provide a Canopy DSM (CDSM) —
 cdsm = np.zeros_like(dsm)
 cdsm[10:40, 50:80] = 8.0  # 8 m tall trees
 
-surface = solweig.SurfaceData(dsm=dsm, cdsm=cdsm, pixel_size=1.0)
+surface = solweig.SurfaceData.prepare(dsm=dsm, cdsm=cdsm, pixel_size=1.0)
 
 # From GeoTIFF
 surface = solweig.SurfaceData.prepare(
@@ -249,9 +247,8 @@ results = solweig.calculate(
 ```
 
 If you explicitly set `use_anisotropic_sky=True`, shadow matrices must already
-be available. They are prepared alongside SVF via `SurfaceData.prepare(...)`
-or `surface.compute_svf()`. Otherwise, `calculate()` raises
-`MissingPrecomputedData`.
+be available. They are prepared alongside SVF via `SurfaceData.prepare(...)`.
+Otherwise, `calculate()` raises `MissingPrecomputedData`.
 
 ## Input validation
 
@@ -277,7 +274,7 @@ NaN values in DSM/CDSM are automatically filled with the ground reference (DEM, 
 
 ### Slow first calculation
 
-SVF must be prepared before `calculate()`. For in-memory array workflows, call `surface.compute_svf()` once and reuse the surface. For production file workflows, use `SurfaceData.prepare()` with a persistent `working_dir` so SVF is cached and reused across runs.
+SVF must be prepared before `calculate()`. Use `SurfaceData.prepare()` for both array and file workflows — it computes SVF automatically. For file workflows, use a persistent `working_dir` so SVF is cached and reused across runs.
 
 ### GPU not detected
 

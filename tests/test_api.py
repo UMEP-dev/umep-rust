@@ -1109,5 +1109,70 @@ class TestPreprocessing:
         assert "preprocess() was not called" not in caplog.text
 
 
+@pytest.mark.slow
+class TestPrepareArrayMode:
+    """Tests for SurfaceData.prepare() with numpy arrays."""
+
+    def test_prepare_from_array_basic(self):
+        """prepare() with a numpy array computes walls and SVF."""
+        dsm = np.zeros((30, 30), dtype=np.float32)
+        dsm[10:20, 10:20] = 10.0
+
+        surface = SurfaceData.prepare(dsm=dsm, pixel_size=1.0)
+
+        assert surface.svf is not None
+        assert surface.wall_height is not None
+        assert surface.wall_aspect is not None
+        assert surface.pixel_size == 1.0
+
+    def test_prepare_from_array_with_vegetation(self):
+        """prepare() with arrays preprocesses relative CDSM."""
+        dsm = np.ones((20, 20), dtype=np.float32) * 100.0
+        cdsm = np.ones((20, 20), dtype=np.float32) * 5.0  # Relative height
+
+        surface = SurfaceData.prepare(dsm=dsm, cdsm=cdsm, pixel_size=1.0)
+
+        assert surface.svf is not None
+        assert surface.cdsm is not None
+        # CDSM should have been converted to absolute: DSM + relative = 100 + 5 = 105
+        assert np.all(surface.cdsm[surface.cdsm > 100.0] > 100.0)
+
+    def test_prepare_from_array_pixel_size_required(self):
+        """prepare() with arrays raises ValueError when pixel_size is omitted."""
+        dsm = np.ones((10, 10), dtype=np.float32)
+
+        with pytest.raises(ValueError, match="pixel_size"):
+            SurfaceData.prepare(dsm=dsm)
+
+    def test_prepare_from_array_shape_mismatch(self):
+        """prepare() with mismatched array shapes raises ValueError."""
+        dsm = np.ones((10, 10), dtype=np.float32)
+        cdsm = np.ones((5, 5), dtype=np.float32)
+
+        with pytest.raises(ValueError, match="shape"):
+            SurfaceData.prepare(dsm=dsm, cdsm=cdsm, pixel_size=1.0)
+
+    def test_prepare_from_array_mixed_types_rejected(self):
+        """prepare() rejects mixing arrays with file paths."""
+        dsm = np.ones((10, 10), dtype=np.float32)
+
+        with pytest.raises(TypeError, match="numpy array"):
+            SurfaceData.prepare(dsm=dsm, cdsm="path/to/cdsm.tif", pixel_size=1.0)
+
+    def test_prepare_from_array_precomputed_walls(self):
+        """prepare() uses provided wall arrays without recomputing."""
+        dsm = np.ones((20, 20), dtype=np.float32) * 5.0
+        wall_height = np.ones((20, 20), dtype=np.float32) * 99.0
+        wall_aspect = np.ones((20, 20), dtype=np.float32) * 180.0
+
+        surface = SurfaceData.prepare(dsm=dsm, wall_height=wall_height, wall_aspect=wall_aspect, pixel_size=1.0)
+
+        # Should use the provided walls, not recompute
+        assert surface.wall_height is not None
+        assert surface.wall_aspect is not None
+        assert np.allclose(surface.wall_height, 99.0)
+        assert np.allclose(surface.wall_aspect, 180.0)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

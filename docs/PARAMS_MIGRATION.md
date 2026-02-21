@@ -130,7 +130,7 @@ The following values were previously required inputs but are now **computed auto
 | Location (lat/lon)         | Manual or from EPW       | Auto from CRS    | `Location.from_surface(surface)` |
 | Shadow matrices            | Pre-computed NPZ files   | Auto-generated   | Prepared/cached during surface preparation |
 | Wall heights/aspects       | Pre-computed TIF files   | Auto-generated   | Prepared/cached during surface preparation |
-| Sky View Factor            | Pre-computed ZIP files   | Auto-generated   | Prepared via `SurfaceData.prepare()` (or `surface.compute_svf()`) before `calculate()` |
+| Sky View Factor            | Pre-computed ZIP files   | Auto-generated   | Prepared via `SurfaceData.prepare()` before `calculate()` |
 
 ---
 

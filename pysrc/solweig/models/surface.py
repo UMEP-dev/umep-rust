@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 from affine import Affine as AffineClass
@@ -323,14 +323,14 @@ class SurfaceData:
     @classmethod
     def prepare(
         cls,
-        dsm: str | Path,
-        working_dir: str | Path,
-        cdsm: str | Path | None = None,
-        dem: str | Path | None = None,
-        tdsm: str | Path | None = None,
-        land_cover: str | Path | None = None,
-        wall_height: str | Path | None = None,
-        wall_aspect: str | Path | None = None,
+        dsm: str | Path | NDArray[np.floating],
+        working_dir: str | Path | None = None,
+        cdsm: str | Path | NDArray[np.floating] | None = None,
+        dem: str | Path | NDArray[np.floating] | None = None,
+        tdsm: str | Path | NDArray[np.floating] | None = None,
+        land_cover: str | Path | NDArray[np.integer] | None = None,
+        wall_height: str | Path | NDArray[np.floating] | None = None,
+        wall_aspect: str | Path | NDArray[np.floating] | None = None,
         svf_dir: str | Path | None = None,
         bbox: list[float] | None = None,
         pixel_size: float | None = None,
@@ -342,89 +342,108 @@ class SurfaceData:
         feedback: Any = None,
     ) -> SurfaceData:
         """
-        Prepare surface data and optional preprocessing from GeoTIFF files.
+        Prepare surface data for SOLWEIG calculations.
 
-        Loads raster data from disk and prepares it for SOLWEIG calculations.
-        Optionally loads preprocessing data (walls, SVF) and automatically
-        aligns it to match the surface grid.
+        Accepts either file paths (GeoTIFF) or numpy arrays. Walls, SVF,
+        and height preprocessing are handled automatically in both cases.
+
+        **File mode** (dsm is a path): loads rasters from disk, aligns
+        extents, computes/caches walls and SVF in ``working_dir``.
+
+        **Array mode** (dsm is an ndarray): works entirely in memory.
+        ``pixel_size`` is required. ``working_dir`` is not needed. All
+        provided arrays must have the same shape.
 
         Args:
-            dsm: Path to DSM GeoTIFF file (required).
-            working_dir: Working directory for caching computed/resampled data (required).
-                Computed walls/SVF and resampled rasters are auto-discovered here and
-                reused on subsequent runs. Structure: working_dir/walls/, working_dir/svf/,
-                working_dir/resampled/. All intermediate results saved for inspection.
-                To regenerate cached data, delete the working_dir.
-            cdsm: Path to CDSM GeoTIFF file (optional).
-            dem: Path to DEM GeoTIFF file (optional).
-            tdsm: Path to TDSM GeoTIFF file (optional).
-            land_cover: Path to land cover GeoTIFF file (optional).
-                Albedo and emissivity are derived from land cover internally.
-            wall_height: Path to wall height GeoTIFF file (optional).
-                If not provided, walls are auto-discovered in working_dir/walls/ or
-                computed from DSM and cached.
-            wall_aspect: Path to wall aspect GeoTIFF file (optional, degrees 0=N).
-                If not provided, walls are auto-discovered in working_dir/walls/ or
-                computed from DSM and cached.
-            svf_dir: Directory containing SVF preprocessing files (optional):
-                - svfs.zip: SVF arrays (required if svf_dir provided)
-                - shadowmats.npz: Shadow matrices for anisotropic sky (optional)
-                If not provided, SVF is auto-discovered in working_dir/svf/ or
-                computed and cached.
-            bbox: Explicit bounding box [minx, miny, maxx, maxy] (optional).
-                If provided, all data is cropped/resampled to this extent.
-                If None, uses auto-intersection of all provided data.
-            pixel_size: Pixel size in meters. If None, computed from DSM geotransform.
+            dsm: DSM as a GeoTIFF path or numpy array (required).
+            working_dir: Working directory for caching (required for file mode,
+                ignored for array mode).
+            cdsm: CDSM as a GeoTIFF path or numpy array (optional).
+            dem: DEM as a GeoTIFF path or numpy array (optional).
+            tdsm: TDSM as a GeoTIFF path or numpy array (optional).
+            land_cover: Land cover as a GeoTIFF path or numpy array (optional).
+            wall_height: Wall heights as a GeoTIFF path or numpy array (optional).
+                If not provided, computed from DSM automatically.
+            wall_aspect: Wall aspects as a GeoTIFF path or numpy array (optional).
+                If not provided, computed from DSM automatically.
+            svf_dir: Directory containing SVF preprocessing files (file mode only).
+            bbox: Bounding box [minx, miny, maxx, maxy] (file mode only).
+            pixel_size: Pixel size in meters. Required for array mode.
+                For file mode, extracted from GeoTIFF if None.
             trunk_ratio: Ratio for auto-generating TDSM from CDSM. Default 0.25.
             dsm_relative: Whether DSM contains relative heights. Default False.
             cdsm_relative: Whether CDSM contains relative heights. Default True.
             tdsm_relative: Whether TDSM contains relative heights. Default True.
-            force_recompute: If True, skip cache and recompute walls/SVF even if they
-                exist in working_dir. Default False (use cached data when available).
+            force_recompute: If True, recompute walls/SVF (file mode only).
             feedback: Optional QGIS QgsProcessingFeedback for progress/cancellation.
 
         Returns:
-            SurfaceData instance with loaded terrain and preprocessing data.
-
-        Note:
-            When preprocessing data (walls/SVF) has different extents or resolution
-            than the surface data, it is automatically resampled/cropped to match.
-            Use bbox parameter to explicitly control the output extent.
+            SurfaceData instance ready for calculate().
 
         Example:
-            # Load surface with preprocessing
+            # From GeoTIFF files
             surface = SurfaceData.prepare(
                 dsm="data/dsm.tif",
+                working_dir="cache/",
                 cdsm="data/cdsm.tif",
-                wall_height="preprocessed/walls/wall_hts.tif",
-                wall_aspect="preprocessed/walls/wall_aspects.tif",
-                svf_dir="preprocessed/svf",
             )
 
-            # Minimal case - walls and SVF computed automatically
-            surface = SurfaceData.prepare(dsm="data/dsm.tif")
+            # From numpy arrays
+            surface = SurfaceData.prepare(dsm=dsm_array, pixel_size=1.0)
 
-            # Mixed height conventions
+            # Arrays with vegetation
             surface = SurfaceData.prepare(
-                dsm="data/dsm.tif",
-                cdsm="data/cdsm.tif",
-                tdsm="data/tdsm.tif",
-                cdsm_relative=True,
-                tdsm_relative=False,
+                dsm=dsm_array,
+                cdsm=cdsm_array,
+                pixel_size=1.0,
             )
         """
+        # Array mode: delegate to in-memory preparation
+        if isinstance(dsm, np.ndarray):
+            # Runtime validation in _prepare_from_arrays rejects non-array args
+            return cls._prepare_from_arrays(
+                dsm=cast("NDArray[np.floating]", dsm),
+                cdsm=cast("NDArray[np.floating] | None", cdsm),
+                dem=cast("NDArray[np.floating] | None", dem),
+                tdsm=cast("NDArray[np.floating] | None", tdsm),
+                land_cover=cast("NDArray[np.integer] | None", land_cover),
+                wall_height=cast("NDArray[np.floating] | None", wall_height),
+                wall_aspect=cast("NDArray[np.floating] | None", wall_aspect),
+                pixel_size=pixel_size,
+                trunk_ratio=trunk_ratio,
+                dsm_relative=dsm_relative,
+                cdsm_relative=cdsm_relative,
+                tdsm_relative=tdsm_relative,
+            )
+
+        # File mode: working_dir is required
+        if working_dir is None:
+            raise ValueError("working_dir is required when dsm is a file path")
+
         logger.info("Preparing surface data from GeoTIFF files...")
 
-        # Load and validate DSM
-        dsm_arr, dsm_transform, dsm_crs, pixel_size = cls._load_and_validate_dsm(dsm, pixel_size)
+        # Load and validate DSM — dsm is str | Path after the isinstance guard above
+        dsm_path = cast("str | Path", dsm)
+        dsm_arr, dsm_transform, dsm_crs, pixel_size = cls._load_and_validate_dsm(dsm_path, pixel_size)
 
-        # Load optional terrain rasters
-        terrain_rasters = cls._load_terrain_rasters(cdsm, dem, tdsm, land_cover, trunk_ratio)
+        # Load optional terrain rasters — these are str | Path | None after array branch
+        terrain_rasters = cls._load_terrain_rasters(
+            cast("str | Path | None", cdsm),
+            cast("str | Path | None", dem),
+            cast("str | Path | None", tdsm),
+            cast("str | Path | None", land_cover),
+            trunk_ratio,
+        )
 
         # Load preprocessing data (walls, SVF)
         working_path = Path(working_dir)
         preprocess_data = cls._load_preprocessing_data(
-            wall_height, wall_aspect, svf_dir, working_path, force_recompute, pixel_size=pixel_size
+            cast("str | Path | None", wall_height),
+            cast("str | Path | None", wall_aspect),
+            svf_dir,
+            working_path,
+            force_recompute,
+            pixel_size=pixel_size,
         )
 
         # Compute extent, validate bbox, and resample all rasters
@@ -514,6 +533,92 @@ class SurfaceData:
         surface_data.save_cleaned(working_path)
 
         logger.info("✓ Surface data prepared successfully")
+        return surface_data
+
+    @classmethod
+    def _prepare_from_arrays(
+        cls,
+        dsm: NDArray[np.floating],
+        *,
+        cdsm: NDArray[np.floating] | None = None,
+        dem: NDArray[np.floating] | None = None,
+        tdsm: NDArray[np.floating] | None = None,
+        land_cover: NDArray[np.integer] | None = None,
+        wall_height: NDArray[np.floating] | None = None,
+        wall_aspect: NDArray[np.floating] | None = None,
+        pixel_size: float | None = None,
+        trunk_ratio: float = 0.25,
+        dsm_relative: bool = False,
+        cdsm_relative: bool = True,
+        tdsm_relative: bool = True,
+    ) -> SurfaceData:
+        """Prepare surface data from in-memory numpy arrays."""
+        from ..physics import wallalgorithms as wa
+
+        # Validate pixel_size
+        if pixel_size is None:
+            raise ValueError("pixel_size is required when dsm is a numpy array")
+
+        # Validate no mixing of arrays and file paths
+        raster_args = {
+            "cdsm": cdsm,
+            "dem": dem,
+            "tdsm": tdsm,
+            "land_cover": land_cover,
+            "wall_height": wall_height,
+            "wall_aspect": wall_aspect,
+        }
+        for name, val in raster_args.items():
+            if val is not None and not isinstance(val, np.ndarray):
+                raise TypeError(f"{name} must be a numpy array when dsm is a numpy array, got {type(val).__name__}")
+
+        # Validate shapes match
+        for name, val in raster_args.items():
+            if val is not None and val.shape != dsm.shape:
+                raise ValueError(f"{name} shape {val.shape} does not match dsm shape {dsm.shape}")
+
+        logger.info("Preparing surface data from arrays...")
+
+        # Construct SurfaceData
+        surface_data = cls(
+            dsm=dsm,
+            cdsm=cdsm,
+            dem=dem,
+            tdsm=tdsm,
+            land_cover=land_cover,
+            wall_height=wall_height,
+            wall_aspect=wall_aspect,
+            pixel_size=pixel_size,
+            trunk_ratio=trunk_ratio,
+            dsm_relative=dsm_relative,
+            cdsm_relative=cdsm_relative,
+            tdsm_relative=tdsm_relative,
+        )
+
+        # Preprocess relative heights to absolute
+        needs_preprocess = (
+            dsm_relative
+            or (cdsm_relative and surface_data.cdsm is not None)
+            or (tdsm_relative and surface_data.tdsm is not None)
+        )
+        if needs_preprocess:
+            logger.debug("  Preprocessing relative heights → absolute")
+            surface_data.preprocess()
+
+        # Compute walls if not provided
+        if surface_data.wall_height is None or surface_data.wall_aspect is None:
+            logger.info("  Computing walls from DSM...")
+            dsm_f32 = surface_data.dsm.astype(np.float32)
+            walls = wa.findwalls(dsm_f32, 1.0)
+            dsm_scale = 1.0 / pixel_size
+            dirwalls = wa.filter1Goodwin_as_aspect_v3(walls, dsm_scale, dsm_f32)
+            surface_data.wall_height = walls.astype(np.float32)
+            surface_data.wall_aspect = dirwalls.astype(np.float32)
+
+        # Compute SVF
+        surface_data.compute_svf()
+
+        logger.info("✓ Surface data prepared successfully (array mode)")
         return surface_data
 
     @staticmethod

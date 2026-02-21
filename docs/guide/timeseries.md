@@ -206,7 +206,7 @@ for chunk_start in range(0, len(weather_list), 24):
 | 200x200 | ~67 s | ~20 ms | ~2 s |
 | 500x500 | ~10 min | ~100 ms | ~8 s |
 
-SVF is prepared explicitly (via `SurfaceData.prepare()` or `surface.compute_svf()`). Use a persistent `working_dir` with `prepare()` to avoid recomputing SVF on every run.
+SVF is prepared automatically by `SurfaceData.prepare()`. For file workflows, use a persistent `working_dir` to avoid recomputing SVF on every run.
 
 ## Run metadata
 

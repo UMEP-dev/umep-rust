@@ -23,9 +23,7 @@ from datetime import datetime
 dsm = np.full((200, 200), 2.0, dtype=np.float32)
 dsm[80:120, 80:120] = 15.0  # 40×40 m building
 
-surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)  # 1 pixel = 1 metre
-# SVF is required before calculate(); compute once and reuse on this surface
-surface.compute_svf()
+surface = solweig.SurfaceData.prepare(dsm=dsm, pixel_size=1.0)  # 1 pixel = 1 metre
 
 # --- 2. Define location and weather ---
 location = solweig.Location(
@@ -49,10 +47,6 @@ print(f"Mean Tmrt:   {result.tmrt.mean():.1f}°C")
 print(f"Sunlit Tmrt: {result.tmrt[result.shadow > 0.5].mean():.1f}°C")
 print(f"Shaded Tmrt: {result.tmrt[result.shadow < 0.5].mean():.1f}°C")
 ```
-
-!!! note "SVF is explicit"
-    `calculate()` requires SVF to already be available. For array-based workflows, call `surface.compute_svf()` once before the first calculation. For GeoTIFF workflows, `SurfaceData.prepare()` computes/caches SVF for you.
-    If you explicitly set `use_anisotropic_sky=True`, shadow matrices must also already be available (prepared via the same preprocessing step).
 
 ## Option B: From GeoTIFF files (real-world data)
 
@@ -165,14 +159,12 @@ import numpy as np
 dsm_abs = np.array(...)         # Absolute elevation (e.g., m above sea level)
 cdsm_abs = np.array(...)        # Optional canopy elevation (absolute)
 
-surface = solweig.SurfaceData(
+surface = solweig.SurfaceData.prepare(
     dsm=dsm_abs,
     cdsm=cdsm_abs,              # Optional
-    dsm_relative=False,
     cdsm_relative=False,
     pixel_size=1.0,
 )
-surface.compute_svf()           # Required before calculate()
 
 location = solweig.Location(latitude=48.8, longitude=2.3, utc_offset=1)
 ```
@@ -186,7 +178,7 @@ dsm_rel = np.array(...)         # Height above ground
 cdsm_rel = np.array(...)        # Optional canopy height above ground
 dem = np.array(...)             # Ground elevation
 
-surface = solweig.SurfaceData(
+surface = solweig.SurfaceData.prepare(
     dsm=dsm_rel,
     dem=dem,
     cdsm=cdsm_rel,              # Optional
@@ -194,8 +186,6 @@ surface = solweig.SurfaceData(
     cdsm_relative=True,
     pixel_size=1.0,
 )
-surface.preprocess()            # Converts relative -> absolute
-surface.compute_svf()           # Required before calculate()
 ```
 
 ### Weather setup patterns
