@@ -1,6 +1,6 @@
 # Architecture
 
-SOLWEIG follows a layered architecture with a fused Rust compute pipeline.
+SOLWEIG uses a layered architecture with a fused Rust compute pipeline.
 
 ## Layer Overview
 
@@ -27,7 +27,7 @@ SOLWEIG follows a layered architecture with a fused Rust compute pipeline.
 
 **File**: `api.py`
 
-Public interface that users import:
+The public interface:
 
 ```python
 import solweig
@@ -41,12 +41,12 @@ summary = solweig.calculate(
 summary.report()
 ```
 
-Key types:
+Principal types:
 
 - `SurfaceData` — DSM, vegetation, walls, land cover, SVF (via `.prepare()`)
 - `Weather` — per-timestep meteorological data
 - `Location` — geographic coordinates with UTC offset
-- `TimeseriesSummary` — returned by `calculate()`, with summary statistics and GeoTIFF export
+- `TimeseriesSummary` — returned by `calculate()`, containing summary statistics and GeoTIFF export
 
 ## Layer 2: Orchestration
 
@@ -55,7 +55,7 @@ Key types:
 Coordinates the pipeline and manages state:
 
 ```python
-# timeseries.py — iterates over weather list
+# timeseries.py — iterates over the weather list
 for weather in weather_list:
     result = calculate_core_fused(surface, location, weather, state, ...)
     accumulator.update(result)       # GridAccumulator tracks min/max/mean
@@ -74,7 +74,7 @@ def calculate_core_fused(surface, location, weather, state, ...):
 Responsibilities:
 
 - Pre-compute Python-side inputs (SVF resolution, transmissivity, building mask)
-- Hand off to fused Rust pipeline for per-pixel computation
+- Dispatch to the fused Rust pipeline for per-pixel computation
 - Manage thermal state across timesteps
 - Accumulate summary statistics (GridAccumulator)
 - Route large rasters to tiled processing
@@ -90,13 +90,13 @@ Shadows → Ground temperature → GVF → Radiation → Tmrt
 ```
 
 This eliminates intermediate numpy allocations and FFI round-trips between
-Python and Rust. The pipeline accepts all inputs at once and returns the
+Python and Rust. The pipeline accepts all inputs and returns the
 complete result.
 
-**Python helpers** still called by the orchestration layer (Layer 2):
+**Python helpers** called by the orchestration layer (Layer 2):
 
 | Module | Function | Purpose |
-|--------|----------|---------|
+| ------ | -------- | ------- |
 | `components/svf_resolution.py` | `resolve_svf()` | SVF lookup and adjustment (cached) |
 | `components/svf_resolution.py` | `adjust_svfbuveg_with_psi()` | Vegetation transmissivity correction |
 | `components/shadows.py` | `compute_transmissivity()` | Seasonal leaf-on/off transmissivity |
@@ -107,10 +107,10 @@ complete result.
 
 **Directory**: `rust/src/`
 
-Performance-critical algorithms in Rust, exposed via maturin/PyO3:
+Performance-critical algorithms implemented in Rust, exposed via maturin/PyO3:
 
 | Module | Purpose |
-|--------|---------|
+| ------ | ------- |
 | `pipeline` | Fused per-timestep compute (shadows → Tmrt) |
 | `shadowing` | Ray-traced shadow computation (CPU + GPU) |
 | `skyview` | Sky View Factor calculation |
@@ -159,7 +159,7 @@ class GroundBundle:
 
 @dataclass
 class LupBundle:
-    lup: np.ndarray         # Upwelling longwave (center)
+    lup: np.ndarray         # Upwelling longwave (centre)
     lup_e: np.ndarray       # Upwelling longwave (east)
     lup_s: np.ndarray       # ... south, west, north
     state: ThermalState     # Updated state for next timestep
@@ -170,10 +170,8 @@ Active bundles: `DirectionalArrays`, `SvfBundle`, `GroundBundle`,
 
 ## Caching Strategy
 
-Expensive computations are cached:
-
-| Data | Cached Where | Invalidation |
-|------|-------------|--------------|
+| Data | Cache location | Invalidation |
+| ---- | -------------- | ------------ |
 | Wall heights/aspects | `working_dir/walls/` | DSM change |
 | SVF arrays | `working_dir/svf/` | DSM change |
 | GVF geometry cache | `PrecomputedData` | Per-run |
@@ -185,9 +183,9 @@ Expensive computations are cached:
 SOLWEIG runs in both standalone Python and QGIS:
 
 | Component | Python | QGIS/OSGeo4W |
-|-----------|--------|--------------|
+| --------- | ------ | ------------ |
 | Raster I/O | rasterio | GDAL |
 | Progress | tqdm | QgsProcessingFeedback |
 | Logging | logging | QgsProcessingFeedback |
 
-Backend detection is automatic in `_compat.py`.
+Backend detection is handled in `_compat.py`.

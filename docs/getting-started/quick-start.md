@@ -1,17 +1,17 @@
 # Quick Start
 
-This guide walks you through your first SOLWEIG calculation — from raw inputs to a Tmrt map.
+This guide demonstrates a complete SOLWEIG calculation, from input data to a Tmrt map.
 
-## What you'll do
+## Overview
 
 1. Create a surface with buildings
-2. Define where and when
+2. Define the location and time
 3. Calculate Mean Radiant Temperature
-4. Interpret the results
+4. Inspect the results
 
-## Option A: From numpy arrays (no files needed)
+## Option A: From numpy arrays (no files required)
 
-Use this when you want to experiment quickly or don't have GeoTIFF data yet.
+This approach is suitable for experimentation or when GeoTIFF data is not available.
 
 ```python
 import numpy as np
@@ -19,9 +19,9 @@ import solweig
 from datetime import datetime
 
 # --- 1. Create a surface ---
-# A 200×200 m flat area at 2 m elevation, with a 15 m tall building in the centre
+# A 200x200 m flat area at 2 m elevation, with a 15 m tall building in the centre
 dsm = np.full((200, 200), 2.0, dtype=np.float32)
-dsm[80:120, 80:120] = 15.0  # 40×40 m building
+dsm[80:120, 80:120] = 15.0  # 40x40 m building
 
 surface = solweig.SurfaceData.prepare(dsm=dsm, pixel_size=1.0)  # 1 pixel = 1 metre
 
@@ -33,33 +33,33 @@ location = solweig.Location(
 )
 
 weather = solweig.Weather(
-    datetime=datetime(2025, 7, 15, 14, 0),  # 2pm, July 15
-    ta=32.0,            # Air temperature (°C)
+    datetime=datetime(2025, 7, 15, 14, 0),  # 14:00, 15 July
+    ta=32.0,            # Air temperature (deg C)
     rh=40.0,            # Relative humidity (%)
-    global_rad=850.0,   # Global horizontal irradiance (W/m²)
+    global_rad=850.0,   # Global horizontal irradiance (W/m2)
 )
 
 # --- 3. Calculate ---
 result = solweig.calculate(surface, location, weather, output_dir="output/")
 
 # --- 4. Inspect results ---
-print(f"Mean Tmrt:   {result.tmrt.mean():.1f}°C")
-print(f"Sunlit Tmrt: {result.tmrt[result.shadow > 0.5].mean():.1f}°C")
-print(f"Shaded Tmrt: {result.tmrt[result.shadow < 0.5].mean():.1f}°C")
+print(f"Mean Tmrt:   {result.tmrt.mean():.1f} deg C")
+print(f"Sunlit Tmrt: {result.tmrt[result.shadow > 0.5].mean():.1f} deg C")
+print(f"Shaded Tmrt: {result.tmrt[result.shadow < 0.5].mean():.1f} deg C")
 ```
 
 ## Option B: From GeoTIFF files (real-world data)
 
-This is the typical workflow for real projects. You need:
+This is the standard workflow for applied projects. The following inputs are required:
 
-- A **DSM** GeoTIFF (Digital Surface Model — building/terrain heights)
-- An **EPW** weather file (standard format, downloadable from climate databases)
+- A **DSM** GeoTIFF (Digital Surface Model — building and terrain heights)
+- An **EPW** weather file (standard format, available from climate databases)
 
 ```python
 import solweig
 
 # --- 1. Load and prepare surface ---
-# Walls, sky view factors, and NaN handling are all automatic
+# Wall heights, sky view factors, and NaN handling are performed during preparation
 surface = solweig.SurfaceData.prepare(
     dsm="data/dsm.tif",
     working_dir="cache/",        # Preprocessing cached here for reuse
@@ -74,7 +74,7 @@ weather_list = solweig.Weather.from_epw(
 )
 location = solweig.Location.from_epw("data/weather.epw")
 
-print(f"Location: {location.latitude:.1f}°N, {location.longitude:.1f}°E")
+print(f"Location: {location.latitude:.1f} deg N, {location.longitude:.1f} deg E")
 print(f"Loaded {len(weather_list)} hourly timesteps")
 
 # --- 3. Run ---
@@ -87,28 +87,28 @@ results = solweig.calculate(
     outputs=["tmrt", "shadow"],
 )
 
-print(f"Done — {len(results)} timesteps saved to output/")
+print(f"Completed — {len(results)} timesteps saved to output/")
 ```
 
 The returned `TimeseriesSummary` contains aggregated grids (mean/max/min Tmrt,
 UTCI, sun hours, etc.) — see [Timeseries](../guide/timeseries.md).
 
-### What `prepare()` does behind the scenes
+### Surface preparation steps
 
-When you call `SurfaceData.prepare()`, it automatically:
+`SurfaceData.prepare()` performs the following operations:
 
 1. Loads the DSM (and optional CDSM, DEM, land cover)
 2. Fills NaN/nodata values using the ground reference
 3. Computes **wall heights and aspects** from the DSM edges
 4. Computes **Sky View Factors** (15 directional grids)
-5. Caches everything to `working_dir/` so the next run is instant
+5. Caches results to `working_dir/` for reuse in subsequent runs
 
-## Adding thermal comfort
+## Adding thermal comfort indices
 
-Tmrt tells you how much radiation a person absorbs, but thermal comfort also depends on air temperature, humidity, and wind. UTCI and PET combine all of these.
+Tmrt quantifies the radiation absorbed by a person, but thermal comfort also depends on air temperature, humidity, and wind speed. UTCI and PET integrate all of these variables.
 
 UTCI and PET summary grids are included in the `TimeseriesSummary` by default.
-To also save per-timestep GeoTIFFs, include `"utci"` or `"pet"` in `outputs`:
+To save per-timestep GeoTIFFs, include `"utci"` or `"pet"` in `outputs`:
 
 ```python
 summary = solweig.calculate(
@@ -120,18 +120,18 @@ summary = solweig.calculate(
 print(summary.report())  # Full summary with Tmrt, UTCI, sun hours, thresholds
 ```
 
-| UTCI range | Meaning |
-| ---------- | ------- |
-| > 46°C | Extreme heat stress |
-| 38–46°C | Very strong heat stress |
-| 32–38°C | Strong heat stress |
-| 26–32°C | Moderate heat stress |
-| 9–26°C | No thermal stress |
-| < 9°C | Cold stress categories |
+| UTCI range | Classification |
+| ---------- | -------------- |
+| > 46 deg C | Extreme heat stress |
+| 38–46 deg C | Very strong heat stress |
+| 32–38 deg C | Strong heat stress |
+| 26–32 deg C | Moderate heat stress |
+| 9–26 deg C | No thermal stress |
+| < 9 deg C | Cold stress categories |
 
 ## Common setup patterns
 
-Use these patterns when your input data and workflow differ from the basic examples above.
+The following patterns address variations in input data and workflow.
 
 ### Surface setup patterns
 
@@ -146,7 +146,7 @@ surface = solweig.SurfaceData.prepare(
 )
 ```
 
-`prepare()` computes/caches walls and SVF automatically.
+`prepare()` computes and caches walls and SVF.
 
 #### Pattern 2: In-memory arrays with absolute heights
 
@@ -208,7 +208,7 @@ epw_path = solweig.download_epw(
 weather_list = solweig.Weather.from_epw(epw_path)
 ```
 
-#### Pattern 3: Manually create one timestep
+#### Pattern 3: Single timestep (manual)
 
 ```python
 from datetime import datetime
@@ -218,7 +218,7 @@ weather = solweig.Weather(
     ta=32.0,
     rh=40.0,
     global_rad=850.0,
-    ws=2.0,                     # Optional but useful for UTCI/PET
+    ws=2.0,                     # Optional; used for UTCI/PET
 )
 ```
 
@@ -249,7 +249,7 @@ location = solweig.Location(
 !!! warning "Always set `utc_offset` correctly"
     UTC offset directly affects sun position timing and therefore shadows and Tmrt.
 
-## Where to get input data
+## Input data sources
 
 ### DSM (Digital Surface Model)
 
@@ -261,22 +261,20 @@ A raster grid where each pixel contains the height in metres (including building
 
 ### EPW (EnergyPlus Weather)
 
-Hourly weather data in a standard format. Free sources:
+Hourly weather data in a standard format. Sources:
 
 - [Climate.OneBuilding.Org](https://climate.onebuilding.org/) — global coverage
 - [PVGIS](https://re.jrc.ec.europa.eu/pvg_tools/en/) — European Commission tool
 
-You can also download an EPW directly from PVGIS (no API key needed):
+EPW files can also be downloaded from PVGIS programmatically (no API key required):
 
 ```python
-# Download weather data for any location
 epw_path = solweig.download_epw(
     latitude=37.98,
     longitude=23.73,
     output_path="athens.epw",
 )
 
-# Then load it
 weather_list = solweig.Weather.from_epw(epw_path)
 location = solweig.Location.from_epw(epw_path)
 ```
@@ -299,28 +297,28 @@ cdsm, transform = solweig.io.rasterise_gdf(
 )
 ```
 
-## Key classes at a glance
+## Key classes
 
-| Class | What it holds |
-| ----- | ------------- |
+| Class | Description |
+| ----- | ----------- |
 | `SurfaceData` | DSM, optional vegetation/DEM/land cover, preprocessed walls and SVF |
 | `Location` | Latitude, longitude, altitude, UTC offset |
 | `Weather` | Air temperature, humidity, radiation for one timestep |
-| `HumanParams` | Body parameters for Tmrt/PET (optional — sensible defaults provided) |
+| `HumanParams` | Body parameters for Tmrt/PET (optional — defaults provided) |
 | `SolweigResult` | Output grids: Tmrt, shadow, radiation components |
 
-## Complete working demos
+## Working demos
 
-The repository includes full end-to-end demos you can run directly:
+The repository includes end-to-end demos:
 
-- **[demos/athens-demo.py](https://github.com/UMEP-dev/solweig/blob/main/demos/athens-demo.py)** — Full workflow: rasterise tree vectors, load GeoTIFFs, run a multi-day timeseries, post-process UTCI. The best starting point for real projects.
+- **[demos/athens-demo.py](https://github.com/UMEP-dev/solweig/blob/main/demos/athens-demo.py)** — Full workflow: rasterise tree vectors, load GeoTIFFs, run a multi-day timeseries, post-process UTCI.
 - **[demos/bilbao-demo.py](https://github.com/UMEP-dev/solweig/blob/main/demos/bilbao-demo.py)** — Terrain-aware shadows in a mountain valley: relative building heights (`dsm_relative=True`), separate DEM, and `max_shadow_distance_m` for hillside shadow reach.
 - **[demos/solweig_gbg_test.py](https://github.com/UMEP-dev/solweig/blob/main/demos/solweig_gbg_test.py)** — Gothenburg test data: surface preparation, SVF caching, and timeseries calculation.
 
-## Next steps
+## Further reading
 
 - [Basic Usage](../guide/basic-usage.md) — Vegetation, height conventions, custom parameters, validation
 - [Working with GeoTIFFs](../guide/geotiffs.md) — File loading, caching, saving results
 - [Timeseries](../guide/timeseries.md) — Multi-day simulations with thermal state
-- [Thermal Comfort](../guide/thermal-comfort.md) — UTCI and PET in depth
+- [Thermal Comfort](../guide/thermal-comfort.md) — UTCI and PET
 - [API Reference](../api/index.md) — All classes and functions

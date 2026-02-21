@@ -1,6 +1,6 @@
 # QGIS Plugin
 
-SOLWEIG is available as a **QGIS Processing plugin** for point-and-click spatial analysis — no Python scripting required. All algorithms run inside the QGIS Processing Toolbox and produce standard GeoTIFF outputs that load directly into the map canvas.
+SOLWEIG is available as a **QGIS Processing plugin** for spatial analysis without Python scripting. All algorithms run within the QGIS Processing Toolbox and produce standard GeoTIFF outputs that load into the map canvas.
 
 !!! warning "Experimental"
     This package and plugin are experimental — released for testing and discussion purposes. The API is stabilising but may change. Feedback and bug reports are welcome via [GitHub Issues](https://github.com/UMEP-dev/solweig/issues).
@@ -8,7 +8,7 @@ SOLWEIG is available as a **QGIS Processing plugin** for point-and-click spatial
 ## Requirements
 
 - **QGIS 4.0+** (Qt6, Python 3.11+)
-- The `solweig` Python library (installed automatically on first use)
+- The `solweig` Python library (installed on first use)
 
 ## Installation
 
@@ -17,7 +17,7 @@ SOLWEIG is available as a **QGIS Processing plugin** for point-and-click spatial
 3. Switch to the **All** tab and search for **"SOLWEIG"**
 4. Click **Install Plugin**
 
-On first use the plugin checks whether the `solweig` library is installed. If it is missing or outdated, a dialog offers to install or upgrade it automatically via pip. No manual setup is needed.
+On first use the plugin checks whether the `solweig` library is installed. If it is missing or outdated, a dialog offers to install or upgrade it via pip.
 
 !!! tip "Manual library install"
     If the automatic install fails (e.g. behind a proxy), open the QGIS Python Console and run:
@@ -28,7 +28,7 @@ On first use the plugin checks whether the `solweig` library is installed. If it
 
 ---
 
-## Processing algorithms
+## Processing Algorithms
 
 Once installed, three algorithms appear in the **Processing Toolbox** under the SOLWEIG group. They are numbered to indicate the recommended workflow order.
 
@@ -37,7 +37,7 @@ Once installed, three algorithms appear in the **Processing Toolbox** under the 
 Download a Typical Meteorological Year (TMY) weather file from the EU PVGIS service, or preview the contents of an existing EPW file.
 
 | Parameter | Description |
-|-----------|-------------|
+| --------- | ----------- |
 | **Mode** | *Download from PVGIS* or *Preview existing file* |
 | **Latitude / Longitude** | Defaults to the map canvas centre |
 | **Output EPW** | Save location for the downloaded file |
@@ -47,10 +47,10 @@ Download a Typical Meteorological Year (TMY) weather file from the EU PVGIS serv
 
 ### 2. Prepare Surface Data (align, walls, SVF)
 
-Load raster layers, align them to a common grid, compute wall heights, wall aspects, and Sky View Factor. Results are cached to a working directory so subsequent calculations skip the expensive preprocessing.
+Load raster layers, align them to a common grid, compute wall heights, wall aspects, and Sky View Factor. Results are cached to a working directory so subsequent calculations reuse the preprocessing.
 
 | Parameter | Description |
-|-----------|-------------|
+| --------- | ----------- |
 | **DSM** | Digital Surface Model (required) |
 | **CDSM** | Canopy/vegetation height model (optional) |
 | **DEM** | Digital Elevation Model (optional) |
@@ -60,7 +60,7 @@ Load raster layers, align them to a common grid, compute wall heights, wall aspe
 | **Extent** | Custom processing area (optional — defaults to DSM extent) |
 | **Pixel size** | Output resolution in metres (0 = native DSM resolution) |
 | **Vegetation settings** | Transmissivity, leaf-on/off dates, conifer flag |
-| **Land cover materials** | Albedo and emissivity per surface class (advanced) |
+| **Land cover materials** | Albedo and emissivity per surface class |
 
 **Output directory structure:**
 
@@ -86,7 +86,7 @@ Run Tmrt and optional thermal comfort calculations using a prepared surface dire
 **Weather sources** (select one):
 
 | Source | Description |
-|--------|-------------|
+| ------ | ----------- |
 | Single timestep | Enter date/time and weather values manually |
 | EPW file | Load a timeseries from an EPW weather file |
 | UMEP met file | Load a timeseries from a UMEP meteorological file |
@@ -96,12 +96,12 @@ Run Tmrt and optional thermal comfort calculations using a prepared surface dire
 **Key options:**
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
-| Anisotropic sky | On | Use Perez sky model (requires shadow matrices from surface prep) |
+| --------- | ------- | ----------- |
+| Anisotropic sky | On | Use Perez sky model (requires shadow matrices from surface preparation) |
 | Conifer | Off | Treat trees as evergreen (skip seasonal leaf-off) |
 | Max shadow distance | 1 000 m | Increase for mountainous terrain |
 | Compute UTCI | Off | Calculate Universal Thermal Climate Index |
-| Compute PET | Off | Calculate Physiological Equivalent Temperature (~50x slower than UTCI) |
+| Compute PET | Off | Calculate Physiological Equivalent Temperature (~50x computation time vs UTCI) |
 | Heat stress thresholds | — | UTCI thresholds for day/night exceedance grids |
 
 **Output selection:** choose which per-timestep grids to save — Tmrt, shadow, Kdown, Kup, Ldown, Lup.
@@ -120,12 +120,12 @@ For timeseries runs, a summary report is logged with mean/max Tmrt, UTCI, sun ho
 
 ---
 
-## Typical workflow
+## Typical Workflow
 
 ```
 ┌─────────────────────────────────────┐
 │  1. Download / Preview Weather File │
-│     → Get an EPW file               │
+│     → Obtain an EPW file            │
 └──────────────┬──────────────────────┘
                │
 ┌──────────────▼──────────────────────┐
@@ -143,25 +143,25 @@ For timeseries runs, a summary report is logged with mean/max Tmrt, UTCI, sun ho
 └─────────────────────────────────────┘
 ```
 
-1. **Get weather data** — run *Download / Preview Weather File* to fetch a TMY EPW, or use an EPW you already have.
-2. **Prepare the surface** — run *Prepare Surface Data* with your DSM (and optionally CDSM, DEM, land cover). This computes walls and SVF once; subsequent calculations reuse the cache.
-3. **Calculate** — run *SOLWEIG Calculation*, pointing to the prepared surface directory and your EPW file. Select your date range, enable UTCI/PET if needed, and run. Results are saved as GeoTIFFs and loaded into the canvas.
+1. **Obtain weather data** — run *Download / Preview Weather File* to fetch a TMY EPW, or use an existing EPW file.
+2. **Prepare the surface** — run *Prepare Surface Data* with the DSM (and optionally CDSM, DEM, land cover). This computes walls and SVF once; subsequent calculations reuse the cache.
+3. **Calculate** — run *SOLWEIG Calculation*, pointing to the prepared surface directory and the EPW file. Select a date range, enable UTCI/PET if required, and run. Results are saved as GeoTIFFs and loaded into the canvas.
 
 !!! tip "Re-running with different parameters"
-    Surface preparation is the expensive step. Once complete, you can re-run the calculation step with different weather files, date ranges, or human parameters without re-preparing the surface.
+    Surface preparation is the most computationally intensive step and is cached. Once complete, the calculation step can be re-run with different weather files, date ranges, or human parameters without repeating surface preparation.
 
 ---
 
-## QGIS-specific features
+## QGIS-Specific Features
 
-**Automatic tiling** — Large rasters are automatically divided into overlapping tiles sized to fit GPU memory. Tile buffers account for building heights and shadow distance to ensure continuity at boundaries.
+**Automatic tiling** — Large rasters are divided into overlapping tiles sized to fit GPU memory. Tile buffers account for building heights and shadow distance to ensure continuity at boundaries.
 
-**GPU acceleration** — Shadow casting and anisotropic sky computations run on the GPU when available (Metal on macOS, Vulkan on Linux, DirectX on Windows). Falls back to multi-threaded CPU automatically.
+**GPU acceleration** — Shadow casting and anisotropic sky computations run on the GPU when available (Metal on macOS, Vulkan on Linux, DirectX on Windows). The system falls back to multi-threaded CPU if no GPU is detected.
 
-**Progress and cancellation** — All algorithms report progress through the QGIS Task Manager with per-timestep status. Long-running calculations can be cancelled cleanly.
+**Progress and cancellation** — All algorithms report progress through the QGIS Task Manager with per-timestep status. Long-running calculations can be cancelled.
 
-**Canvas integration** — Single-timestep results are automatically loaded into the QGIS canvas with thermal comfort colour ramps. Timeseries results are saved as GeoTIFFs for manual loading and styling.
+**Canvas integration** — Single-timestep results are loaded into the QGIS canvas with thermal comfort colour ramps. Timeseries results are saved as GeoTIFFs for manual loading and styling.
 
-**Dependency management** — The plugin detects whether the `solweig` library is installed and at the correct version. On first use or after a plugin update, it offers to install or upgrade automatically.
+**Dependency management** — The plugin detects whether the `solweig` library is installed and at the correct version. On first use or after a plugin update, it offers to install or upgrade via pip.
 
-**GDAL backend** — The plugin uses QGIS's bundled GDAL for all raster I/O, avoiding the need for rasterio or other pip dependencies.
+**GDAL backend** — The plugin uses QGIS's bundled GDAL for all raster I/O, avoiding additional pip dependencies such as rasterio.

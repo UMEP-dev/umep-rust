@@ -1,19 +1,19 @@
 # Working with GeoTIFFs
 
-Most real-world SOLWEIG projects start from GeoTIFF raster files. This guide covers loading, caching, and saving.
+This guide covers the loading, caching, and saving of GeoTIFF raster files in SOLWEIG.
 
-## Loading surface data
+## Loading Surface Data
 
-`SurfaceData.prepare()` is the recommended way to load GeoTIFFs. It handles everything: loading, NaN filling, wall computation, SVF computation, and caching.
+`SurfaceData.prepare()` is the recommended method for loading GeoTIFFs. It handles loading, NaN filling, wall computation, SVF computation, and caching.
 
-All input rasters must use a **projected CRS** with units in metres (e.g. UTM). Geographic CRS (lat/lon in degrees) is not supported — reproject with `gdalwarp` or your GIS tool first.
+All input rasters must use a **projected CRS** with units in metres (e.g. UTM). Geographic CRS (lat/lon in degrees) is not supported — reproject with `gdalwarp` or an equivalent GIS tool.
 
 ```python
 import solweig
 
 surface = solweig.SurfaceData.prepare(
     dsm="data/dsm.tif",           # Required: building/terrain heights
-    working_dir="cache/",          # Required: where to cache preprocessing
+    working_dir="cache/",          # Required: cache directory for preprocessing
     cdsm="data/trees.tif",        # Optional: vegetation heights
     dem="data/dem.tif",            # Optional: bare ground elevation
     land_cover="data/lc.tif",     # Optional: surface type classification
@@ -22,11 +22,11 @@ surface = solweig.SurfaceData.prepare(
 
 ### Extent alignment
 
-When you provide multiple rasters (DSM, CDSM, DEM, etc.) that cover different areas or have different resolutions, `prepare()` automatically crops and resamples them to their **intersecting extent** — only the area covered by all inputs is used. No manual alignment is needed.
+When multiple rasters (DSM, CDSM, DEM, etc.) cover different areas or have different resolutions, `prepare()` crops and resamples them to their **intersecting extent** — only the area covered by all inputs is used. No manual alignment is required.
 
 ### Cropping to a bounding box
 
-To process only part of your rasters, pass a `bbox` to override the automatic intersection:
+To process a subset of the rasters, pass a `bbox`:
 
 ```python
 surface = solweig.SurfaceData.prepare(
@@ -39,9 +39,9 @@ surface = solweig.SurfaceData.prepare(
 
 Coordinates are in the DSM's native CRS (e.g. UTM metres). The `bbox` is intersected with the available data — pixels outside the raster extents are not extrapolated.
 
-## What gets cached
+## Caching
 
-The `working_dir` stores expensive preprocessing so subsequent runs are instant:
+The `working_dir` stores preprocessing results so that subsequent runs reuse them:
 
 ```text
 cache/
@@ -57,7 +57,7 @@ cache/
 
 ### Force recomputation
 
-If you change the DSM or want to regenerate everything:
+To regenerate all cached data:
 
 ```python
 surface = solweig.SurfaceData.prepare(
@@ -67,27 +67,27 @@ surface = solweig.SurfaceData.prepare(
 )
 ```
 
-SOLWEIG validates cached data against the current DSM — if the dimensions, extent, or pixel values change, the cache is automatically invalidated and recomputed on the next `prepare()` call. You only need `force_recompute=True` when you want to bypass this check (e.g. after changing vegetation inputs that don't affect the DSM hash).
+SOLWEIG validates cached data against the current DSM — if the dimensions, extent, or pixel values change, the cache is invalidated and recomputed on the next `prepare()` call. `force_recompute=True` is only needed to bypass this check (e.g. after changing vegetation inputs that do not affect the DSM hash).
 
-## Extracting location from CRS
+## Extracting Location from CRS
 
-When the DSM has a projected CRS (e.g. UTM), you can extract lat/lon automatically:
+When the DSM has a projected CRS (e.g. UTM), latitude and longitude can be extracted:
 
 ```python
 location = solweig.Location.from_surface(surface, utc_offset=2)
 ```
 
-Or from the EPW file, which also includes UTC offset:
+Alternatively, from an EPW file (which also includes UTC offset):
 
 ```python
 location = solweig.Location.from_epw("data/weather.epw")
 ```
 
-## Saving results as GeoTIFFs
+## Saving Results as GeoTIFFs
 
 ### During timeseries
 
-The simplest approach — results are saved as they're computed:
+Results are saved as they are computed:
 
 ```python
 results = solweig.calculate(
@@ -99,7 +99,7 @@ results = solweig.calculate(
 )
 ```
 
-Creates files like:
+This produces files such as:
 
 ```text
 output/
@@ -115,23 +115,22 @@ output/
 ### Loading saved results
 
 ```python
-# Load a single output raster
 arr, transform, crs, nodata = solweig.io.load_raster("output/tmrt/tmrt_20250701_1200.tif")
 ```
 
-## NaN and nodata handling
+## NaN and Nodata Handling
 
-SOLWEIG handles missing data automatically at every stage:
+Missing data is handled at each stage of the pipeline:
 
 **At load time:** Negative nodata sentinel values (e.g. -9999) are converted to NaN. Zero-valued pixels are preserved as valid data.
 
-**Before calculation:** NaN pixels in DSM, CDSM, and TDSM are filled with the ground reference (DEM if provided, otherwise the DSM itself). Pixels within 0.1 m of the ground reference are clamped to exactly the ground value to prevent shadow artefacts from resampling noise.
+**Before calculation:** NaN pixels in DSM, CDSM, and TDSM are filled with the ground reference (DEM if provided, otherwise the DSM itself). Pixels within 0.1 m of the ground reference are clamped to the ground value to prevent shadow artefacts from resampling noise.
 
-DEM NaN pixels are never filled — they represent truly missing ground data.
+DEM NaN pixels are not filled — they represent genuinely missing ground data.
 
-When using `SurfaceData.prepare()`, this is all handled automatically. When constructing from arrays, `fill_nan()` runs inside `calculate()`.
+When using `SurfaceData.prepare()`, this handling is performed during preparation. When constructing from arrays, `fill_nan()` runs inside `calculate()`.
 
-## Rasterising vector data
+## Rasterising Vector Data
 
 Convert tree polygons (GeoDataFrame) to a raster grid:
 
@@ -156,9 +155,9 @@ solweig.io.save_raster(
 )
 ```
 
-## Large rasters
+## Large Rasters
 
-For rasters too large to fit in memory, SOLWEIG automatically tiles the computation:
+For rasters exceeding available memory, SOLWEIG tiles the computation internally:
 
 ```python
 results = solweig.calculate(
@@ -169,4 +168,4 @@ results = solweig.calculate(
 )
 ```
 
-Tiling is handled internally — no explicit tiling call is needed.
+No explicit tiling configuration is required.

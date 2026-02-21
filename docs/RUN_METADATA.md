@@ -1,23 +1,23 @@
 # Run Metadata and Provenance
 
-**TL;DR:** Every calculation automatically saves a `run_metadata.json` file that captures all parameters, inputs, and configuration for perfect reproducibility.
+Each calculation saves a `run_metadata.json` file that records all parameters, inputs, and configuration used.
 
 ---
 
-## What is Run Metadata?
+## Purpose
 
-Run metadata is a complete record of all parameters and configuration used in a SOLWEIG calculation. This enables:
+Run metadata provides a complete record of the parameters and configuration for a SOLWEIG calculation. This supports:
 
-1. **Reproducibility** - Re-run the exact same calculation months later
-2. **Audit Trail** - Document what parameters were used for publications or reports
-3. **Debugging** - Understand why results differ between runs
-4. **Archiving** - Save complete experimental setup alongside results
+1. **Reproducibility** — Re-running the same calculation at a later date
+2. **Audit trail** — Documenting parameters for publications or reports
+3. **Debugging** — Identifying differences between runs
+4. **Archiving** — Preserving the complete experimental setup alongside results
 
 ---
 
-## Automatic Metadata Saving
+## Metadata Saving
 
-When you use `calculate()` with `output_dir` specified, metadata is **automatically saved**:
+When `calculate()` is called with an `output_dir`, metadata is saved to that directory:
 
 ```python
 import solweig
@@ -25,29 +25,26 @@ import solweig
 surface = solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="cache/")
 weather = solweig.Weather.from_epw("weather.epw", start="2023-07-01")
 
-# This automatically saves run_metadata.json to output_dir
 results = solweig.calculate(
     surface, weather,
     human=solweig.HumanParams(weight=70, height=1.65),
     use_anisotropic_sky=True,
-    output_dir="output/",  # <-- Triggers automatic metadata saving
+    output_dir="output/",
 )
 
-# Metadata is now saved at: output/run_metadata.json
+# Metadata saved at: output/run_metadata.json
 ```
-
-**No extra work needed!** The metadata file is created automatically when `output_dir` is provided.
 
 ---
 
-## What's Captured?
+## Recorded Fields
 
-The metadata file records:
+The metadata file contains the following sections:
 
 ### 1. Execution Info
 
 - `solweig_version`: SOLWEIG version used
-- `run_timestamp`: When the calculation was performed
+- `run_timestamp`: Date and time of the calculation
 
 ### 2. Grid
 
@@ -67,7 +64,7 @@ The metadata file records:
 ### 5. Parameters
 
 - `use_anisotropic_sky`: Sky model type
-- `conifer`: Evergreen vs deciduous trees
+- `conifer`: Evergreen or deciduous trees
 
 ### 6. Outputs
 
@@ -87,15 +84,11 @@ The metadata file records:
 
 ## Loading and Inspecting Metadata
 
-Load metadata to inspect or verify parameters:
-
 ```python
 import solweig
 
-# Load metadata from previous run
 metadata = solweig.load_run_metadata("output/run_metadata.json")
 
-# Inspect key parameters
 print(f"Calculation performed: {metadata['run_timestamp']}")
 print(f"SOLWEIG version: {metadata['solweig_version']}")
 print(f"Location: {metadata['location']['latitude']:.2f}°N")
@@ -116,18 +109,16 @@ if "human" in metadata:
 
 ## Manual Metadata Creation
 
-For custom workflows, create metadata manually:
+For custom workflows, metadata can be created and saved separately:
 
 ```python
 import solweig
 
-# Prepare your calculation
 surface = solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="cache/")
 weather = solweig.Weather.from_epw("weather.epw")
 location = solweig.Location.from_surface(surface)
 human = solweig.HumanParams(weight=70)
 
-# Create metadata
 metadata = solweig.create_run_metadata(
     surface=surface,
     location=location,
@@ -141,7 +132,6 @@ metadata = solweig.create_run_metadata(
     outputs=["tmrt", "shadow"],
 )
 
-# Save to custom location
 solweig.save_run_metadata(metadata, output_dir="custom_dir/", filename="my_metadata.json")
 ```
 
@@ -149,7 +139,7 @@ solweig.save_run_metadata(metadata, output_dir="custom_dir/", filename="my_metad
 
 ## Example Metadata File
 
-Here's what a typical `run_metadata.json` looks like:
+A representative `run_metadata.json`:
 
 ```json
 {
@@ -193,10 +183,9 @@ Here's what a typical `run_metadata.json` looks like:
 
 ### Research Publications
 
-Document exact parameters for reproducible science:
+Record parameters for reproducible results:
 
 ```python
-# Run calculation
 results = solweig.calculate(
     surface, weather,
     human=solweig.HumanParams(weight=75, height=1.80),
@@ -204,20 +193,17 @@ results = solweig.calculate(
     output_dir="paper_results/",
 )
 
-# Metadata is saved automatically - include it in supplementary materials
-# Readers can reproduce your exact calculation
+# Metadata is saved alongside results and may be included in supplementary materials.
 ```
 
 ### Comparing Runs
 
-Compare metadata from different runs to understand differences:
+Compare metadata from different runs to identify parameter differences:
 
 ```python
-# Load metadata from two runs
 meta_run1 = solweig.load_run_metadata("run1/run_metadata.json")
 meta_run2 = solweig.load_run_metadata("run2/run_metadata.json")
 
-# Compare key parameters
 if "human" in meta_run1 and "human" in meta_run2:
     print("Run 1 posture:", meta_run1['human']['posture'])
     print("Run 2 posture:", meta_run2['human']['posture'])
@@ -226,59 +212,51 @@ print("Run 1 sky model:", meta_run1['parameters']['use_anisotropic_sky'])
 print("Run 2 sky model:", meta_run2['parameters']['use_anisotropic_sky'])
 ```
 
-### Archival and Documentation
+### Archival
 
-Save complete experimental setup alongside results:
+The output directory contains the complete experimental record:
 
 ```python
-# Your calculation produces:
 # output/
 #   ├── run_metadata.json      <-- Complete parameter record
 #   ├── tmrt_2023-07-01_1200.tif
 #   ├── tmrt_2023-07-01_1300.tif
 #   └── ...
-
-# Archive the entire directory - everything needed to reproduce the calculation
 ```
 
 ### Debugging
 
-Verify parameters when results seem unexpected:
+Verify parameters when results require investigation:
 
 ```python
 metadata = solweig.load_run_metadata("output/run_metadata.json")
 
-# Check if anisotropic sky was actually enabled
 if not metadata['parameters']['use_anisotropic_sky']:
-    print("Warning: Anisotropic sky was disabled!")
+    print("Note: Anisotropic sky was disabled.")
 
-# Check human parameters
 if "human" in metadata and metadata['human']['posture'] != 'standing':
-    print(f"Note: Results are for {metadata['human']['posture']} posture")
+    print(f"Note: Results computed for {metadata['human']['posture']} posture.")
 ```
 
 ---
 
 ## Custom Physics and Materials
 
-When using custom physics or materials files, the **full parameters are saved** in the metadata:
+When custom physics or materials files are used, the full parameter values are embedded in the metadata:
 
 ```python
-# Load custom physics
 physics = solweig.load_physics("custom_trees.json")
 
-# Calculate with custom physics
 results = solweig.calculate(
     surface, weather,
     physics=physics,
     output_dir="output/",
 )
 
-# Metadata now includes:
-# - physics.full_params: {...complete physics parameters...}
+# Metadata includes physics.full_params: {...complete physics parameters...}
 ```
 
-This ensures the metadata is **self-contained** - you don't need to keep track of the separate physics file.
+This ensures the metadata is self-contained; the original physics file is not required to interpret the record.
 
 ---
 
@@ -294,9 +272,9 @@ Create a metadata dictionary for a SOLWEIG run.
 - `location`: Location object
 - `weather`: List of Weather objects
 - `human`: HumanParams object (or None for defaults)
-- `physics`: Physics parameters from load_physics() (or None)
-- `materials`: Materials from load_materials() (or None)
-- `use_anisotropic_sky`: Whether anisotropic sky model was used
+- `physics`: Physics parameters from `load_physics()` (or None)
+- `materials`: Materials from `load_materials()` (or None)
+- `use_anisotropic_sky`: Whether the anisotropic sky model was used
 - `conifer`: Whether conifer mode was used
 - `output_dir`: Output directory path
 - `outputs`: List of output types saved
@@ -307,25 +285,25 @@ Create a metadata dictionary for a SOLWEIG run.
 
 ### `save_run_metadata()`
 
-Save metadata dictionary to JSON file.
+Save a metadata dictionary to a JSON file.
 
 **Parameters:**
 
-- `metadata`: Metadata dict from create_run_metadata()
-- `output_dir`: Directory to save metadata file
-- `filename`: Filename (default: "run_metadata.json")
+- `metadata`: Metadata dictionary from `create_run_metadata()`
+- `output_dir`: Directory in which to save the metadata file
+- `filename`: Filename (default: `"run_metadata.json"`)
 
-**Returns:** Path to saved metadata file
+**Returns:** Path to the saved metadata file
 
 ---
 
 ### `load_run_metadata()`
 
-Load metadata from JSON file.
+Load metadata from a JSON file.
 
 **Parameters:**
 
-- `metadata_path`: Path to metadata JSON file
+- `metadata_path`: Path to the metadata JSON file
 
 **Returns:** Metadata dictionary
 
@@ -333,14 +311,10 @@ Load metadata from JSON file.
 
 ## Summary
 
-**Automatic:** Metadata is saved automatically when you use `output_dir`
-
-**Complete:** Captures all parameters, inputs, and configuration
-
-**Reproducible:** Contains everything needed to re-run the exact calculation
-
-**Self-contained:** Includes full custom physics/materials (not just paths)
-
-**Future-proof:** Version information enables backward compatibility
-
-**The point:** Perfect reproducibility with zero extra effort.
+| Property | Description |
+| -------- | ----------- |
+| Saving | Metadata is written when `output_dir` is provided |
+| Scope | All parameters, inputs, and configuration are recorded |
+| Reproducibility | Contains the information required to re-run the calculation |
+| Self-contained | Includes full custom physics/materials values, not file paths alone |
+| Versioning | Records the SOLWEIG version for forward compatibility |

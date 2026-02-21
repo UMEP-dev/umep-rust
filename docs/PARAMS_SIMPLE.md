@@ -1,13 +1,14 @@
-# Parameter Handling - Simple Summary
+# Configuration
 
-**TL;DR:** Old API had 58 config options. New API has 3 parameter types, all with defaults. 99% of users never touch them.
+SOLWEIG uses three parameter types, each with default values.
 
 ---
 
-## The Three Parameter Types
+## Parameter Types
 
 ### 1. Human Parameters (Person-Specific)
-Who is experiencing the thermal environment?
+
+These parameters describe the individual for whom the thermal environment is evaluated.
 
 ```python
 human = HumanParams(
@@ -22,78 +23,77 @@ human = HumanParams(
 )
 ```
 
-**Defaults:** abs_k=0.7, abs_l=0.97, standing, 75 kg, 1.75 m, 35 yo, 80 W, 0.9 clo
-
-**When to customize:** Different body characteristics, sitting posture
+**Defaults:** abs_k=0.7, abs_l=0.97, standing, 75 kg, 1.75 m, 35 years, 80 W, 0.9 clo
 
 ---
 
 ### 2. Physics Parameters (Site-Independent)
-How do vegetation and posture work? (Universal scientific constants)
+
+These parameters govern vegetation transmissivity and posture geometry. They are site-independent and apply universally.
 
 ```python
 physics = load_physics("custom_trees.json")  # Optional
 ```
 
-Contains:
-- `Tree_settings`: Transmissivity (0.03), seasonal dates (day 97-300), trunk ratio (0.25)
+Contents:
+
+- `Tree_settings`: Transmissivity (0.03), seasonal dates (day 97–300), trunk ratio (0.25)
 - `Posture`: Geometry for standing/sitting (Fside, Fup, Fcyl, height)
 
-**Defaults:** Bundled in package (`physics_defaults.json`)
-
-**When to customize:** Different tree species, different seasonal periods
+**Defaults:** Bundled in the package (`physics_defaults.json`)
 
 ---
 
 ### 3. Material Library (Site-Specific)
-What is the ground/buildings made of?
+
+These parameters define surface material properties per landcover class.
 
 ```python
-materials = load_materials("site_materials.json")  # Required if landcover grid
+materials = load_materials("site_materials.json")  # Required if a landcover grid is provided
 ```
 
-Contains per-landcover-class values:
-- Albedo, Emissivity
+Contents per landcover class:
+
+- Albedo, emissivity
 - Ground temperature model parameters (TmaxLST, Ts_deg, Tstart)
 - Wall thermal properties (specific heat, conductivity, density, thickness)
 
-**Defaults:** None (only needed if you have landcover grid)
-
-**When to customize:** You have a landcover classification grid with different surface types
+**Defaults:** None (required only when a landcover grid is provided)
 
 ---
 
-## Model Behavior Flags
+## Model Behaviour Flags
 
-Two direct parameters control major model behavior:
+Two parameters control principal model behaviour:
 
 ### `use_anisotropic_sky` (default: follows `ModelConfig`, currently `True`)
-- `False` = Simpler isotropic sky model
-- `True` = Perez anisotropic sky model
-- **When to change:** Research papers, high-accuracy work
-If explicitly set to `True`, shadow matrices must already be prepared.
+
+- `False` — Isotropic sky model
+- `True` — Perez anisotropic sky model
+
+If set to `True`, shadow matrices must be prepared in advance.
 
 ### `conifer` (default: `False`)
-- `False` = Deciduous trees (seasonal leaf on/off)
-- `True` = Evergreen trees (always have leaves)
-- **When to change:** Your site has pine/spruce/fir trees
+
+- `False` — Deciduous trees (seasonal leaf on/off)
+- `True` — Evergreen trees (year-round canopy)
 
 ---
 
-## Usage Patterns
+## Usage Examples
 
-### 99% of users (all defaults)
+### Default parameters
+
 ```python
 import solweig
 
 surface = solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="cache/")
 weather = solweig.Weather.from_epw("weather.epw", start="2023-07-01")
 results = solweig.calculate(surface, weather, output_dir="output/")
-
-# All parameters use bundled defaults - nothing to configure!
 ```
 
-### Custom human parameters (common)
+### Custom human parameters
+
 ```python
 results = solweig.calculate(
     surface, weather,
@@ -102,27 +102,30 @@ results = solweig.calculate(
 )
 ```
 
-### Better accuracy (anisotropic sky)
+### Anisotropic sky model
+
 ```python
 results = solweig.calculate(
     surface, weather,
-    use_anisotropic_sky=True,  # <-- Slower, more accurate
+    use_anisotropic_sky=True,
     output_dir="output/",
 )
 ```
 
 ### Evergreen trees
+
 ```python
 results = solweig.calculate(
     surface, weather,
-    conifer=True,  # <-- Always leaf-on
+    conifer=True,
     output_dir="output/",
 )
 ```
 
-### Custom physics (rare)
+### Custom physics parameters
+
 ```python
-# Create custom_trees.json with different transmissivity:
+# custom_trees.json:
 # {
 #   "Tree_settings": {"Value": {"Transmissivity": 0.05, ...}},
 #   "Posture": {"Standing": {...}, "Sitting": {...}}
@@ -132,15 +135,13 @@ physics = solweig.load_physics("custom_trees.json")
 results = solweig.calculate(surface, weather, physics=physics, output_dir="output/")
 ```
 
-### Landcover material variation (advanced)
-```python
-# Requires: landcover grid (classification raster with class IDs)
-# Requires: materials file with properties per class
+### Landcover material variation
 
+```python
 materials = solweig.load_materials("site_materials.json")
 surface = solweig.SurfaceData.prepare(
     dsm="dsm.tif",
-    land_cover="landcover.tif",  # Grid with surface type IDs (0-7, 99-102)
+    land_cover="landcover.tif",  # Classification raster with surface type IDs (0-7, 99-102)
     working_dir="cache/",
 )
 results = solweig.calculate(surface, weather, materials=materials, output_dir="output/")
@@ -148,92 +149,20 @@ results = solweig.calculate(surface, weather, materials=materials, output_dir="o
 
 ---
 
-## Decision Tree
+## Parameter Overview
 
-**Do you need to customize human characteristics?**
-- Yes → `human=HumanParams(weight=..., height=..., posture=...)`
-- No → Use defaults
-
-**Do you have evergreen trees?**
-- Yes → `conifer=True`
-- No → Use defaults
-
-**Do you need research-grade accuracy?**
-- Yes → `use_anisotropic_sky=True` (slower, more accurate)
-- No → Use defaults
-
-**Do you have different tree species or seasonal periods?**
-- Yes → Create custom physics file, `physics=load_physics("custom.json")`
-- No → Use bundled defaults
-
-**Do you have a landcover grid with different surface materials?**
-- Yes → Create materials file, `materials=load_materials("site_materials.json")`
-- No → Use uniform defaults
-
-**Everything else?**
-- Use defaults!
-
----
-
-## Conceptual Separation
-
-The three parameter types are **conceptually distinct**:
-
-| Type | What | Example | When Needed |
-|------|------|---------|-------------|
+| Type | Description | Example | When Required |
+| ---- | ----------- | ------- | ------------- |
 | **human** | Person characteristics | Weight, height, absorption | Custom body properties |
-| **physics** | Universal constants | Tree transmissivity, posture geometry | Different tree species |
-| **materials** | Landcover properties | Albedo per surface type | Spatial material variation |
-
-This separation makes it clear:
-- `human` = **WHO** is experiencing the thermal environment
-- `physics` = **HOW** vegetation and posture work (universal science)
-- `materials` = **WHAT** the ground/buildings are made of (site-specific)
+| **physics** | Site-independent constants | Tree transmissivity, posture geometry | Non-default tree species or seasonal periods |
+| **materials** | Landcover properties | Albedo per surface type | Spatially varying surface materials |
 
 ---
 
-## What Happened to Everything Else?
+## Levels of Control
 
-### Now Automatic (28 things)
-- Sun position → Computed from datetime + location
-- Location → Extracted from DSM file metadata
-- Walls → Generated and cached automatically
-- SVF → Generated and cached automatically
-- Direct/diffuse radiation split → Computed
-- Max building height → Computed from DSM
-- Many more...
+### Level 1: Direct parameters
 
-### Now Bundled Defaults (Physics)
-Site-independent constants in `physics_defaults.json`:
-- Tree transmissivity: 0.03
-- Seasonal dates: Day 97-300 (~April-October)
-- Trunk ratio: 0.25
-- Posture geometry: Standing/sitting projected areas
-
-### Now Bundled Defaults (Human)
-Person characteristics:
-- Shortwave absorption: 0.7
-- Longwave absorption: 0.95
-- Posture: Standing
-- Weight: 75 kg, Height: 180 cm
-- Age: 35, Activity: 80 W
-- Clothing: 0.9 clo
-
-**You don't need to think about these unless you want custom values.**
-
-### Advanced: Landcover-Specific (Materials)
-Material properties per surface type (asphalt, grass, concrete, etc.):
-- Albedo, emissivity, thermal properties
-- **Only needed if you have a landcover grid**
-- Requires custom `materials.json` file
-
----
-
-## What If I Need Fine Control?
-
-Three levels of control:
-
-### Level 1: Direct parameters (most users)
 ```python
 calculate(
     ...,
@@ -243,14 +172,16 @@ calculate(
 )
 ```
 
-### Level 2: Custom physics or materials (advanced)
+### Level 2: Custom physics or materials files
+
 ```python
 physics = solweig.load_physics("my_physics.json")
 materials = solweig.load_materials("my_materials.json")
 calculate(..., physics=physics, materials=materials)
 ```
 
-### Level 3: Manual preprocessing (experts)
+### Level 3: Manual preprocessing
+
 ```python
 solweig.walls.generate_wall_hts(dsm_path="dsm.tif", out_dir="walls/")
 solweig.svf.generate_svf(dsm_path="dsm.tif", out_dir="svf/")
@@ -261,30 +192,21 @@ surface = solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="manual/")
 
 ## Backwards Compatibility
 
-The old unified `params.json` file (220 lines with human + physics + materials) is still supported:
+The unified `params.json` file is supported:
 
 ```python
-# Legacy unified params (still works for backwards compatibility)
 params = solweig.load_params("parametersforsolweig.json")
 results = solweig.calculate(surface, weather, params=params, output_dir="output/")
 ```
-
-But the new three-parameter model is clearer and more flexible.
 
 ---
 
 ## Summary
 
-**Before:** 58 configuration options, 2 config files, manual preprocessing
-
-**After:** 3 parameter types (all with defaults), everything else automatic
-
-| Parameter | Purpose | Default | Customization |
-|-----------|---------|---------|---------------|
-| `human` | Person characteristics | Standing, 75kg, 180cm | `HumanParams(...)` object |
-| `physics` | Universal constants | Bundled in package | `load_physics("custom.json")` |
-| `materials` | Landcover properties | Not needed if no LC grid | `load_materials("site.json")` |
-| `use_anisotropic_sky` | Sky model accuracy | False (faster) | Set to True |
-| `conifer` | Tree type | False (deciduous) | Set to True |
-
-**The point:** Start simple. Add complexity only if you need it.
+| Parameter | Purpose | Default | Customisation |
+| --------- | ------- | ------- | ------------- |
+| `human` | Person characteristics | Standing, 75 kg, 180 cm | `HumanParams(...)` object |
+| `physics` | Site-independent constants | Bundled in package | `load_physics("custom.json")` |
+| `materials` | Landcover properties | Not required if no landcover grid | `load_materials("site.json")` |
+| `use_anisotropic_sky` | Sky model selection | `True` | Set to `False` for isotropic |
+| `conifer` | Tree type | `False` (deciduous) | Set to `True` for evergreen |

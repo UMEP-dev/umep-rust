@@ -1,11 +1,11 @@
 # SOLWEIG
 
-**Map how hot it *feels* across a city — pixel by pixel.**
+**Spatially resolved mean radiant temperature and thermal comfort modelling for urban environments.**
 
 !!! warning "Experimental"
-    This package and QGIS plugin are released for testing and discussion purposes. The API is stabilising but may change. Feedback and bug reports welcome — [open an issue](https://github.com/UMEP-dev/solweig/issues).
+    This package and QGIS plugin are released for testing and discussion purposes. The API is stabilising but may change. Feedback and bug reports are welcome — [open an issue](https://github.com/UMEP-dev/solweig/issues).
 
-SOLWEIG computes **Mean Radiant Temperature (Tmrt)** and thermal comfort indices (**UTCI**, **PET**) for urban environments. Give it a building height model and weather data, and it produces high-resolution maps showing where people experience heat stress — and where trees, shade, and cool surfaces make a difference.
+SOLWEIG computes **Mean Radiant Temperature (Tmrt)** and thermal comfort indices (**UTCI**, **PET**) for urban environments. Given a building height model and weather data, it produces high-resolution maps of the radiation environment experienced by a person at ground level.
 
 !!! info "Attribution"
     This package is adapted from the [UMEP](https://github.com/UMEP-dev/UMEP-processing) (Urban Multi-scale Environmental Predictor) platform by Fredrik Lindberg, Sue Grimmond, and contributors. If you use SOLWEIG in your research, please [cite the original papers](#citation).
@@ -13,24 +13,24 @@ SOLWEIG computes **Mean Radiant Temperature (Tmrt)** and thermal comfort indices
 ![UTCI thermal comfort map](UTCI.jpg)
 *DSM/DEM data: [PNOA-LiDAR](https://pnoa.ign.es/pnoa-lidar), Instituto Geográfico Nacional (IGN), Spain. CC BY 4.0.*
 
-## Who is this for?
+## Intended Users
 
 - **Urban planners** comparing street designs, tree planting, or cool-roof strategies
-- **Researchers** running controlled microclimate experiments at 1 m resolution
+- **Researchers** conducting microclimate experiments at 1 m resolution
 - **Climate service providers** generating heat-risk maps for public health or events
-- **Students** learning about urban radiation and thermal comfort
+- **Students** studying urban radiation and thermal comfort
 
-## The 30-second version
+## Minimal Example
 
 ```python
 import solweig
 
-# Load your building heights and weather
+# Load building heights and weather data
 surface = solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="cache/")
 weather_list = solweig.Weather.from_epw("weather.epw", start="2025-07-01", end="2025-07-03")
 location = solweig.Location.from_epw("weather.epw")
 
-# Run — results saved as GeoTIFFs
+# Run calculation — results saved as GeoTIFFs
 solweig.calculate(
     surface=surface,
     weather=weather_list,
@@ -39,24 +39,24 @@ solweig.calculate(
 )
 ```
 
-That's it. `SurfaceData.prepare()` handles all preprocessing (walls, SVF, shadow matrices); `calculate()` uses them to compute shadows, radiation, and Tmrt. The anisotropic sky model is on by default.
+`SurfaceData.prepare()` performs all preprocessing (walls, SVF, shadow matrices); `calculate()` uses these to compute shadows, radiation, and Tmrt. The anisotropic sky model is enabled by default.
 
-## How it works
+## Model Overview
 
 SOLWEIG models the complete radiation budget experienced by a person standing outdoors:
 
-1. **Shadows** — Which pixels are shaded by buildings and trees?
-2. **Sky View Factor** — How much open sky does each point see?
-3. **Surface temperatures** — How hot are the ground and walls?
-4. **Radiation balance** — Sum shortwave (sun) and longwave (heat) from all directions
-5. **Tmrt** — Convert absorbed radiation into a single "felt temperature"
-6. **Thermal comfort** — Optionally derive UTCI or PET indices
+1. **Shadows** — Determination of shaded pixels from buildings and trees
+2. **Sky View Factor** — Fraction of open sky visible from each point
+3. **Surface temperatures** — Ground and wall temperature estimation
+4. **Radiation balance** — Summation of shortwave (solar) and longwave (thermal) fluxes from all directions
+5. **Tmrt** — Conversion of absorbed radiation into mean radiant temperature
+6. **Thermal comfort** — Optional derivation of UTCI or PET indices
 
 !!! note "SVF Rule"
-    `SurfaceData.prepare()` computes SVF automatically. SVF data must exist before calling `calculate()`.
+    `SurfaceData.prepare()` computes SVF as part of surface preparation. SVF data must exist before calling `calculate()`.
 
 !!! note "Anisotropic Rule"
-    The anisotropic sky model is on by default (`use_anisotropic_sky=True`). It requires the SVF and shadow matrices that `prepare()` provides.
+    The anisotropic sky model is enabled by default (`use_anisotropic_sky=True`). It requires the SVF and shadow matrices produced by `prepare()`.
 
 ## Documentation
 
@@ -66,7 +66,7 @@ SOLWEIG models the complete radiation budget experienced by a person standing ou
 
     ---
 
-    Install SOLWEIG and run your first calculation in minutes
+    Install SOLWEIG and run an initial calculation
 
     [:octicons-arrow-right-24: Installation](getting-started/installation.md)
     [:octicons-arrow-right-24: Quick Start](getting-started/quick-start.md)
@@ -75,7 +75,7 @@ SOLWEIG models the complete radiation budget experienced by a person standing ou
 
     ---
 
-    Step-by-step notebooks with real Athens data and visual outputs
+    Step-by-step notebooks with Athens data and visual outputs
 
     [:octicons-arrow-right-24: Athens Quick Start](tutorials/01-athens-quickstart.ipynb)
     [:octicons-arrow-right-24: Timeseries Analysis](tutorials/02-timeseries-analysis.ipynb)
@@ -85,7 +85,7 @@ SOLWEIG models the complete radiation budget experienced by a person standing ou
 
     ---
 
-    Common workflows: loading GeoTIFFs, running timeseries, thermal comfort
+    Common workflows: loading GeoTIFFs, timeseries, thermal comfort
 
     [:octicons-arrow-right-24: Basic Usage](guide/basic-usage.md)
     [:octicons-arrow-right-24: Working with GeoTIFFs](guide/geotiffs.md)
@@ -112,7 +112,7 @@ SOLWEIG models the complete radiation budget experienced by a person standing ou
 
     ---
 
-    Point-and-click spatial analysis in QGIS — no scripting required
+    Spatial analysis in QGIS without scripting
 
     [:octicons-arrow-right-24: QGIS Plugin](guide/qgis-plugin.md)
 

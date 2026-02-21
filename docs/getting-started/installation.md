@@ -6,19 +6,19 @@
 pip install solweig
 ```
 
-Verify it worked:
+Verify the installation:
 
 ```bash
 python -c "import solweig; print(solweig.__version__)"
 ```
 
-## Install from source (for development)
+## Install from Source (for development)
 
-If you want to modify the code or contribute:
+To modify the code or contribute:
 
 - **Python 3.11+**
-- **Rust toolchain** — needed to compile the high-performance core ([install Rust](https://rustup.rs/))
-- **uv** — fast Python package manager ([install uv](https://docs.astral.sh/uv/getting-started/installation/))
+- **Rust toolchain** — required to compile the compute core ([install Rust](https://rustup.rs/))
+- **uv** — Python package manager ([install uv](https://docs.astral.sh/uv/getting-started/installation/))
 
 ```bash
 git clone https://github.com/UMEP-dev/solweig.git
@@ -27,22 +27,22 @@ uv sync              # Install Python dependencies
 maturin develop      # Compile Rust extension and link it
 ```
 
-## Optional dependencies
+## Optional Dependencies
 
-SOLWEIG works with just numpy arrays, but file-based workflows benefit from these extras:
+SOLWEIG operates with numpy arrays alone, but file-based workflows benefit from the following packages:
 
-| Package | What it enables |
-| ------- | --------------- |
+| Package | Purpose |
+| ------- | ------- |
 | `rasterio` | Loading/saving GeoTIFF rasters (installed by default) |
 | `geopandas` | Rasterising vector data (e.g. tree polygons to a canopy grid) |
 | `affine` | Geospatial coordinate transforms (installed by default) |
 | `pyproj` | CRS handling and coordinate conversion (installed by default) |
 
-If you only work with numpy arrays, `rasterio` and `geopandas` are not needed.
+If only numpy arrays are used, `rasterio` and `geopandas` are not required.
 
-## GPU acceleration
+## GPU Acceleration
 
-SOLWEIG automatically uses GPU acceleration (via wgpu/Metal/Vulkan) when available. No extra setup is needed.
+SOLWEIG uses GPU acceleration (via wgpu/Metal/Vulkan) when available. No additional setup is required.
 
 ```python
 import solweig
@@ -51,7 +51,7 @@ print(f"GPU available: {solweig.is_gpu_available()}")
 print(f"Backend: {solweig.get_compute_backend()}")  # "gpu" or "cpu"
 ```
 
-If no GPU is found, it falls back to CPU transparently. To force CPU mode:
+If no GPU is found, computation falls back to CPU. To force CPU mode:
 
 ```python
 solweig.disable_gpu()
@@ -61,7 +61,7 @@ solweig.disable_gpu()
 
 ### `maturin: command not found`
 
-Install it via uv or pip:
+Install via uv or pip:
 
 ```bash
 uv tool install maturin
@@ -79,7 +79,7 @@ xcode-select --install
 
 ### `import solweig` fails after `maturin develop`
 
-Make sure you're using the same Python environment that `uv sync` created. If using uv:
+Ensure the same Python environment created by `uv sync` is active. If using uv:
 
 ```bash
 uv run python -c "import solweig; print('OK')"

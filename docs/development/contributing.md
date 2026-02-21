@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for your interest in contributing to SOLWEIG!
+Contributions to SOLWEIG are welcome.
 
 ## Development Setup
 
@@ -38,17 +38,17 @@ poe verify_project
 ### Making Changes
 
 1. Create a feature branch: `git checkout -b feature/my-feature`
-2. Make your changes
+2. Make changes
 3. Run verification: `poe verify_project`
 4. Commit with clear messages
 5. Open a pull request
 
 ### Code Style
 
-We use these tools (configured in `pyproject.toml`):
+The following tools are used (configured in `pyproject.toml`):
 
 | Tool | Purpose |
-|------|---------|
+| ---- | ------- |
 | **ruff** | Linting and formatting |
 | **ty** | Type checking |
 | **pytest** | Testing |
@@ -61,16 +61,16 @@ poe verify_project
 
 ### Testing
 
-Tests are in `tests/`:
+Tests are located in `tests/`:
 
-- `tests/spec/` - Physical property tests (shadows, SVF, radiation)
-- `tests/golden/` - Reference data validation
-- `tests/test_api.py` - Integration tests
+- `tests/spec/` — Physical property tests (shadows, SVF, radiation)
+- `tests/golden/` — Reference data validation
+- `tests/test_api.py` — Integration tests
 
 Add tests for new functionality:
 
 ```bash
-# Run specific test file
+# Run a specific test file
 pytest tests/test_api.py
 
 # Run with coverage
@@ -97,9 +97,9 @@ docs/                   # Documentation (MkDocs)
 
 Open an issue with:
 
-- Clear description of the bug
+- A description of the bug
 - Steps to reproduce
-- Expected vs actual behavior
+- Expected vs. actual behaviour
 - Version information
 
 ### Feature Requests
@@ -107,7 +107,7 @@ Open an issue with:
 Open an issue describing:
 
 - The use case
-- Proposed solution
+- Proposed approach
 - Alternatives considered
 
 ### Code Contributions

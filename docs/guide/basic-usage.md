@@ -1,17 +1,17 @@
 # Basic Usage
 
-This guide covers the core concepts and common patterns for day-to-day use of SOLWEIG.
+This guide covers the core concepts and common patterns for using SOLWEIG.
 
-## The three required inputs
+## Required Inputs
 
-Every SOLWEIG calculation needs exactly three things:
+Every SOLWEIG calculation requires three inputs:
 
 ### 1. Surface — the physical environment
 
-A `SurfaceData` object holds the building/terrain heights and optional vegetation. The only required field is a DSM (Digital Surface Model).
+A `SurfaceData` object holds building/terrain heights and optional vegetation. The only required field is a DSM (Digital Surface Model).
 
 !!! tip "Arrays or files?"
-    Use **numpy arrays** for synthetic grids, parameter sweeps, or when data is already in memory. Use **GeoTIFF files** for real-world data — `prepare()` handles CRS, alignment, caching, and NaN filling automatically.
+    Use **numpy arrays** for synthetic grids, parameter sweeps, or when data is already in memory. Use **GeoTIFF files** for real-world data — `prepare()` handles CRS, alignment, caching, and NaN filling.
 
 **From numpy arrays** (in-memory workflows):
 
@@ -19,7 +19,7 @@ A `SurfaceData` object holds the building/terrain heights and optional vegetatio
 import numpy as np
 import solweig
 
-# Minimum: just a height grid
+# Minimum: a height grid
 dsm = np.full((200, 200), 2.0, dtype=np.float32)
 dsm[80:120, 80:120] = 15.0  # A building
 
@@ -35,23 +35,23 @@ surface = solweig.SurfaceData.prepare(
 )
 ```
 
-### 2. Location — where on Earth
+### 2. Location — geographic coordinates
 
-A `Location` tells SOLWEIG where the site is, so it can compute sun position correctly.
+A `Location` provides the geographic position required for sun position calculations.
 
 ```python
-# Manual — when you know the coordinates
+# Manual specification
 location = solweig.Location(latitude=48.8, longitude=2.3, utc_offset=1)
 
-# From a GeoTIFF's coordinate system — extracts lat/lon from the DSM's CRS
+# From the DSM's coordinate system
 location = solweig.Location.from_surface(surface, utc_offset=1)
 
-# From an EPW weather file header — lat, lon, and UTC offset all extracted
+# From an EPW weather file header
 location = solweig.Location.from_epw("weather.epw")
 ```
 
 !!! warning "Always set `utc_offset`"
-    The UTC offset determines how clock time maps to sun position. Getting it wrong shifts shadows by hours. When creating a `Location` manually, always provide `utc_offset` explicitly.
+    The UTC offset determines how clock time maps to sun position. An incorrect offset shifts shadows by hours. When creating a `Location` manually, always provide `utc_offset` explicitly.
 
 ### 3. Weather — atmospheric conditions
 
@@ -62,14 +62,14 @@ from datetime import datetime
 
 weather = solweig.Weather(
     datetime=datetime(2025, 7, 15, 14, 0),
-    ta=32.0,          # Air temperature (°C)
+    ta=32.0,          # Air temperature (deg C)
     rh=40.0,          # Relative humidity (%)
-    global_rad=850.0, # Global horizontal irradiance (W/m²)
+    global_rad=850.0, # Global horizontal irradiance (W/m2)
     ws=2.0,           # Wind speed (m/s) — used for UTCI/PET
 )
 ```
 
-`ws` is optional for Tmrt calculations (defaults to 1.0 m/s) but directly affects UTCI and PET results. A difference of 1–3 m/s can shift UTCI by several degrees, so use measured wind data when computing thermal comfort indices.
+`ws` is optional for Tmrt calculations (defaults to 1.0 m/s) but directly affects UTCI and PET results. A difference of 1–3 m/s can shift UTCI by several degrees; measured wind data should be used when computing thermal comfort indices.
 
 For timeseries, load from an EPW file:
 
@@ -83,7 +83,7 @@ weather_list = solweig.Weather.from_epw(
 
 ### Downloading weather data
 
-Don't have an EPW file? Download one directly from PVGIS (no API key needed):
+If no EPW file is available, one can be downloaded from PVGIS (no API key required):
 
 ```python
 epw_path = solweig.download_epw(
@@ -95,7 +95,7 @@ weather_list = solweig.Weather.from_epw(epw_path)
 location = solweig.Location.from_epw(epw_path)
 ```
 
-## Running a calculation
+## Running a Calculation
 
 ### Single timestep
 
@@ -121,38 +121,38 @@ summary = solweig.calculate(
 )
 ```
 
-When given a list of weather timesteps, `calculate()` automatically carries **thermal state** between timesteps — ground and wall temperatures from one hour affect the next. Large rasters are automatically tiled to fit GPU memory. This matters for accuracy; avoid looping over `calculate()` manually with single timesteps.
+When given a list of weather timesteps, `calculate()` carries **thermal state** between timesteps — ground and wall temperatures from one hour affect the next. Large rasters are tiled to fit GPU memory. Looping over `calculate()` with single timesteps does not carry thermal state and may produce discontinuities.
 
-Per-timestep GeoTIFFs are saved to `output_dir` when `outputs` is specified. Summary grids (mean/max/min Tmrt, UTCI, sun hours) are always saved to `output_dir/summary/`.
+Per-timestep GeoTIFFs are saved to `output_dir` when `outputs` is specified. Summary grids (mean/max/min Tmrt, UTCI, sun hours) are saved to `output_dir/summary/`.
 
-See [Timeseries](timeseries.md) for more detail.
+See [Timeseries](timeseries.md) for further detail.
 
-## Understanding the output
+## Understanding the Output
 
-Each per-timestep GeoTIFF and summary grid has the same shape as your DSM:
+Each per-timestep GeoTIFF and summary grid has the same dimensions as the input DSM:
 
-| Field | Unit | What it means |
-| ----- | ---- | ------------- |
-| `tmrt` | °C | **Mean Radiant Temperature** — how much radiation a person absorbs. The main output. |
-| `shadow` | 0–1 | Shadow fraction. 1 = fully sunlit, 0 = fully shaded. |
-| `kdown` | W/m² | Incoming shortwave radiation (sun + diffuse sky). |
-| `kup` | W/m² | Reflected shortwave radiation from the ground. |
-| `ldown` | W/m² | Incoming longwave radiation (thermal, from sky + walls). |
-| `lup` | W/m² | Emitted longwave radiation from the ground. |
+| Field | Unit | Description |
+| ----- | ---- | ----------- |
+| `tmrt` | deg C | **Mean Radiant Temperature** — radiation absorbed by a person. The primary output. |
+| `shadow` | 0–1 | Shadow fraction. 1 = sunlit, 0 = shaded. |
+| `kdown` | W/m2 | Incoming shortwave radiation (direct + diffuse). |
+| `kup` | W/m2 | Reflected shortwave radiation from the ground. |
+| `ldown` | W/m2 | Incoming longwave radiation (thermal, from sky + walls). |
+| `lup` | W/m2 | Emitted longwave radiation from the ground. |
 
-**Typical ranges** (mid-latitude summer, midday): Tmrt 20–75 °C (shaded–sunlit), UTCI 25–45 °C. If you see Tmrt above 80 °C or UTCI above 55 °C, check your input data — common causes are incorrect CRS, missing DEM, or unrealistic DSM values.
+**Typical ranges** (mid-latitude summer, midday): Tmrt 20–75 deg C (shaded–sunlit), UTCI 25–45 deg C. Values of Tmrt above 80 deg C or UTCI above 55 deg C may indicate input data issues — common causes are incorrect CRS, missing DEM, or unusually high DSM values.
 
 The `TimeseriesSummary` returned by `calculate()` contains aggregated grids:
 
 ```python
-print(f"Mean Tmrt: {summary.tmrt_mean.mean():.1f}°C")
-print(f"Max UTCI: {np.nanmax(summary.utci_max):.1f}°C")
+print(f"Mean Tmrt: {summary.tmrt_mean.mean():.1f} deg C")
+print(f"Max UTCI: {np.nanmax(summary.utci_max):.1f} deg C")
 print(f"Sun hours range: {summary.sun_hours.min():.1f} – {summary.sun_hours.max():.1f}")
 ```
 
-## Adding vegetation
+## Adding Vegetation
 
-Trees reduce Tmrt significantly through shading. Provide a Canopy DSM (CDSM) — a grid of vegetation canopy heights above ground.
+Trees reduce Tmrt through shading. A Canopy DSM (CDSM) — a grid of vegetation canopy heights above ground — is provided as an additional input.
 
 ```python
 # From arrays
@@ -174,27 +174,27 @@ surface = solweig.SurfaceData.prepare(
 CDSM (and TDSM) heights can be either **relative** (height above ground) or **absolute** (elevation above sea level). By default, SOLWEIG assumes CDSM values are relative.
 
 ```python
-# Relative CDSM (default): values are height above ground
+# Relative CDSM (default): values represent height above ground
 # e.g. 8.0 = an 8 m tall tree
 surface = solweig.SurfaceData(
     dsm=dsm,
     cdsm=cdsm,
-    cdsm_relative=True,   # Default — SOLWEIG adds ground elevation automatically
+    cdsm_relative=True,   # Default — ground elevation is added during preprocessing
     pixel_size=1.0,
 )
-surface.preprocess()  # Converts relative → absolute using DEM or DSM as base
+surface.preprocess()  # Converts relative to absolute using DEM or DSM as base
 
-# Absolute CDSM: values are elevation above sea level
-# e.g. 135.0 = tree canopy is at 135 m elevation
+# Absolute CDSM: values represent elevation above sea level
+# e.g. 135.0 = tree canopy at 135 m elevation
 surface = solweig.SurfaceData(
     dsm=dsm,
     cdsm=cdsm_absolute,
-    cdsm_relative=False,  # Already absolute — no conversion needed
+    cdsm_relative=False,  # No conversion applied
     pixel_size=1.0,
 )
 ```
 
-When using `SurfaceData.prepare()` with GeoTIFFs, this conversion happens automatically.
+When using `SurfaceData.prepare()` with GeoTIFFs, this conversion is handled during preparation.
 
 The same flags exist for DSM and TDSM:
 
@@ -211,21 +211,21 @@ surface.preprocess()  # dsm_absolute = dem + dsm_relative
 
 ### Deciduous vs. evergreen trees
 
-By default, SOLWEIG uses seasonal leaf-on/leaf-off based on the date. For evergreen trees (conifers), set:
+By default, SOLWEIG applies seasonal leaf-on/leaf-off based on the date. For evergreen trees (conifers):
 
 ```python
 results = solweig.calculate(
     surface=surface,
     weather=weather_list,
     location=location,
-    conifer=True,  # Trees always have full canopy
+    conifer=True,  # Year-round canopy
     output_dir="output/",
 )
 ```
 
-## Customising human parameters
+## Customising Human Parameters
 
-The default person is standing, 75 kg, 1.75 m tall, 35 years old. You can change this:
+The default person is standing, 75 kg, 1.75 m tall, 35 years old. These values can be modified:
 
 ```python
 result = solweig.calculate(
@@ -241,14 +241,12 @@ result = solweig.calculate(
 )
 ```
 
-## Anisotropic sky model
+## Anisotropic Sky Model
 
-The anisotropic sky model is **on by default** (`use_anisotropic_sky=True`). It distributes diffuse radiation
-realistically across the sky dome instead of treating it as uniform. No extra
-setup is needed — `SurfaceData.prepare()` computes everything required (SVF and
-shadow matrices).
+The anisotropic sky model is **enabled by default** (`use_anisotropic_sky=True`). It distributes diffuse radiation
+across the sky dome according to the Perez model rather than treating it as uniform. `SurfaceData.prepare()` computes the required SVF and shadow matrices.
 
-To disable it (uniform sky, slightly faster):
+To disable it (uniform sky distribution):
 
 ```python
 results = solweig.calculate(
@@ -260,9 +258,9 @@ results = solweig.calculate(
 )
 ```
 
-## Input validation
+## Input Validation
 
-Catch problems before the expensive SVF computation:
+Validate inputs before running a calculation:
 
 ```python
 try:
@@ -276,15 +274,15 @@ except solweig.MissingPrecomputedData as e:
     print(f"Missing data: {e}")
 ```
 
-## Common issues
+## Common Issues
 
 ### NaN pixels in output
 
-NaN values in DSM/CDSM are automatically filled with the ground reference (DEM, or the DSM itself if no DEM is provided). If output still contains NaN, provide a DEM to maximise valid coverage.
+NaN values in DSM/CDSM are filled with the ground reference (DEM, or the DSM itself if no DEM is provided). If output still contains NaN, providing a DEM may increase valid coverage.
 
 ### Slow first calculation
 
-SVF must be prepared before `calculate()`. Use `SurfaceData.prepare()` for both array and file workflows — it computes SVF automatically. For file workflows, use a persistent `working_dir` so SVF is cached and reused across runs.
+SVF must be prepared before `calculate()`. `SurfaceData.prepare()` computes SVF as part of the preparation step. For file workflows, use a persistent `working_dir` so SVF is cached and reused across runs.
 
 ### GPU not detected
 
@@ -293,11 +291,11 @@ print(f"GPU: {solweig.is_gpu_available()}")
 print(f"Backend: {solweig.get_compute_backend()}")
 ```
 
-The package falls back to CPU automatically. GPU substantially speeds up SVF and shadow computation.
+If no GPU is available, the package falls back to CPU. GPU acceleration reduces SVF and shadow computation time.
 
 ### CRS must be projected (metres)
 
-SOLWEIG needs pixel distances in metres for shadow and SVF calculations. If your GeoTIFF uses a geographic CRS (lat/lon in degrees), `prepare()` will raise an error. Reproject to a projected CRS (e.g. UTM) first:
+SOLWEIG requires pixel distances in metres for shadow and SVF calculations. If the GeoTIFF uses a geographic CRS (lat/lon in degrees), `prepare()` raises an error. Reproject to a projected CRS (e.g. UTM) first:
 
 ```bash
 gdalwarp -t_srs EPSG:32634 input.tif output_utm.tif
@@ -305,15 +303,15 @@ gdalwarp -t_srs EPSG:32634 input.tif output_utm.tif
 
 ### GridShapeMismatch
 
-All input grids must have the same dimensions. When loading from GeoTIFFs, `prepare()` resamples automatically. When passing numpy arrays, ensure all arrays have the same shape before calling `prepare()`.
+All input grids must have the same dimensions. When loading from GeoTIFFs, `prepare()` resamples to a common grid. When passing numpy arrays, all arrays must have the same shape before calling `prepare()`.
 
 ### MissingPrecomputedData
 
-This means `calculate()` could not find SVF data. Make sure you used `SurfaceData.prepare()` (which computes SVF) rather than constructing `SurfaceData` directly.
+This error indicates that `calculate()` could not find SVF data. Ensure that `SurfaceData.prepare()` (which computes SVF) was used rather than constructing `SurfaceData` directly.
 
-## Complete working demos
+## Working Demos
 
-For end-to-end examples you can run directly:
+For end-to-end examples:
 
 - **[demos/athens-demo.py](https://github.com/UMEP-dev/solweig/blob/main/demos/athens-demo.py)** — Full GeoTIFF workflow with tree vectors, multi-day timeseries, and UTCI post-processing.
 - **[demos/bilbao-demo.py](https://github.com/UMEP-dev/solweig/blob/main/demos/bilbao-demo.py)** — Terrain-aware shadows in a mountain valley: relative building heights (`dsm_relative=True`), separate DEM, and `max_shadow_distance_m` for hillside shadow reach.

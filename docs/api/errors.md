@@ -1,6 +1,6 @@
 # Error Handling
 
-SOLWEIG provides structured exceptions for clear error messages and easy handling.
+SOLWEIG uses structured exceptions for diagnostic error reporting.
 
 ## Exception Hierarchy
 
@@ -29,7 +29,6 @@ except MissingPrecomputedData as e:
     print(f"Missing data: {e}")
     print(f"  Suggestion: {e.suggestion}")
 except SolweigError as e:
-    # Catch any SOLWEIG error
     print(f"Error: {e}")
 ```
 
@@ -89,9 +88,9 @@ except SolweigError as e:
 
 ---
 
-## Pre-flight Validation
+## Pre-Flight Validation
 
-Use `validate_inputs()` to catch errors before expensive computations:
+Use `validate_inputs()` to identify errors before computation:
 
 ```python
 from solweig.errors import GridShapeMismatch, MissingPrecomputedData
@@ -101,13 +100,12 @@ try:
     for w in warnings:
         print(f"Warning: {w}")
 
-    # Now safe to run expensive calculation
     result = solweig.calculate(surface, location, weather, output_dir="output/")
 
 except GridShapeMismatch as e:
-    print(f"Fix grid shapes before proceeding: {e.field}")
+    print(f"Grid shape mismatch: {e.field}")
 except MissingPrecomputedData as e:
     print(f"Missing required data: {e}")
 ```
 
-This catches shape mismatches, missing data, and other issues *before* SVF computation.
+This catches shape mismatches, missing data, and other issues prior to SVF computation.

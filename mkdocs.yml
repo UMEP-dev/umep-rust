@@ -99,9 +99,6 @@ nav:
   - Development:
       - Contributing: development/contributing.md
       - Architecture: development/architecture.md
-      - GPU Execution Plan: development/gpu-execution-plan.md
-      - Migration from Old API: PARAMS_MIGRATION.md
-      - Validation Research: SOLWEIG_VALIDATION_RESEARCH.md
 
 extra:
   social:

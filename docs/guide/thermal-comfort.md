@@ -1,16 +1,16 @@
 # Thermal Comfort Indices
 
-Tmrt tells you how much radiation a person absorbs, but thermal comfort also depends on air temperature, humidity, and wind. SOLWEIG computes two standard indices that combine all these factors into a single "feels like" temperature.
+Tmrt quantifies the radiation absorbed by a person, but thermal comfort also depends on air temperature, humidity, and wind speed. SOLWEIG computes two standard indices that combine these variables into a single equivalent temperature.
 
 ## UTCI (Universal Thermal Climate Index)
 
-UTCI is the most widely used outdoor thermal comfort index. It represents the air temperature of a reference environment that would produce the same thermal strain as the actual conditions.
+UTCI represents the air temperature of a reference environment that would produce the same thermal strain as the actual conditions. It is the most widely used outdoor thermal comfort index.
 
-**Use UTCI when:** You want a standardised, fast metric for heat stress mapping, urban planning, or public health applications.
+**Applicable when:** A standardised metric is needed for heat stress mapping, urban planning, or public health applications.
 
 ### Summary grids (default)
 
-UTCI summary grids (mean, max, min, day/night averages) are always computed
+UTCI summary grids (mean, max, min, day/night averages) are computed
 as part of `TimeseriesSummary`:
 
 ```python
@@ -36,13 +36,13 @@ summary = solweig.calculate(
 ```python
 result = solweig.calculate(surface, location, weather, output_dir="output/")
 utci = result.compute_utci(weather)
-print(f"Mean UTCI: {utci.mean():.1f}°C")
+print(f"Mean UTCI: {utci.mean():.1f} deg C")
 ```
 
 ### UTCI stress categories
 
-| UTCI (°C) | Thermal stress |
-| ---------- | -------------- |
+| UTCI (deg C) | Thermal stress |
+| ------------ | -------------- |
 | > 46 | Extreme heat stress |
 | 38 to 46 | Very strong heat stress |
 | 32 to 38 | Strong heat stress |
@@ -55,17 +55,17 @@ print(f"Mean UTCI: {utci.mean():.1f}°C")
 
 ### Interpreting results
 
-On a hot summer day (air temperature ~32 °C, clear sky), typical values:
+On a clear summer day (air temperature approximately 32 deg C), typical values are:
 
-- **Sunlit areas:** Tmrt 55–70 °C, UTCI 35–45 °C (strong to very strong heat stress)
-- **Shaded areas:** Tmrt 35–45 °C, UTCI 28–34 °C (moderate to strong heat stress)
-- **Shade benefit:** Tree shade typically reduces UTCI by 5–15 K — often enough to shift one stress category
+- **Sunlit areas:** Tmrt 55–70 deg C, UTCI 35–45 deg C (strong to very strong heat stress)
+- **Shaded areas:** Tmrt 35–45 deg C, UTCI 28–34 deg C (moderate to strong heat stress)
+- **Shade effect:** Tree shade typically reduces UTCI by 5–15 K, often sufficient to shift one stress category
 
-Values outside these ranges are not necessarily wrong — they depend on latitude, time of year, and surface materials — but extreme outliers (e.g., Tmrt > 80 °C or UTCI > 55 °C) may indicate input issues.
+Values outside these ranges are not necessarily erroneous — they depend on latitude, time of year, and surface materials — but extreme outliers (e.g., Tmrt > 80 deg C or UTCI > 55 deg C) may indicate input data issues.
 
 ### Performance
 
-UTCI uses a fast polynomial approximation (~200 terms). Processing time is negligible compared to the main Tmrt calculation:
+UTCI uses a polynomial approximation (~200 terms). Processing time is negligible relative to the main Tmrt calculation:
 
 - Single grid: ~1 ms
 - 72 timesteps: ~1 s
@@ -74,9 +74,9 @@ UTCI uses a fast polynomial approximation (~200 terms). Processing time is negli
 
 ## PET (Physiological Equivalent Temperature)
 
-PET is the air temperature of a reference indoor environment at which the human heat balance equals the actual outdoor conditions. Unlike UTCI, PET allows you to customise body parameters.
+PET is the air temperature of a reference indoor environment at which the human heat balance equals the actual outdoor conditions. Unlike UTCI, PET accepts customisable body parameters.
 
-**Use PET when:** You need thermal comfort for specific populations (elderly, children, athletes) or when research requires the physiological model.
+**Applicable when:** Thermal comfort assessments for specific populations (elderly, children, athletes) are required, or when the physiological model is needed for research purposes.
 
 ### Per-timestep PET
 
@@ -97,7 +97,7 @@ summary = solweig.calculate(
 ```python
 result = solweig.calculate(surface, location, weather, output_dir="output/")
 pet = result.compute_pet(weather)
-print(f"Mean PET: {pet.mean():.1f}°C")
+print(f"Mean PET: {pet.mean():.1f} deg C")
 ```
 
 ### With custom human parameters
@@ -119,8 +119,8 @@ pet = result.compute_pet(
 
 ### PET thermal sensation
 
-| PET (°C) | Perception | Physiological stress |
-| --------- | ---------- | -------------------- |
+| PET (deg C) | Perception | Physiological stress |
+| ----------- | ---------- | -------------------- |
 | > 41 | Very hot | Extreme heat stress |
 | 35 to 41 | Hot | Strong heat stress |
 | 29 to 35 | Warm | Moderate heat stress |
@@ -133,23 +133,23 @@ pet = result.compute_pet(
 
 ### PET performance
 
-PET uses an iterative solver and is significantly slower than UTCI:
+PET uses an iterative solver and requires more computation time than UTCI:
 
 - Single grid: ~50 ms
 - 72 timesteps: ~1 minute
 
-!!! warning "PET is ~50x slower than UTCI"
-    For large-scale studies, use UTCI unless PET's customisable body parameters are specifically needed.
+!!! warning "PET computation time"
+    PET requires iterative solving and takes approximately 50 times longer than UTCI per timestep. For large-scale studies, consider whether the customisable body parameters offered by PET are required.
 
 ---
 
-## Choosing between UTCI and PET
+## Choosing Between UTCI and PET
 
 | | UTCI | PET |
 | - | ---- | --- |
-| **Speed** | Fast (polynomial) | Slow (iterative) |
+| **Computation** | Polynomial approximation | Iterative solver |
 | **Human parameters** | Fixed reference person | Customisable (age, weight, clothing, etc.) |
-| **Best for** | Heat warnings, urban planning, large-scale mapping | Detailed comfort studies, vulnerable populations |
+| **Typical applications** | Heat warnings, urban planning, large-scale mapping | Detailed comfort studies, vulnerable populations |
 | **Common in** | European heat action plans, WMO guidelines | German VDI guidelines, bioclimatology research |
 
-For most day-to-day urban microclimate work, **UTCI is the recommended default**. It's fast, widely understood, and has standardised stress categories used in public health guidance.
+UTCI is computationally efficient and has standardised stress categories referenced in public health guidance. PET allows customisation of individual body parameters for population-specific comfort studies.
