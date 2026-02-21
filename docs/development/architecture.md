@@ -1,6 +1,6 @@
 # Architecture
 
-SOLWEIG follows a 4-layer architecture separating concerns cleanly.
+SOLWEIG follows a layered architecture with a fused Rust compute pipeline.
 
 ## Layer Overview
 
@@ -12,136 +12,160 @@ SOLWEIG follows a 4-layer architecture separating concerns cleanly.
 │  Layer 2: Orchestration                     │
 │  computation.py, timeseries.py, tiling.py   │
 ├─────────────────────────────────────────────┤
-│  Layer 3: Component Functions               │
-│  shadows.py, svf.py, radiation.py, etc.     │
+│  Layer 3: Fused Rust Pipeline               │
+│  pipeline.compute_timestep() via PyO3       │
+│  + Python helpers (SVF, transmissivity,     │
+│    building mask, ground temperature)       │
 ├─────────────────────────────────────────────┤
-│  Layer 4: Rust Computation                  │
-│  rustalgos (via maturin/PyO3)               │
+│  Layer 4: Rust Algorithms                   │
+│  shadowing, skyview, gvf, vegetation,       │
+│  tmrt, utci, pet, sky (via maturin/PyO3)    │
 └─────────────────────────────────────────────┘
 ```
 
 ## Layer 1: User API
 
-**File**: `api.py` (~244 lines)
+**File**: `api.py`
 
 Public interface that users import:
 
 ```python
 import solweig
 
-result = solweig.calculate(surface, location, weather)
+summary = solweig.calculate(
+    surface=solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="output"),
+    weather=solweig.Weather.from_umep_met("weather.txt"),
+    location=solweig.Location.from_surface(surface, utc_offset=1),
+)
+summary.report()
 ```
 
-Responsibilities:
+Key types:
 
-- Re-export public classes and functions
-- Input validation
-- Documentation (docstrings)
+- `SurfaceData` — DSM, vegetation, walls, land cover, SVF (via `.prepare()`)
+- `Weather` — per-timestep meteorological data
+- `Location` — geographic coordinates with UTC offset
+- `TimeseriesSummary` — returned by `calculate()`, with summary statistics and GeoTIFF export
 
 ## Layer 2: Orchestration
 
-**Files**: `computation.py`, `timeseries.py`, `tiling.py`
+**Files**: `computation.py`, `timeseries.py`, `tiling.py`, `summary.py`
 
-Coordinates component functions and manages state:
+Coordinates the pipeline and manages state:
 
 ```python
-# computation.py
-def _compute_single_timestep(surface, location, weather, state):
-    shadows = compute_shadows(...)
-    svf = resolve_svf(...)
-    ground = compute_ground_temperature(...)
-    gvf = compute_gvf(...)
-    radiation = compute_radiation(...)
-    tmrt = compute_tmrt(...)
-    return SolweigResult(...)
+# timeseries.py — iterates over weather list
+for weather in weather_list:
+    result = calculate_core_fused(surface, location, weather, state, ...)
+    accumulator.update(result)       # GridAccumulator tracks min/max/mean
+    state = result.state             # carry thermal state forward
+
+# computation.py — single-timestep entry point
+def calculate_core_fused(surface, location, weather, state, ...):
+    svf = resolve_svf(precomputed, ...)           # Python (cached)
+    psi = compute_transmissivity(doy, ...)        # Python
+    buildings = detect_building_mask(dsm, ...)     # Python
+    result = pipeline.compute_timestep(...)        # Fused Rust FFI call
+    lup = _apply_thermal_delay(...)                # Rust (TsWaveDelay)
+    return SolweigResult(tmrt, shadow, ...)
 ```
 
 Responsibilities:
 
-- Call components in correct order
+- Pre-compute Python-side inputs (SVF resolution, transmissivity, building mask)
+- Hand off to fused Rust pipeline for per-pixel computation
 - Manage thermal state across timesteps
-- Handle caching and buffer pools
-- Coordinate parallel processing
+- Accumulate summary statistics (GridAccumulator)
+- Route large rasters to tiled processing
 
-## Layer 3: Component Functions
+## Layer 3: Fused Rust Pipeline
 
-**Directory**: `components/`
+**Rust entry point**: `pipeline.compute_timestep()`
 
-Pure functions that implement physical models:
+A single FFI call performs the full per-pixel computation:
 
-| Module | Function | Output |
-|--------|----------|--------|
-| `shadows.py` | `compute_shadows()` | ShadowBundle |
-| `svf_resolution.py` | `resolve_svf()` | SvfBundle |
-| `ground.py` | `compute_ground_temperature()` | GroundBundle |
-| `gvf.py` | `compute_gvf()` | GvfBundle |
-| `radiation.py` | `compute_radiation()` | RadiationBundle |
-| `tmrt.py` | `compute_tmrt()` | TmrtResult |
-
-Design principles:
-
-- Pure functions (no side effects)
-- Explicit inputs and outputs
-- Bundle classes for multiple return values
-- Testable in isolation
-
-## Layer 4: Rust Computation
-
-**Directory**: `rust/`
-
-Performance-critical algorithms in Rust:
-
-- `shadowing` - Ray-traced shadow computation
-- `skyview` - Sky View Factor calculation
-- `gvf` - Ground View Factor
-- `vegetation` - Vegetation transmissivity
-- `utci` - UTCI polynomial
-- `pet` - PET iterative solver
-
-Exposed to Python via maturin/PyO3:
-
-```python
-from solweig import rustalgos
-shadows = rustalgos.compute_shadows(dsm, sun_altitude, sun_azimuth)
+```text
+Shadows → Ground temperature → GVF → Radiation → Tmrt
 ```
+
+This eliminates intermediate numpy allocations and FFI round-trips between
+Python and Rust. The pipeline accepts all inputs at once and returns the
+complete result.
+
+**Python helpers** still called by the orchestration layer (Layer 2):
+
+| Module | Function | Purpose |
+|--------|----------|---------|
+| `components/svf_resolution.py` | `resolve_svf()` | SVF lookup and adjustment (cached) |
+| `components/svf_resolution.py` | `adjust_svfbuveg_with_psi()` | Vegetation transmissivity correction |
+| `components/shadows.py` | `compute_transmissivity()` | Seasonal leaf-on/off transmissivity |
+| `components/gvf.py` | `detect_building_mask()` | Building footprint detection for GVF |
+| `components/ground.py` | `compute_ground_temperature()` | Sinusoidal ground/wall temperature model |
+
+## Layer 4: Rust Algorithms
+
+**Directory**: `rust/src/`
+
+Performance-critical algorithms in Rust, exposed via maturin/PyO3:
+
+| Module | Purpose |
+|--------|---------|
+| `pipeline` | Fused per-timestep compute (shadows → Tmrt) |
+| `shadowing` | Ray-traced shadow computation (CPU + GPU) |
+| `skyview` | Sky View Factor calculation |
+| `gvf` | Ground View Factor with wall radiation |
+| `vegetation` | Kside/Lside vegetation radiation |
+| `sky` | Anisotropic (Perez) sky model |
+| `tmrt` | Mean Radiant Temperature from radiation budget |
+| `ground` | Ground/wall temperature and TsWaveDelay |
+| `utci` | Universal Thermal Climate Index polynomial |
+| `pet` | Physiological Equivalent Temperature solver |
+| `morphology` | Binary dilation (building mask) |
 
 ## Data Flow
 
 ```
 SurfaceData ──┐
               │
-Location ─────┼──► calculate() ──► SolweigResult
+Location ─────┼──► calculate() ──► TimeseriesSummary
               │         │               │
-Weather ──────┘         │               ├── tmrt
-                        │               ├── shadow
-                        ▼               ├── kdown
-                  Component             ├── kup
-                  Functions             ├── ldown
-                        │               └── lup
+Weather[] ────┘         │               ├── tmrt_mean / tmrt_max
+                        │               ├── shadow_fraction
+                        ▼               ├── sun_hours
+                  timeseries loop       ├── utci_mean
+                        │               └── to_geotiff() / report()
                         ▼
-                  Rust Algorithms
+              calculate_core_fused()
+                        │
+              ┌─────────┼──────────┐
+              │ Python   │  Rust    │
+              │ helpers  │ pipeline │
+              └─────────┴──────────┘
 ```
 
 ## Bundle Classes
 
-Components communicate via typed bundles:
+Components communicate via typed dataclass bundles:
 
 ```python
 @dataclass
-class ShadowBundle:
-    shadow: np.ndarray      # Combined shadow fraction
-    shadow_building: np.ndarray
-    shadow_vegetation: np.ndarray
+class GroundBundle:
+    tg: np.ndarray          # Ground temperature deviation (K)
+    tg_wall: float          # Wall temperature deviation
+    ci_tg: float            # Clearness index correction
+    alb_grid: np.ndarray    # Albedo per pixel
+    emis_grid: np.ndarray   # Emissivity per pixel
 
 @dataclass
-class RadiationBundle:
-    kdown: np.ndarray       # Downwelling shortwave
-    kup: np.ndarray         # Upwelling shortwave
-    ldown: np.ndarray       # Downwelling longwave
-    lup: np.ndarray         # Upwelling longwave
-    kside: DirectionalData  # Lateral shortwave
-    lside: DirectionalData  # Lateral longwave
+class LupBundle:
+    lup: np.ndarray         # Upwelling longwave (center)
+    lup_e: np.ndarray       # Upwelling longwave (east)
+    lup_s: np.ndarray       # ... south, west, north
+    state: ThermalState     # Updated state for next timestep
 ```
+
+Active bundles: `DirectionalArrays`, `SvfBundle`, `GroundBundle`,
+`GvfBundle`, `LupBundle`, `WallBundle`, `VegetationBundle`.
 
 ## Caching Strategy
 
@@ -149,9 +173,11 @@ Expensive computations are cached:
 
 | Data | Cached Where | Invalidation |
 |------|-------------|--------------|
-| SVF | `PrecomputedData` | DSM hash change |
-| Wall heights | `working_dir/walls/` | DSM change |
-| Shadow matrices | `PrecomputedData` | DSM change |
+| Wall heights/aspects | `working_dir/walls/` | DSM change |
+| SVF arrays | `working_dir/svf/` | DSM change |
+| GVF geometry cache | `PrecomputedData` | Per-run |
+| Land cover properties | `SurfaceData._land_cover_props_cache` | Identity change |
+| Valid-pixel bounding box | `SurfaceData._valid_bbox_cache` | Identity change |
 
 ## Dual Environment Support
 
@@ -163,4 +189,4 @@ SOLWEIG runs in both standalone Python and QGIS:
 | Progress | tqdm | QgsProcessingFeedback |
 | Logging | logging | QgsProcessingFeedback |
 
-Backend detection is automatic in `io.py`.
+Backend detection is automatic in `_compat.py`.

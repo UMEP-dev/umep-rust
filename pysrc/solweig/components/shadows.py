@@ -1,28 +1,13 @@
 """
-Shadow computation component.
+Shadow computation helpers.
 
-Handles:
-- Ray tracing for building and vegetation shadows
-- Vegetation transmissivity (seasonal leaf on/off)
-- Combined shadow accounting for light penetration through vegetation
-- Wall sun exposure for thermal calculations
-
-Returns a ShadowBundle with all shadow components.
+Provides ``compute_transmissivity()`` — the seasonal leaf-on/off
+transmissivity look-up used by ``calculate_core_fused()``.
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
-
-import numpy as np
-
-from ..bundles import ShadowBundle
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
-
-    from ..api import Weather
 
 
 def compute_transmissivity(
@@ -79,104 +64,3 @@ def compute_transmissivity(
         leaf_on = first_day < doy < last_day
 
     return transmissivity if leaf_on else transmissivity_leafoff
-
-
-def compute_shadows(
-    weather: Weather,
-    dsm: NDArray[np.floating],
-    pixel_size: float,
-    max_height: float,
-    use_veg: bool,
-    physics: SimpleNamespace | None,
-    conifer: bool,
-    cdsm: NDArray[np.floating] | None = None,
-    tdsm: NDArray[np.floating] | None = None,
-    bush: NDArray[np.floating] | None = None,
-    wall_ht: NDArray[np.floating] | None = None,
-    wall_asp_rad: NDArray[np.floating] | None = None,
-    max_shadow_distance_m: float = 0.0,
-) -> ShadowBundle:
-    """
-    Compute shadows from buildings and vegetation.
-
-    Uses ray tracing to determine shadowed areas based on sun position.
-    Accounts for vegetation transmissivity (light passing through canopy).
-
-    Args:
-        weather: Weather data including sun position (azimuth, altitude)
-        dsm: Digital Surface Model (building heights)
-        pixel_size: Grid resolution in meters
-        max_height: Maximum building height for shadow computation
-        use_veg: Whether to include vegetation shadows
-        physics: Physics parameters (for transmissivity calculation)
-        conifer: Whether vegetation is coniferous (always leaf-on)
-        cdsm: Canopy Digital Surface Model (optional, for vegetation)
-        tdsm: Trunk Digital Surface Model (optional, for vegetation)
-        bush: Bush/shrub layer (optional, for vegetation)
-        wall_ht: Wall heights (optional, for wall sun exposure)
-        wall_asp_rad: Wall aspects in radians (optional, for wall sun exposure)
-
-    Returns:
-        ShadowBundle containing:
-            - shadow: Combined shadow fraction (1=sunlit, 0=shaded)
-            - bldg_sh: Building shadow only
-            - veg_sh: Vegetation shadow only
-            - wallsun: Wall sun exposure (for wall temperature)
-            - psi: Vegetation transmissivity used
-
-    Reference:
-        Lindberg et al. (2008) - SOLWEIG shadow model
-        Formula: shadow = bldg_sh - (1 - veg_sh) * (1 - psi)
-    """
-    # Import here to avoid circular dependency
-    from ..rustalgos import shadowing
-
-    has_walls = wall_ht is not None and wall_asp_rad is not None
-
-    # Call Rust shadow calculation
-    shadow_result = shadowing.calculate_shadows_wall_ht_25(
-        weather.sun_azimuth,
-        weather.sun_altitude,
-        pixel_size,
-        max_height,
-        dsm,
-        cdsm if use_veg else None,
-        tdsm if use_veg else None,
-        bush if use_veg else None,
-        wall_ht if has_walls else None,
-        wall_asp_rad if has_walls else None,
-        None,  # walls_scheme
-        None,  # aspect_scheme
-        3.0,  # min_sun_altitude
-        max_shadow_distance_m,
-    )
-
-    # Vegetation transmissivity - compute dynamically based on season
-    doy = weather.datetime.timetuple().tm_yday
-    psi = compute_transmissivity(doy, physics, conifer)
-
-    # Extract shadow arrays
-    bldg_sh = np.array(shadow_result.bldg_sh)
-
-    # Compute combined shadow accounting for vegetation transmissivity
-    # This matches the reference: shadow = bldg_sh - (1 - veg_sh) * (1 - psi)
-    # where psi is vegetation transmissivity (fraction of light that passes through)
-    if use_veg:
-        veg_sh = np.array(shadow_result.veg_sh)
-        shadow = bldg_sh - (1 - veg_sh) * (1 - psi)
-        # Note: No clipping here to match reference exactly. In practice, shadow
-        # should stay in [0,1] because veg_sh is constrained by bldg_sh.
-    else:
-        veg_sh = np.zeros_like(bldg_sh)
-        shadow = bldg_sh
-
-    # Wall sun exposure (for wall temperature calculation)
-    wallsun = np.array(shadow_result.wall_sun) if has_walls else np.zeros_like(dsm)
-
-    return ShadowBundle(
-        shadow=shadow.astype(np.float32),
-        bldg_sh=bldg_sh.astype(np.float32),
-        veg_sh=veg_sh.astype(np.float32),
-        wallsun=wallsun.astype(np.float32),
-        psi=psi,
-    )

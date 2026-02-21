@@ -7,17 +7,9 @@ and make data flow clearer through the computation pipeline.
 Each bundle represents the output of a distinct computation stage:
 - DirectionalArrays: N/E/S/W directional components (used by SVF and radiation)
 - SvfBundle: All sky view factor arrays
-- ShadowBundle: Shadow computation results
 - GroundBundle: Ground temperature model outputs
-- RadiationBundle: Radiation calculation results
 - GvfBundle: Ground view factor results
 - LupBundle: Upwelling longwave with thermal state
-
-This modular design enables:
-1. Easier testing of individual components
-2. Clearer boundaries for Rust migration
-3. Reduced parameter counts (bundles instead of 10+ arrays)
-4. Better code organization and maintainability
 """
 
 from __future__ import annotations
@@ -81,26 +73,6 @@ class SvfBundle:
     svf_aveg_directional: DirectionalArrays
     svfbuveg: NDArray[np.floating]
     svfalfa: NDArray[np.floating]
-
-
-@dataclass
-class ShadowBundle:
-    """
-    Shadow computation results.
-
-    Attributes:
-        shadow: Combined shadow fraction (1=sunlit, 0=shaded)
-        bldg_sh: Building shadow only
-        veg_sh: Vegetation shadow only
-        wallsun: Wall sun exposure (for wall temperature)
-        psi: Vegetation transmissivity used (for reference)
-    """
-
-    shadow: NDArray[np.floating]
-    bldg_sh: NDArray[np.floating]
-    veg_sh: NDArray[np.floating]
-    wallsun: NDArray[np.floating]
-    psi: float
 
 
 @dataclass
@@ -195,36 +167,6 @@ class LupBundle:
 
 
 @dataclass
-class RadiationBundle:
-    """
-    Radiation calculation outputs.
-
-    Complete radiation budget including shortwave and longwave components.
-
-    Attributes:
-        kdown: Downwelling shortwave radiation (W/m²)
-        kup: Upwelling shortwave radiation (W/m²)
-        ldown: Downwelling longwave radiation (W/m²)
-        lup: Upwelling longwave radiation (W/m²)
-        kside: Shortwave radiation from 4 directions (W/m²)
-        lside: Longwave radiation from 4 directions (W/m²)
-        kside_total: Total shortwave on vertical surface (for anisotropic Tmrt)
-        lside_total: Total longwave on vertical surface (for anisotropic Tmrt)
-        drad: Diffuse radiation term (for Tmrt calculation)
-    """
-
-    kdown: NDArray[np.floating]
-    kup: NDArray[np.floating]
-    ldown: NDArray[np.floating]
-    lup: NDArray[np.floating]
-    kside: DirectionalArrays
-    lside: DirectionalArrays
-    kside_total: NDArray[np.floating]
-    lside_total: NDArray[np.floating]
-    drad: NDArray[np.floating]
-
-
-@dataclass
 class WallBundle:
     """
     Wall geometry data.
@@ -261,11 +203,9 @@ class VegetationBundle:
 __all__ = [
     "DirectionalArrays",
     "SvfBundle",
-    "ShadowBundle",
     "GroundBundle",
     "GvfBundle",
     "LupBundle",
-    "RadiationBundle",
     "WallBundle",
     "VegetationBundle",
 ]

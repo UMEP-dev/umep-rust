@@ -94,16 +94,7 @@ nav:
       - Data Classes: api/dataclasses.md
       - I/O Functions: api/io.md
       - Errors: api/errors.md
-  - Physics:
-      - Overview: physics/index.md
-      - Sky View Factor: physics/svf.md
-      - Shadows: physics/shadows.md
-      - Ground View Factor: physics/gvf.md
-      - Radiation: physics/radiation.md
-      - Ground Temperature: physics/ground-temperature.md
-      - Mean Radiant Temperature: physics/tmrt.md
-      - UTCI: physics/utci.md
-      - PET: physics/pet.md
+  - Physics: physics/index.md
   - Development:
       - Contributing: development/contributing.md
       - Architecture: development/architecture.md

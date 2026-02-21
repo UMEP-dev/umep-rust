@@ -1,8 +1,8 @@
 """
 Profile SOLWEIG timeseries to find per-timestep bottlenecks.
 
-Instruments each component of calculate_core() and the I/O layer.
-Patches at computation.py level to capture Python wrapper overhead too.
+Instruments the fused Rust pipeline and Python-side precompute steps
+called by calculate_core_fused().
 """
 
 import functools
@@ -10,7 +10,6 @@ import statistics
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, cast
 
 # ── Monkey-patch component functions with timing ──────────────────────
 
@@ -28,39 +27,29 @@ def _timed(name, fn):
     return wrapper
 
 
-# Patch at Rust FFI level (these are always called indirectly)
 import solweig  # noqa: E402
-from solweig.rustalgos import ground as ground_rust  # noqa: E402
-from solweig.rustalgos import gvf as gvf_rust  # noqa: E402
-from solweig.rustalgos import shadowing, sky, vegetation  # noqa: E402
-from solweig.rustalgos import tmrt as tmrt_rust  # noqa: E402
 
-shadowing.calculate_shadows_wall_ht_25 = _timed("rust:shadows", shadowing.calculate_shadows_wall_ht_25)
-gvf_rust.gvf_calc = _timed("rust:gvf_calc", gvf_rust.gvf_calc)
-vegetation.kside_veg = _timed("rust:kside_veg", vegetation.kside_veg)
-vegetation.lside_veg = _timed("rust:lside_veg", vegetation.lside_veg)
-sky.cylindric_wedge = _timed("rust:cylindric_wedge", sky.cylindric_wedge)
-sky.anisotropic_sky = _timed("rust:aniso_sky", sky.anisotropic_sky)
-sky.weighted_patch_sum = _timed("rust:patch_sum", sky.weighted_patch_sum)
-ground_rust.compute_ground_temperature = _timed("rust:ground_temp", ground_rust.compute_ground_temperature)
-ground_rust.ts_wave_delay_batch = _timed("rust:ts_wave_delay", ground_rust.ts_wave_delay_batch)
-tmrt_rust.compute_tmrt = _timed("rust:tmrt", tmrt_rust.compute_tmrt)
+# Patch fused Rust pipeline (the main compute call per timestep)
+from solweig.rustalgos import pipeline  # noqa: E402
 
-# Patch at computation.py level (captures Python wrapper + Rust call)
-from solweig import computation  # noqa: E402
+pipeline.compute_timestep = _timed("rust:pipeline", pipeline.compute_timestep)
+pipeline.precompute_gvf_cache = _timed("rust:gvf_precompute", pipeline.precompute_gvf_cache)
 
-# Explicit Any alias for monkey-patching dynamic module attributes used only in this profiler.
-comp = cast(Any, computation)
+# Patch Python-side functions called by calculate_core_fused()
+from solweig.components import gvf as gvf_mod  # noqa: E402
+from solweig.components import shadows as shadows_mod  # noqa: E402
+from solweig.components import svf_resolution as svf_mod  # noqa: E402
+from solweig.physics import clearnessindex_2013b as ci_mod  # noqa: E402
+from solweig.physics import daylen as daylen_mod  # noqa: E402
+from solweig.physics import diffusefraction as df_mod  # noqa: E402
 
-# These are the functions imported by computation.py at module level
-# We need to patch computation's references directly
-comp.compute_shadows = _timed("py:shadows", comp.compute_shadows)
-comp.resolve_svf = _timed("py:svf_resolve", comp.resolve_svf)
-comp.compute_ground_temperature = _timed("py:ground_temp", comp.compute_ground_temperature)
-comp.compute_gvf = _timed("py:gvf", comp.compute_gvf)
-comp.compute_radiation = _timed("py:radiation", comp.compute_radiation)
-comp.compute_tmrt = _timed("py:tmrt", comp.compute_tmrt)
-comp._apply_thermal_delay = _timed("py:thermal_delay", comp._apply_thermal_delay)
+svf_mod.resolve_svf = _timed("py:svf_resolve", svf_mod.resolve_svf)
+svf_mod.adjust_svfbuveg_with_psi = _timed("py:svf_psi_adjust", svf_mod.adjust_svfbuveg_with_psi)
+shadows_mod.compute_transmissivity = _timed("py:transmissivity", shadows_mod.compute_transmissivity)
+gvf_mod.detect_building_mask = _timed("py:building_mask", gvf_mod.detect_building_mask)
+ci_mod.clearnessindex_2013b = _timed("py:clearness_idx", ci_mod.clearnessindex_2013b)
+daylen_mod.daylen = _timed("py:daylen", daylen_mod.daylen)
+df_mod.diffusefraction = _timed("py:diffuse_frac", df_mod.diffusefraction)
 
 # Patch I/O
 from solweig.models import results as results_mod  # noqa: E402
@@ -68,12 +57,6 @@ from solweig.models import results as results_mod  # noqa: E402
 if hasattr(results_mod, "SolweigResult"):
     orig_to_geotiff = results_mod.SolweigResult.to_geotiff
     results_mod.SolweigResult.to_geotiff = _timed("io:geotiff_write", orig_to_geotiff)
-
-# Patch Python physics used in radiation (requires UMEP)
-from solweig.components import radiation as rad_mod  # noqa: E402
-
-if rad_mod.Kup_veg_2015a is not None:
-    rad_mod.Kup_veg_2015a = _timed("py:Kup_veg_comp", rad_mod.Kup_veg_2015a)
 
 
 def profile_period(weather_slice, label, surface, output_dir):
@@ -107,22 +90,18 @@ def profile_period(weather_slice, label, surface, output_dir):
         f"Per daytime step: {t_total / max(n_day, 1) * 1000:.1f}ms est."
     )
 
-    # Collect all component-level (py:) timings
-    py_components = sorted([(n, sum(t)) for n, t in _timings.items() if n.startswith("py:")], key=lambda x: -x[1])
+    # Collect timings by category
     rust_components = sorted([(n, sum(t)) for n, t in _timings.items() if n.startswith("rust:")], key=lambda x: -x[1])
+    py_components = sorted([(n, sum(t)) for n, t in _timings.items() if n.startswith("py:")], key=lambda x: -x[1])
     io_components = sorted([(n, sum(t)) for n, t in _timings.items() if n.startswith("io:")], key=lambda x: -x[1])
 
-    # Compute real overhead
-    py_total = sum(t for _, t in py_components)
-    io_total = sum(t for _, t in io_components)
-    nighttime_total = sum(t for n, t in py_components if n == "py:nighttime")
-    overhead = t_total - py_total - io_total - nighttime_total
+    all_items = rust_components + py_components + io_components
+    all_items.sort(key=lambda x: -x[1])
+    tracked_total = sum(t for _, t in all_items)
+    overhead = t_total - tracked_total
 
     print(f"\n{'Component':<25} {'Total':>8} {'Mean':>8} {'Med':>8} {'Max':>8} {'N':>5} {'%':>6}")
     print(f"{'─' * 70}")
-
-    all_items = py_components + io_components
-    all_items.sort(key=lambda x: -x[1])
 
     for name, total in all_items:
         times = _timings[name]
@@ -134,19 +113,9 @@ def profile_period(weather_slice, label, surface, output_dir):
         )
 
     print(
-        f"  {'overhead (precompute…)':<23} {overhead:>7.3f}s {'':>8} {'':>8} {'':>8} {'':>5} "
+        f"  {'overhead (loop/alloc…)':<23} {overhead:>7.3f}s {'':>8} {'':>8} {'':>8} {'':>5} "
         f"{overhead / t_total * 100:>5.1f}%"
     )
-
-    print(f"\n  {'Rust FFI detail:'}")
-    for name, total in rust_components:
-        times = _timings[name]
-        ms = [t * 1000 for t in times]
-        pct = total / t_total * 100
-        print(
-            f"    {name:<21} {total:>7.3f}s {statistics.mean(ms):>7.2f} "
-            f"{statistics.median(ms):>7.2f} {max(ms):>7.2f} {len(ms):>5} {pct:>5.1f}%"
-        )
 
     # Bar chart
     print("\n  Time budget:")
