@@ -8,7 +8,7 @@ from datetime import datetime
 
 import numpy as np
 import pytest
-from conftest import make_mock_svf
+from conftest import make_mock_svf, read_timestep_geotiff
 from solweig import (
     Location,
     PrecomputedData,
@@ -42,7 +42,7 @@ class TestMultiTileProcessing:
         Uses LOW buildings (5m) so buffer requirement is small enough
         to actually trigger multi-tile processing.
 
-        Buffer formula: max_height / tan(3°) = 5 / 0.0524 ≈ 95m
+        Buffer formula: max_height / tan(3deg) = 5 / 0.0524 ~ 95m
         With 95px buffer, tile_size=256 has 66px core which is too small.
         But with tile_size=300, we get ~108px core (marginal).
         """
@@ -94,8 +94,8 @@ class TestMultiTileProcessing:
         from unittest.mock import patch
 
         # 5m buildings (relative height = 15m DSM - 10m ground = 5m)
-        # buffer = 5 / tan(3°) = 95.4m → 96px (below cap of 100m)
-        # tile_size=350, buffer=96px → 4 tiles on a 400×400 raster
+        # buffer = 5 / tan(3deg) = 95.4m -> 96px (below cap of 100m)
+        # tile_size=350, buffer=96px -> 4 tiles on a 400x400 raster
         captured = {}
         original_generate_tiles = __import__("solweig.tiling", fromlist=["generate_tiles"]).generate_tiles
 
@@ -128,9 +128,9 @@ class TestMultiTileProcessing:
 
         # Tmrt should be in reasonable range for summer midday
         valid_tmrt = result.tmrt[valid_pixels]
-        assert 20 < np.median(valid_tmrt) < 80, f"Median Tmrt {np.median(valid_tmrt):.1f}°C out of expected range"
+        assert 20 < np.median(valid_tmrt) < 80, f"Median Tmrt {np.median(valid_tmrt):.1f}deg C out of expected range"
 
-    def test_multitile_vs_nontiled_comparison(self, location_gothenburg, weather_noon):
+    def test_multitile_vs_nontiled_comparison(self, location_gothenburg, weather_noon, tmp_path):
         """Compare tiled vs non-tiled results on a moderate-size raster."""
         # Use 400x400 which can be processed either way
         size = 400
@@ -144,9 +144,12 @@ class TestMultiTileProcessing:
 
         surface = SurfaceData(dsm=dsm, pixel_size=2.0, svf=make_mock_svf((size, size)))  # 2m pixels = 800m extent
 
+        ref_dir = tmp_path / "ref"
+        ref_dir.mkdir()
+
         # Non-tiled reference
-        summary_ref = calculate(surface, [weather_noon], location_gothenburg, timestep_outputs=["tmrt", "shadow"])
-        result_ref = summary_ref.results[0]
+        calculate(surface, [weather_noon], location_gothenburg, output_dir=ref_dir, outputs=["tmrt", "shadow"])
+        tmrt_ref = read_timestep_geotiff(ref_dir, "tmrt", 0)
 
         # Tiled with limited shadow distance to keep buffer manageable
         # With max_shadow_distance_m=200 and 2m pixels: buffer = 100 pixels
@@ -159,17 +162,17 @@ class TestMultiTileProcessing:
         )
 
         # Compare Tmrt where both are valid
-        both_valid = np.isfinite(result_ref.tmrt) & np.isfinite(result_tiled.tmrt)
+        both_valid = np.isfinite(tmrt_ref) & np.isfinite(result_tiled.tmrt)
 
         if both_valid.sum() > 0:
-            diff = np.abs(result_tiled.tmrt[both_valid] - result_ref.tmrt[both_valid])
+            diff = np.abs(result_tiled.tmrt[both_valid] - tmrt_ref[both_valid])
             mean_diff = diff.mean()
             max_diff = diff.max()
 
             # Both paths now use the same mock SVF (tiled path slices from global).
             # Only shadow edge effects from tiling should cause small differences.
-            assert mean_diff < 0.01, f"Mean Tmrt diff {mean_diff:.2f}°C too large"
-            assert max_diff < 0.1, f"Max Tmrt diff {max_diff:.2f}°C too large (possible tile boundary issue)"
+            assert mean_diff < 0.01, f"Mean Tmrt diff {mean_diff:.2f}deg C too large"
+            assert max_diff < 0.1, f"Max Tmrt diff {max_diff:.2f}deg C too large (possible tile boundary issue)"
 
     def test_tile_boundary_continuity(self, location_gothenburg, weather_noon):
         """Verify results are continuous across tile boundaries."""
@@ -191,7 +194,7 @@ class TestMultiTileProcessing:
 
         # For flat terrain, Tmrt should be nearly uniform
         std_dev = np.std(valid_tmrt)
-        assert std_dev < 0.5, f"Tmrt std dev {std_dev:.2f}°C too high for flat terrain"
+        assert std_dev < 0.5, f"Tmrt std dev {std_dev:.2f}deg C too high for flat terrain"
 
     def test_progress_callback(self, large_urban_surface, location_gothenburg, weather_noon):
         """Test that progress callback is called correctly."""
@@ -257,7 +260,7 @@ class TestTilingHelpers:
         assert _should_use_tiling(max_side + 1, max_side + 1)
         assert _should_use_tiling(max_side + 1, 100)
         assert _should_use_tiling(100, max_side + 1)
-        # Below resource limit — no tiling needed
+        # Below resource limit -- no tiling needed
         assert not _should_use_tiling(max_side, max_side)
 
     def test__calculate_tiled_requires_svf(self):
@@ -481,9 +484,9 @@ class TestSliceMergeState:
         _merge_tile_state(sliced, tile, global_state)
 
         # Areas outside write_slice should be unchanged
-        # Check top-left corner (row 0, col 0) — outside tile
+        # Check top-left corner (row 0, col 0) -- outside tile
         assert global_state.tgmap1[0, 0] == original_tgmap1[0, 0]
-        # Check bottom-right corner — outside tile
+        # Check bottom-right corner -- outside tile
         assert global_state.tgmap1[99, 99] == original_tgmap1[99, 99]
 
 
@@ -511,7 +514,7 @@ class TestTimeseriesTiledIntegration:
             Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0),
         ]
 
-    def test_timeseries_tiled_matches_nontiled(self, small_surface, location, weather_pair):
+    def test_timeseries_tiled_matches_nontiled(self, small_surface, location, weather_pair, tmp_path):
         """Tiled timeseries should match non-tiled within numerical precision.
 
         Both paths use the same mock SVF from the surface (tiled path slices
@@ -520,33 +523,40 @@ class TestTimeseriesTiledIntegration:
         from solweig.tiling import _calculate_timeseries_tiled
         from solweig.timeseries import _calculate_timeseries
 
-        # Non-tiled (normal path — uses mock SVF from surface)
-        summary_ref = _calculate_timeseries(
+        ref_dir = tmp_path / "ref"
+        ref_dir.mkdir()
+        tiled_dir = tmp_path / "tiled"
+        tiled_dir.mkdir()
+
+        # Non-tiled (normal path -- uses mock SVF from surface)
+        _calculate_timeseries(
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
-            timestep_outputs=["tmrt"],
+            output_dir=ref_dir,
+            outputs=["tmrt"],
         )
 
-        # Tiled (forced via direct call — slices mock SVF from surface)
-        summary_tiled = _calculate_timeseries_tiled(
+        # Tiled (forced via direct call -- slices mock SVF from surface)
+        _calculate_timeseries_tiled(
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
-            timestep_outputs=["tmrt"],
+            output_dir=tiled_dir,
+            outputs=["tmrt"],
         )
 
-        assert len(summary_ref) == len(summary_tiled)
-
-        for i, (ref, tiled) in enumerate(zip(summary_ref.results, summary_tiled.results, strict=False)):
-            both_valid = np.isfinite(ref.tmrt) & np.isfinite(tiled.tmrt)
+        for i in range(len(weather_pair)):
+            ref_tmrt = read_timestep_geotiff(ref_dir, "tmrt", i)
+            tiled_tmrt = read_timestep_geotiff(tiled_dir, "tmrt", i)
+            both_valid = np.isfinite(ref_tmrt) & np.isfinite(tiled_tmrt)
             if both_valid.sum() > 0:
-                diff = np.abs(ref.tmrt[both_valid] - tiled.tmrt[both_valid])
+                diff = np.abs(ref_tmrt[both_valid] - tiled_tmrt[both_valid])
                 # Both paths now use the same mock SVF (tiled path slices from global).
-                assert diff.mean() < 0.01, f"Timestep {i}: mean Tmrt diff {diff.mean():.2f}°C too large"
-                assert diff.max() < 0.1, f"Timestep {i}: max Tmrt diff {diff.max():.2f}°C too large"
+                assert diff.mean() < 0.01, f"Timestep {i}: mean Tmrt diff {diff.mean():.2f}deg C too large"
+                assert diff.max() < 0.1, f"Timestep {i}: max Tmrt diff {diff.max():.2f}deg C too large"
 
-    def test_timeseries_tiled_state_accumulates(self, small_surface, location, weather_pair):
+    def test_timeseries_tiled_state_accumulates(self, small_surface, location, weather_pair, tmp_path):
         """Thermal state should evolve across timesteps in tiled mode."""
         from solweig.tiling import _calculate_timeseries_tiled
 
@@ -554,16 +564,18 @@ class TestTimeseriesTiledIntegration:
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
-            timestep_outputs=["tmrt"],
+            output_dir=tmp_path,
+            outputs=["tmrt"],
         )
 
         # Both timesteps should produce valid results
         assert len(summary) == 2
-        for r in summary.results:
-            valid = np.isfinite(r.tmrt)
+        for i in range(len(weather_pair)):
+            tmrt = read_timestep_geotiff(tmp_path, "tmrt", i)
+            valid = np.isfinite(tmrt)
             assert valid.sum() > 0, "Expected some valid Tmrt values"
 
-    def test_timeseries_tiled_progress_callback(self, small_surface, location, weather_pair):
+    def test_timeseries_tiled_progress_callback(self, small_surface, location, weather_pair, tmp_path):
         """Progress callback should be called for tiled timeseries."""
         from solweig.tiling import _calculate_timeseries_tiled
 
@@ -576,25 +588,32 @@ class TestTimeseriesTiledIntegration:
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
+            output_dir=tmp_path,
             progress_callback=track,
         )
 
         assert len(calls) > 0, "No progress callbacks received"
 
-    def test_timeseries_tiled_default_no_timestep_outputs(self, small_surface, location, weather_pair):
-        """Default mode should not retain tiled timestep results."""
+    def test_timeseries_tiled_summary_only(self, small_surface, location, weather_pair, tmp_path):
+        """Default mode (no outputs) should still produce summary grids."""
         from solweig.tiling import _calculate_timeseries_tiled
 
         summary = _calculate_timeseries_tiled(
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
+            output_dir=tmp_path,
         )
 
-        assert summary.results == []
         assert len(summary) == 2
+        # Summary grids should exist
+        assert summary.tmrt_mean is not None
+        assert summary.tmrt_max is not None
+        assert summary.tmrt_min is not None
 
-    def test_timeseries_tiled_summary_only_requests_tmrt_and_shadow(self, small_surface, location, weather_pair):
+    def test_timeseries_tiled_summary_only_requests_tmrt_and_shadow(
+        self, small_surface, location, weather_pair, tmp_path
+    ):
         """Summary-only mode should request tmrt and shadow from tiled per-tile calculations."""
         from solweig import SolweigResult
         from solweig.tiling import _calculate_timeseries_tiled
@@ -619,18 +638,18 @@ class TestTimeseriesTiledIntegration:
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr("solweig.api._calculate_single", _fake_calculate)
         try:
-            summary = _calculate_timeseries_tiled(
+            _calculate_timeseries_tiled(
                 surface=small_surface,
                 weather_series=weather_pair,
                 location=location,
+                output_dir=tmp_path,
             )
         finally:
             monkeypatch.undo()
 
-        assert summary.results == []
         assert captured and all(req == {"tmrt", "shadow"} for req in captured)
 
-    def test_timeseries_tiled_precreates_tile_surfaces_once(self, small_surface, location, weather_pair):
+    def test_timeseries_tiled_precreates_tile_surfaces_once(self, small_surface, location, weather_pair, tmp_path):
         """Tile surfaces should be extracted once per tile, not once per timestep."""
         from unittest.mock import patch
 
@@ -659,6 +678,7 @@ class TestTimeseriesTiledIntegration:
                 surface=small_surface,
                 weather_series=weather_pair,
                 location=location,
+                output_dir=tmp_path,
             )
 
         assert extract_calls == expected_tiles, (
@@ -666,38 +686,46 @@ class TestTimeseriesTiledIntegration:
             "(possible per-timestep recomputation regression)"
         )
 
-    def test_timeseries_tiled_worker_parity(self, small_surface, location, weather_pair):
+    def test_timeseries_tiled_worker_parity(self, small_surface, location, weather_pair, tmp_path):
         """Worker count should not materially change tiled timeseries outputs."""
         from solweig.tiling import _calculate_timeseries_tiled
 
-        summary_one = _calculate_timeseries_tiled(
+        one_dir = tmp_path / "one"
+        one_dir.mkdir()
+        multi_dir = tmp_path / "multi"
+        multi_dir.mkdir()
+
+        _calculate_timeseries_tiled(
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
             tile_workers=1,
             tile_queue_depth=0,
             prefetch_tiles=False,
-            timestep_outputs=["tmrt"],
+            output_dir=one_dir,
+            outputs=["tmrt"],
         )
-        summary_multi = _calculate_timeseries_tiled(
+        _calculate_timeseries_tiled(
             surface=small_surface,
             weather_series=weather_pair,
             location=location,
             tile_workers=2,
             tile_queue_depth=2,
             prefetch_tiles=True,
-            timestep_outputs=["tmrt"],
+            output_dir=multi_dir,
+            outputs=["tmrt"],
         )
 
-        assert len(summary_one) == len(summary_multi)
-        for ref, got in zip(summary_one.results, summary_multi.results, strict=False):
-            both_valid = np.isfinite(ref.tmrt) & np.isfinite(got.tmrt)
+        for i in range(len(weather_pair)):
+            ref_tmrt = read_timestep_geotiff(one_dir, "tmrt", i)
+            got_tmrt = read_timestep_geotiff(multi_dir, "tmrt", i)
+            both_valid = np.isfinite(ref_tmrt) & np.isfinite(got_tmrt)
             if both_valid.sum() > 0:
-                diff = np.abs(ref.tmrt[both_valid] - got.tmrt[both_valid])
+                diff = np.abs(ref_tmrt[both_valid] - got_tmrt[both_valid])
                 assert diff.mean() < 0.01
                 assert diff.max() < 0.1
 
-    def test_invalid_tile_workers_raises(self, small_surface, location, weather_pair):
+    def test_invalid_tile_workers_raises(self, small_surface, location, weather_pair, tmp_path):
         """Invalid tile_workers should raise clear ValueError."""
         from solweig.tiling import _calculate_timeseries_tiled
 
@@ -706,10 +734,11 @@ class TestTimeseriesTiledIntegration:
                 surface=small_surface,
                 weather_series=weather_pair,
                 location=location,
+                output_dir=tmp_path,
                 tile_workers=0,
             )
 
-    def test_invalid_tile_queue_depth_raises(self, small_surface, location, weather_pair):
+    def test_invalid_tile_queue_depth_raises(self, small_surface, location, weather_pair, tmp_path):
         """Invalid tile_queue_depth should raise clear ValueError."""
         from solweig.tiling import _calculate_timeseries_tiled
 
@@ -718,6 +747,7 @@ class TestTimeseriesTiledIntegration:
                 surface=small_surface,
                 weather_series=weather_pair,
                 location=location,
+                output_dir=tmp_path,
                 tile_queue_depth=-1,
             )
 
@@ -728,7 +758,7 @@ class TestTiledAnisotropicParity:
     Shadow matrices are spatially sliced per tile, so anisotropic diffuse
     radiation must agree between tiled and non-tiled paths.
 
-    Uses a flat surface (no buildings → max_height=0 → zero buffer) so
+    Uses a flat surface (no buildings -> max_height=0 -> zero buffer) so
     tile boundaries introduce no shadow truncation artifacts, giving a
     clean comparison of shadow matrix slicing.
     """
@@ -737,7 +767,7 @@ class TestTiledAnisotropicParity:
     def aniso_surface(self):
         """530x530 flat surface with synthetic shadow matrices (all visible).
 
-        530x530 at tile_size=256 → ceil(530/256)=3 → 9 tiles, ensuring
+        530x530 at tile_size=256 -> ceil(530/256)=3 -> 9 tiles, ensuring
         multi-tile processing is exercised. Flat terrain (max_height=0)
         means zero overlap buffer so results should match exactly.
         """
@@ -777,19 +807,23 @@ class TestTiledAnisotropicParity:
             global_rad=800.0,
         )
 
-    def test_anisotropic_tiled_vs_nontiled(self, aniso_surface, aniso_location, aniso_weather):
+    def test_anisotropic_tiled_vs_nontiled(self, aniso_surface, aniso_location, aniso_weather, tmp_path):
         """Tiled anisotropic sky matches non-tiled within numerical precision."""
+        ref_dir = tmp_path / "ref"
+        ref_dir.mkdir()
+
         # Non-tiled reference
-        summary_ref = calculate(
+        calculate(
             aniso_surface,
             [aniso_weather],
             aniso_location,
             use_anisotropic_sky=True,
-            timestep_outputs=["tmrt", "shadow"],
+            output_dir=ref_dir,
+            outputs=["tmrt", "shadow"],
         )
-        result_ref = summary_ref.results[0]
+        tmrt_ref = read_timestep_geotiff(ref_dir, "tmrt", 0)
 
-        # Tiled: tile_size=256 on 530×530 → 9 tiles (3×3)
+        # Tiled: tile_size=256 on 530x530 -> 9 tiles (3x3)
         result_tiled = _calculate_tiled(
             aniso_surface,
             aniso_location,
@@ -798,15 +832,15 @@ class TestTiledAnisotropicParity:
             use_anisotropic_sky=True,
         )
 
-        both_valid = np.isfinite(result_ref.tmrt) & np.isfinite(result_tiled.tmrt)
+        both_valid = np.isfinite(tmrt_ref) & np.isfinite(result_tiled.tmrt)
         assert both_valid.sum() > 0, "Expected valid Tmrt pixels"
 
-        diff = np.abs(result_tiled.tmrt[both_valid] - result_ref.tmrt[both_valid])
+        diff = np.abs(result_tiled.tmrt[both_valid] - tmrt_ref[both_valid])
         mean_diff = diff.mean()
         max_diff = diff.max()
 
-        assert mean_diff < 0.01, f"Mean Tmrt diff {mean_diff:.4f}°C too large (tiled vs non-tiled anisotropic)"
-        assert max_diff < 0.1, f"Max Tmrt diff {max_diff:.4f}°C too large (possible shadow matrix slicing issue)"
+        assert mean_diff < 0.01, f"Mean Tmrt diff {mean_diff:.4f}deg C too large (tiled vs non-tiled anisotropic)"
+        assert max_diff < 0.1, f"Max Tmrt diff {max_diff:.4f}deg C too large (possible shadow matrix slicing issue)"
 
 
 class TestHeightAwareBuffer:
@@ -828,7 +862,7 @@ class TestHeightAwareBuffer:
         weather = Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0)
 
         # Buffer uses relative height (5m), not absolute elevation (15m)
-        # buffer = 5 / tan(3°) ≈ 95.4m — much less than default 500m cap
+        # buffer = 5 / tan(3deg) ~ 95.4m -- much less than default 500m cap
         expected_buffer = calculate_buffer_distance(building_height)
         assert 90 < expected_buffer < 100, f"Expected ~95m buffer, got {expected_buffer}"
 
@@ -867,7 +901,7 @@ class TestHeightAwareBuffer:
         weather = Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0)
 
         cap = 200.0
-        # 30m relative height: 30/tan(3°) ≈ 573m → capped at 200m
+        # 30m relative height: 30/tan(3deg) ~ 573m -> capped at 200m
         expected_buffer = calculate_buffer_distance(building_height, max_shadow_distance_m=cap)
         assert expected_buffer == cap, f"Expected buffer capped at {cap}, got {expected_buffer}"
 

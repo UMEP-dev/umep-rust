@@ -69,21 +69,33 @@ class TestMemoryBenchmark:
             ws=2.0,
         )
 
-    def test_memory_per_pixel_within_threshold(self, benchmark_surface, benchmark_location, benchmark_weather):
+    def test_memory_per_pixel_within_threshold(
+        self, benchmark_surface, benchmark_location, benchmark_weather, tmp_path
+    ):
         """Verify memory usage stays within acceptable bounds.
 
         This test catches memory regressions (e.g., accidental float64 usage,
         leaked allocations, or inefficient intermediate arrays).
         """
+        from conftest import read_timestep_geotiff
+
         # Preprocess surface first (one-time cost not counted in per-timestep)
         benchmark_surface.preprocess()
+
+        output_dir = tmp_path / "memory"
 
         # Start memory tracing
         tracemalloc.start()
         tracemalloc.reset_peak()
 
         # Run calculation
-        summary = calculate(benchmark_surface, [benchmark_weather], benchmark_location, timestep_outputs=["tmrt"])
+        calculate(
+            benchmark_surface,
+            [benchmark_weather],
+            benchmark_location,
+            output_dir=output_dir,
+            outputs=["tmrt"],
+        )
 
         # Get peak memory
         _, peak = tracemalloc.get_traced_memory()
@@ -94,9 +106,9 @@ class TestMemoryBenchmark:
         bytes_per_pixel = peak / n_pixels
 
         # Verify result is valid (sanity check)
-        result = summary.results[0]
-        assert result.tmrt is not None
-        assert np.isfinite(result.tmrt).sum() > 0.8 * n_pixels
+        tmrt = read_timestep_geotiff(output_dir, "tmrt", 0)
+        assert tmrt is not None
+        assert np.isfinite(tmrt).sum() > 0.8 * n_pixels
 
         # Verify memory within threshold
         assert bytes_per_pixel < self.MAX_BYTES_PER_PIXEL, (
@@ -105,30 +117,30 @@ class TestMemoryBenchmark:
             f"Peak memory: {peak / 1024 / 1024:.1f} MB for {n_pixels:,} pixels."
         )
 
-    def test_float32_arrays_used(self, benchmark_surface, benchmark_location, benchmark_weather):
+    def test_float32_arrays_used(self, benchmark_surface, benchmark_location, benchmark_weather, tmp_path):
         """Verify output arrays use float32 (not float64)."""
+        from conftest import read_timestep_geotiff
+
         benchmark_surface.preprocess()
 
-        summary = calculate(
+        output_dir = tmp_path / "float32"
+        calculate(
             benchmark_surface,
             [benchmark_weather],
             benchmark_location,
-            timestep_outputs=["tmrt", "shadow", "kdown", "kup", "ldown", "lup"],
+            output_dir=output_dir,
+            outputs=["tmrt", "shadow", "kdown", "kup", "ldown", "lup"],
         )
-        result = summary.results[0]
 
         # All output arrays should be float32
-        assert result.tmrt.dtype == np.float32, f"tmrt dtype is {result.tmrt.dtype}, expected float32"
-        if result.shadow is not None:
-            assert result.shadow.dtype == np.float32, f"shadow dtype is {result.shadow.dtype}"
-        if result.kdown is not None:
-            assert result.kdown.dtype == np.float32, f"kdown dtype is {result.kdown.dtype}"
-        if result.kup is not None:
-            assert result.kup.dtype == np.float32, f"kup dtype is {result.kup.dtype}"
-        if result.ldown is not None:
-            assert result.ldown.dtype == np.float32, f"ldown dtype is {result.ldown.dtype}"
-        if result.lup is not None:
-            assert result.lup.dtype == np.float32, f"lup dtype is {result.lup.dtype}"
+        tmrt = read_timestep_geotiff(output_dir, "tmrt", 0)
+        assert tmrt.dtype == np.float32, f"tmrt dtype is {tmrt.dtype}, expected float32"
+        for field in ["shadow", "kdown", "kup", "ldown", "lup"]:
+            try:
+                arr = read_timestep_geotiff(output_dir, field, 0)
+                assert arr.dtype == np.float32, f"{field} dtype is {arr.dtype}"
+            except FileNotFoundError:
+                pass  # Field not written (e.g., nighttime shadow)
 
     def test_surface_arrays_float32(self):
         """Verify surface data arrays use float32."""

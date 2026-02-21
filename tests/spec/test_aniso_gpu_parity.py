@@ -107,8 +107,11 @@ def gpu_available():
 class TestAnisoGpuCpuParity:
     """GPU and CPU anisotropic sky must produce matching results."""
 
-    def _run_with_gpu(self, surface, location, weather, *, gpu_on):
-        """Run calculate() with GPU enabled or disabled."""
+    def _run_with_gpu(self, surface, location, weather, output_dir, *, gpu_on):
+        """Run calculate() with GPU enabled or disabled.
+
+        Returns the output_dir so callers can read GeoTIFFs from it.
+        """
         try:
             if gpu_on:
                 pipeline.enable_aniso_gpu()
@@ -118,82 +121,106 @@ class TestAnisoGpuCpuParity:
             if gpu_on:
                 pytest.skip("GPU feature not compiled")
 
-        summary = calculate(
+        calculate(
             surface,
             [weather],
             location,
             use_anisotropic_sky=True,
-            timestep_outputs=["tmrt", "kdown"],
+            output_dir=output_dir,
+            outputs=["tmrt", "kdown"],
         )
-        return summary.results[0]
+        return output_dir
 
-    def test_open_sky_tmrt_parity(self, location, noon_weather, gpu_available):
+    def test_open_sky_tmrt_parity(self, location, noon_weather, gpu_available, tmp_path):
         """Open sky: GPU and CPU Tmrt match within f32 tolerance."""
+        from conftest import read_timestep_geotiff
+
         if not gpu_available:
             pytest.skip("GPU not available")
 
         surface_gpu = _make_flat_surface_with_shadows()
         surface_cpu = _make_flat_surface_with_shadows()
 
-        result_gpu = self._run_with_gpu(surface_gpu, location, noon_weather, gpu_on=True)
-        result_cpu = self._run_with_gpu(surface_cpu, location, noon_weather, gpu_on=False)
+        out_gpu = tmp_path / "gpu"
+        out_cpu = tmp_path / "cpu"
+        self._run_with_gpu(surface_gpu, location, noon_weather, out_gpu, gpu_on=True)
+        self._run_with_gpu(surface_cpu, location, noon_weather, out_cpu, gpu_on=False)
 
-        valid = ~np.isnan(result_gpu.tmrt) & ~np.isnan(result_cpu.tmrt)
+        tmrt_gpu = read_timestep_geotiff(out_gpu, "tmrt", 0)
+        tmrt_cpu = read_timestep_geotiff(out_cpu, "tmrt", 0)
+
+        valid = ~np.isnan(tmrt_gpu) & ~np.isnan(tmrt_cpu)
         assert np.any(valid), "Should have valid Tmrt values"
 
         np.testing.assert_allclose(
-            result_gpu.tmrt[valid],
-            result_cpu.tmrt[valid],
+            tmrt_gpu[valid],
+            tmrt_cpu[valid],
             rtol=1e-3,
             atol=0.5,
             err_msg="GPU vs CPU Tmrt mismatch on open sky",
         )
 
-    def test_open_sky_kdown_parity(self, location, noon_weather, gpu_available):
+    def test_open_sky_kdown_parity(self, location, noon_weather, gpu_available, tmp_path):
         """Open sky: GPU and CPU kdown match within f32 tolerance."""
+        from conftest import read_timestep_geotiff
+
         if not gpu_available:
             pytest.skip("GPU not available")
 
         surface_gpu = _make_flat_surface_with_shadows()
         surface_cpu = _make_flat_surface_with_shadows()
 
-        result_gpu = self._run_with_gpu(surface_gpu, location, noon_weather, gpu_on=True)
-        result_cpu = self._run_with_gpu(surface_cpu, location, noon_weather, gpu_on=False)
+        out_gpu = tmp_path / "gpu"
+        out_cpu = tmp_path / "cpu"
+        self._run_with_gpu(surface_gpu, location, noon_weather, out_gpu, gpu_on=True)
+        self._run_with_gpu(surface_cpu, location, noon_weather, out_cpu, gpu_on=False)
 
-        valid = ~np.isnan(result_gpu.kdown) & ~np.isnan(result_cpu.kdown)
+        kdown_gpu = read_timestep_geotiff(out_gpu, "kdown", 0)
+        kdown_cpu = read_timestep_geotiff(out_cpu, "kdown", 0)
+
+        valid = ~np.isnan(kdown_gpu) & ~np.isnan(kdown_cpu)
         if np.any(valid):
             np.testing.assert_allclose(
-                result_gpu.kdown[valid],
-                result_cpu.kdown[valid],
+                kdown_gpu[valid],
+                kdown_cpu[valid],
                 rtol=1e-3,
                 atol=1.0,
                 err_msg="GPU vs CPU kdown mismatch on open sky",
             )
 
-    def test_partial_shadows_parity(self, location, noon_weather, gpu_available):
+    def test_partial_shadows_parity(self, location, noon_weather, gpu_available, tmp_path):
         """Partial shadows: GPU and CPU Tmrt match within f32 tolerance."""
+        from conftest import read_timestep_geotiff
+
         if not gpu_available:
             pytest.skip("GPU not available")
 
         surface_gpu = _make_partial_shadow_surface()
         surface_cpu = _make_partial_shadow_surface()
 
-        result_gpu = self._run_with_gpu(surface_gpu, location, noon_weather, gpu_on=True)
-        result_cpu = self._run_with_gpu(surface_cpu, location, noon_weather, gpu_on=False)
+        out_gpu = tmp_path / "gpu"
+        out_cpu = tmp_path / "cpu"
+        self._run_with_gpu(surface_gpu, location, noon_weather, out_gpu, gpu_on=True)
+        self._run_with_gpu(surface_cpu, location, noon_weather, out_cpu, gpu_on=False)
 
-        valid = ~np.isnan(result_gpu.tmrt) & ~np.isnan(result_cpu.tmrt)
+        tmrt_gpu = read_timestep_geotiff(out_gpu, "tmrt", 0)
+        tmrt_cpu = read_timestep_geotiff(out_cpu, "tmrt", 0)
+
+        valid = ~np.isnan(tmrt_gpu) & ~np.isnan(tmrt_cpu)
         assert np.any(valid), "Should have valid Tmrt values"
 
         np.testing.assert_allclose(
-            result_gpu.tmrt[valid],
-            result_cpu.tmrt[valid],
+            tmrt_gpu[valid],
+            tmrt_cpu[valid],
             rtol=1e-3,
             atol=0.5,
             err_msg="GPU vs CPU Tmrt mismatch with partial shadows",
         )
 
-    def test_full_obstruction_parity(self, location, noon_weather, gpu_available):
+    def test_full_obstruction_parity(self, location, noon_weather, gpu_available, tmp_path):
         """All patches blocked: GPU and CPU should produce matching low-radiation results."""
+        from conftest import read_timestep_geotiff
+
         if not gpu_available:
             pytest.skip("GPU not available")
 
@@ -213,22 +240,29 @@ class TestAnisoGpuCpuParity:
                 _n_patches=n_patches,
             )
 
-        result_gpu = self._run_with_gpu(surface_gpu, location, noon_weather, gpu_on=True)
-        result_cpu = self._run_with_gpu(surface_cpu, location, noon_weather, gpu_on=False)
+        out_gpu = tmp_path / "gpu"
+        out_cpu = tmp_path / "cpu"
+        self._run_with_gpu(surface_gpu, location, noon_weather, out_gpu, gpu_on=True)
+        self._run_with_gpu(surface_cpu, location, noon_weather, out_cpu, gpu_on=False)
 
-        valid = ~np.isnan(result_gpu.tmrt) & ~np.isnan(result_cpu.tmrt)
+        tmrt_gpu = read_timestep_geotiff(out_gpu, "tmrt", 0)
+        tmrt_cpu = read_timestep_geotiff(out_cpu, "tmrt", 0)
+
+        valid = ~np.isnan(tmrt_gpu) & ~np.isnan(tmrt_cpu)
         assert np.any(valid), "Should have valid Tmrt values"
 
         np.testing.assert_allclose(
-            result_gpu.tmrt[valid],
-            result_cpu.tmrt[valid],
+            tmrt_gpu[valid],
+            tmrt_cpu[valid],
             rtol=1e-3,
             atol=0.5,
             err_msg="GPU vs CPU Tmrt mismatch with full obstruction",
         )
 
-    def test_night_time_parity(self, location, gpu_available):
+    def test_night_time_parity(self, location, gpu_available, tmp_path):
         """Night time (sun below horizon): GPU and CPU should match."""
+        from conftest import read_timestep_geotiff
+
         if not gpu_available:
             pytest.skip("GPU not available")
 
@@ -243,28 +277,35 @@ class TestAnisoGpuCpuParity:
         surface_gpu = _make_flat_surface_with_shadows()
         surface_cpu = _make_flat_surface_with_shadows()
 
-        result_gpu = self._run_with_gpu(surface_gpu, location, night_weather, gpu_on=True)
-        result_cpu = self._run_with_gpu(surface_cpu, location, night_weather, gpu_on=False)
+        out_gpu = tmp_path / "gpu"
+        out_cpu = tmp_path / "cpu"
+        self._run_with_gpu(surface_gpu, location, night_weather, out_gpu, gpu_on=True)
+        self._run_with_gpu(surface_cpu, location, night_weather, out_cpu, gpu_on=False)
 
-        valid = ~np.isnan(result_gpu.tmrt) & ~np.isnan(result_cpu.tmrt)
+        tmrt_gpu = read_timestep_geotiff(out_gpu, "tmrt", 0)
+        tmrt_cpu = read_timestep_geotiff(out_cpu, "tmrt", 0)
+
+        valid = ~np.isnan(tmrt_gpu) & ~np.isnan(tmrt_cpu)
         assert np.any(valid), "Should have valid Tmrt values even at night"
 
         np.testing.assert_allclose(
-            result_gpu.tmrt[valid],
-            result_cpu.tmrt[valid],
+            tmrt_gpu[valid],
+            tmrt_cpu[valid],
             rtol=1e-3,
             atol=0.5,
             err_msg="GPU vs CPU Tmrt mismatch at night time",
         )
 
         # Verify kdown is zero or near-zero at night
-        if result_gpu.kdown is not None:
-            kdown_valid = ~np.isnan(result_gpu.kdown)
-            if np.any(kdown_valid):
-                assert np.nanmax(result_gpu.kdown) < 1.0, "kdown should be ~0 at night"
+        kdown_gpu = read_timestep_geotiff(out_gpu, "kdown", 0)
+        kdown_valid = ~np.isnan(kdown_gpu)
+        if np.any(kdown_valid):
+            assert np.nanmax(kdown_gpu) < 1.0, "kdown should be ~0 at night"
 
-    def test_sitting_posture_parity(self, location, noon_weather, gpu_available):
+    def test_sitting_posture_parity(self, location, noon_weather, gpu_available, tmp_path):
         """Sitting posture (cyl=False): GPU short-circuits to zero, CPU should match."""
+        from conftest import read_timestep_geotiff
+
         if not gpu_available:
             pytest.skip("GPU not available")
 
@@ -285,39 +326,46 @@ class TestAnisoGpuCpuParity:
                 if gpu_on:
                     pytest.skip("GPU feature not compiled")
 
-        summary_gpu = calculate(
+        out_gpu = tmp_path / "gpu"
+        calculate(
             surface_gpu,
             [noon_weather],
             location,
             use_anisotropic_sky=True,
             human=sitting,
-            timestep_outputs=["tmrt", "kdown"],
+            output_dir=out_gpu,
+            outputs=["tmrt", "kdown"],
         )
-        result_gpu = summary_gpu.results[0]
         pipeline.disable_aniso_gpu()
-        summary_cpu = calculate(
+        out_cpu = tmp_path / "cpu"
+        calculate(
             surface_cpu,
             [noon_weather],
             location,
             use_anisotropic_sky=True,
             human=sitting,
-            timestep_outputs=["tmrt", "kdown"],
+            output_dir=out_cpu,
+            outputs=["tmrt", "kdown"],
         )
-        result_cpu = summary_cpu.results[0]
 
-        valid = ~np.isnan(result_gpu.tmrt) & ~np.isnan(result_cpu.tmrt)
+        tmrt_gpu = read_timestep_geotiff(out_gpu, "tmrt", 0)
+        tmrt_cpu = read_timestep_geotiff(out_cpu, "tmrt", 0)
+
+        valid = ~np.isnan(tmrt_gpu) & ~np.isnan(tmrt_cpu)
         assert np.any(valid), "Should have valid Tmrt values"
 
         np.testing.assert_allclose(
-            result_gpu.tmrt[valid],
-            result_cpu.tmrt[valid],
+            tmrt_gpu[valid],
+            tmrt_cpu[valid],
             rtol=1e-3,
             atol=0.5,
             err_msg="GPU vs CPU Tmrt mismatch with sitting posture (cyl=False)",
         )
 
-    def test_zero_radiation_parity(self, location, gpu_available):
+    def test_zero_radiation_parity(self, location, gpu_available, tmp_path):
         """Zero radiation input: GPU and CPU should match."""
+        from conftest import read_timestep_geotiff
+
         if not gpu_available:
             pytest.skip("GPU not available")
 
@@ -332,26 +380,31 @@ class TestAnisoGpuCpuParity:
         surface_gpu = _make_flat_surface_with_shadows()
         surface_cpu = _make_flat_surface_with_shadows()
 
-        result_gpu = self._run_with_gpu(surface_gpu, location, zero_rad_weather, gpu_on=True)
-        result_cpu = self._run_with_gpu(surface_cpu, location, zero_rad_weather, gpu_on=False)
+        out_gpu = tmp_path / "gpu"
+        out_cpu = tmp_path / "cpu"
+        self._run_with_gpu(surface_gpu, location, zero_rad_weather, out_gpu, gpu_on=True)
+        self._run_with_gpu(surface_cpu, location, zero_rad_weather, out_cpu, gpu_on=False)
 
-        valid = ~np.isnan(result_gpu.tmrt) & ~np.isnan(result_cpu.tmrt)
+        tmrt_gpu = read_timestep_geotiff(out_gpu, "tmrt", 0)
+        tmrt_cpu = read_timestep_geotiff(out_cpu, "tmrt", 0)
+
+        valid = ~np.isnan(tmrt_gpu) & ~np.isnan(tmrt_cpu)
         assert np.any(valid), "Should have valid Tmrt values"
 
         np.testing.assert_allclose(
-            result_gpu.tmrt[valid],
-            result_cpu.tmrt[valid],
+            tmrt_gpu[valid],
+            tmrt_cpu[valid],
             rtol=1e-3,
             atol=0.5,
             err_msg="GPU vs CPU Tmrt mismatch with zero radiation",
         )
 
-    def test_invalid_pixels_nan_parity(self, location, noon_weather, gpu_available):
+    def test_invalid_pixels_nan_parity(self, location, noon_weather, gpu_available, tmp_path):
         """Invalid pixels (NaN DSM) produce NaN in both GPU and CPU paths."""
+        from conftest import make_mock_svf, read_timestep_geotiff
+
         if not gpu_available:
             pytest.skip("GPU not available")
-
-        from conftest import make_mock_svf
 
         shape = (10, 10)
         n_patches = 153
@@ -375,12 +428,17 @@ class TestAnisoGpuCpuParity:
                 _n_patches=n_patches,
             )
 
-        result_gpu = self._run_with_gpu(surface_gpu, location, noon_weather, gpu_on=True)
-        result_cpu = self._run_with_gpu(surface_cpu, location, noon_weather, gpu_on=False)
+        out_gpu = tmp_path / "gpu"
+        out_cpu = tmp_path / "cpu"
+        self._run_with_gpu(surface_gpu, location, noon_weather, out_gpu, gpu_on=True)
+        self._run_with_gpu(surface_cpu, location, noon_weather, out_cpu, gpu_on=False)
+
+        tmrt_gpu = read_timestep_geotiff(out_gpu, "tmrt", 0)
+        tmrt_cpu = read_timestep_geotiff(out_cpu, "tmrt", 0)
 
         # NaN pixels should be NaN in both
-        gpu_nan = np.isnan(result_gpu.tmrt)
-        cpu_nan = np.isnan(result_cpu.tmrt)
+        gpu_nan = np.isnan(tmrt_gpu)
+        cpu_nan = np.isnan(tmrt_cpu)
         np.testing.assert_array_equal(
             gpu_nan,
             cpu_nan,
@@ -391,25 +449,32 @@ class TestAnisoGpuCpuParity:
         valid = ~gpu_nan & ~cpu_nan
         if np.any(valid):
             np.testing.assert_allclose(
-                result_gpu.tmrt[valid],
-                result_cpu.tmrt[valid],
+                tmrt_gpu[valid],
+                tmrt_cpu[valid],
                 rtol=1e-3,
                 atol=0.5,
                 err_msg="GPU vs CPU Tmrt mismatch on valid pixels with NaN neighbors",
             )
 
-    def test_gpu_fallback_when_disabled(self, location, noon_weather):
+    def test_gpu_fallback_when_disabled(self, location, noon_weather, tmp_path):
         """With GPU disabled, results are identical to CPU-only path."""
+        from conftest import read_timestep_geotiff
+
         surface_a = _make_flat_surface_with_shadows()
         surface_b = _make_flat_surface_with_shadows()
 
-        result_a = self._run_with_gpu(surface_a, location, noon_weather, gpu_on=False)
-        result_b = self._run_with_gpu(surface_b, location, noon_weather, gpu_on=False)
+        out_a = tmp_path / "a"
+        out_b = tmp_path / "b"
+        self._run_with_gpu(surface_a, location, noon_weather, out_a, gpu_on=False)
+        self._run_with_gpu(surface_b, location, noon_weather, out_b, gpu_on=False)
 
-        valid = ~np.isnan(result_a.tmrt) & ~np.isnan(result_b.tmrt)
+        tmrt_a = read_timestep_geotiff(out_a, "tmrt", 0)
+        tmrt_b = read_timestep_geotiff(out_b, "tmrt", 0)
+
+        valid = ~np.isnan(tmrt_a) & ~np.isnan(tmrt_b)
         if np.any(valid):
             np.testing.assert_array_equal(
-                result_a.tmrt[valid],
-                result_b.tmrt[valid],
+                tmrt_a[valid],
+                tmrt_b[valid],
                 err_msg="Two CPU-only runs should produce identical results",
             )

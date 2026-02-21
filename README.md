@@ -148,16 +148,16 @@ summary.plot()
 
 ```python
 # Single timestep
-result = solweig.calculate(surface, location, weather)
+summary = solweig.calculate(surface, weather=[weather], output_dir="output/")
 
 # Multi-timestep with thermal inertia (auto-tiles large rasters)
-summary = solweig.calculate(surface, location, weather=weather_list)
+summary = solweig.calculate(surface, weather=weather_list, output_dir="output/")
 
-# Include UTCI and/or PET in outputs
+# Include UTCI and/or PET in per-timestep GeoTIFFs
 summary = solweig.calculate(
-    surface, location, weather=weather_list,
-    outputs=["tmrt", "utci", "shadow"],       # saved to disk
-    timestep_outputs=["tmrt", "utci"],         # retained in memory
+    surface, weather=weather_list,
+    output_dir="output/",
+    outputs=["tmrt", "utci", "shadow"],
 )
 
 # Input validation
@@ -252,9 +252,8 @@ Key parameters accepted by `calculate()`:
 | `use_anisotropic_sky` | `True` | Use Perez anisotropic sky model for more accurate diffuse radiation. |
 | `conifer` | `False` | Treat trees as evergreen (skip seasonal leaf-off). |
 | `max_shadow_distance_m` | `1000` | Maximum shadow reach in metres. Increase for mountainous terrain. |
-| `outputs` | `["tmrt"]` | Which grids to save to disk: `"tmrt"`, `"utci"`, `"pet"`, `"shadow"`, `"kdown"`, `"kup"`, `"ldown"`, `"lup"`. |
-| `timestep_outputs` | `None` | Per-timestep grids to retain in memory (e.g., `["tmrt", "utci"]`). |
-| `output_dir` | `None` | Directory for GeoTIFF output files. |
+| `output_dir` | _(required)_ | Working directory for all output (summary grids, per-timestep GeoTIFFs, metadata). |
+| `outputs` | `None` | Which per-timestep grids to save: `"tmrt"`, `"utci"`, `"pet"`, `"shadow"`, `"kdown"`, `"kup"`, `"ldown"`, `"lup"`. |
 
 ### Physics and materials
 

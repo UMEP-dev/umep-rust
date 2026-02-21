@@ -51,7 +51,7 @@ class ModelConfig:
 
     Note:
         UTCI and PET are computed inline when requested via
-        ``timestep_outputs=["utci"]`` or ``outputs=["utci"]``.
+        ``outputs=["utci"]``.
 
     Examples:
         Basic usage with defaults:
@@ -236,7 +236,7 @@ class HumanParams:
         abs_k: Shortwave absorption coefficient. Default 0.7.
         abs_l: Longwave absorption coefficient. Default 0.97.
 
-    PET-specific parameters (used when ``"pet"`` is in timestep_outputs/outputs):
+    PET-specific parameters (used when ``"pet"`` is in outputs):
         age: Age in years. Default 35.
         weight: Body weight in kg. Default 75.
         height: Body height in meters. Default 1.75.

@@ -46,8 +46,13 @@ class TestTilingBenchmark:
             for i in range(3)
         ]
 
-    def test_tile_workers_scaling_sanity(self, benchmark_surface, benchmark_location, benchmark_weather_series):
+    def test_tile_workers_scaling_sanity(
+        self, benchmark_surface, benchmark_location, benchmark_weather_series, tmp_path
+    ):
         """Two workers should not be significantly slower than one worker."""
+        output_dir_1w = tmp_path / "1w"
+        output_dir_2w = tmp_path / "2w"
+
         t0 = time.perf_counter()
         summary_1w = _calculate_timeseries_tiled(
             benchmark_surface,
@@ -56,6 +61,7 @@ class TestTilingBenchmark:
             tile_workers=1,
             tile_queue_depth=0,
             prefetch_tiles=False,
+            output_dir=output_dir_1w,
         )
         t1 = time.perf_counter()
         summary_2w = _calculate_timeseries_tiled(
@@ -65,20 +71,26 @@ class TestTilingBenchmark:
             tile_workers=2,
             tile_queue_depth=2,
             prefetch_tiles=True,
+            output_dir=output_dir_2w,
         )
         t2 = time.perf_counter()
 
         elapsed_1w = t1 - t0
         elapsed_2w = t2 - t1
 
-        assert len(summary_1w) == len(benchmark_weather_series)
-        assert len(summary_2w) == len(benchmark_weather_series)
+        assert summary_1w.n_timesteps == len(benchmark_weather_series)
+        assert summary_2w.n_timesteps == len(benchmark_weather_series)
         assert elapsed_2w <= elapsed_1w * 1.25, (
             f"Tiled scaling regression: 2 workers too slow ({elapsed_2w:.3f}s vs {elapsed_1w:.3f}s)"
         )
 
-    def test_bounded_inflight_runtime_controls(self, benchmark_surface, benchmark_location, benchmark_weather_series):
+    def test_bounded_inflight_runtime_controls(
+        self, benchmark_surface, benchmark_location, benchmark_weather_series, tmp_path
+    ):
         """Bounded in-flight scheduling executes correctly with small queue depth."""
+        from conftest import read_timestep_geotiff
+
+        output_dir = tmp_path / "bounded"
         summary = _calculate_timeseries_tiled(
             benchmark_surface,
             benchmark_weather_series,
@@ -86,10 +98,13 @@ class TestTilingBenchmark:
             tile_workers=2,
             tile_queue_depth=0,
             prefetch_tiles=False,
-            timestep_outputs=["tmrt"],
+            output_dir=output_dir,
+            outputs=["tmrt"],
         )
-        assert len(summary) == len(benchmark_weather_series)
-        assert all(r.tmrt is not None for r in summary.results)
+        assert summary.n_timesteps == len(benchmark_weather_series)
+        for i in range(len(benchmark_weather_series)):
+            tmrt = read_timestep_geotiff(output_dir, "tmrt", i)
+            assert tmrt is not None
 
     def test_anisotropic_tiled_runtime_smoke(self, benchmark_location):
         """Anisotropic tiled path runs with non-zero overlap/runtime controls."""

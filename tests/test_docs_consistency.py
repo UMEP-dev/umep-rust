@@ -17,10 +17,10 @@ def test_basic_usage_does_not_claim_isotropic_default():
     assert "MissingPrecomputedData" in text
 
 
-def test_timeseries_docs_describe_timestep_outputs():
-    """Timeseries guide should document the timestep_outputs parameter."""
+def test_timeseries_docs_describe_outputs():
+    """Timeseries guide should document the outputs parameter."""
     text = _read("docs/guide/timeseries.md")
-    assert "timestep_outputs" in text
+    assert "outputs" in text
 
 
 def test_timeseries_docs_describe_report_and_plot():

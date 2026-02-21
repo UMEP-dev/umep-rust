@@ -91,7 +91,6 @@ class TimeseriesSummary:
         heat_thresholds_day: Daytime UTCI thresholds used.
         heat_thresholds_night: Nighttime UTCI thresholds used.
         timeseries: Per-timestep scalar timeseries (spatial means over time).
-        results: Per-timestep results (only populated when ``timestep_outputs`` is provided).
     """
 
     # Tmrt summary grids
@@ -125,9 +124,6 @@ class TimeseriesSummary:
 
     # Per-timestep scalar timeseries
     timeseries: Timeseries | None = None
-
-    # Per-timestep results (opt-in)
-    results: list[SolweigResult] = field(default_factory=list)
 
     # Surface reference for GeoTIFF output (not shown in repr)
     _surface: SurfaceData | None = field(default=None, repr=False)
@@ -207,10 +203,6 @@ class TimeseriesSummary:
             ts = self.timeseries
             ta_range = f"{np.nanmin(ts.ta):.1f} – {np.nanmax(ts.ta):.1f}°C"
             lines.append(f"  Ta    — range: {ta_range}")
-
-        # Per-timestep results
-        if self.results:
-            lines.append(f"  Per-timestep results: {len(self.results)} SolweigResult objects")
 
         # Output file links
         if self._output_dir is not None:

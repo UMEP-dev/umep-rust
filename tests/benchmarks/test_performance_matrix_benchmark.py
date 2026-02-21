@@ -140,6 +140,8 @@ def _median_runtime_seconds(fn, repeats: int = 3) -> tuple[float, list[float]]:
 
 
 def _run_api_case(tiled: bool, anisotropic: bool) -> None:
+    import tempfile
+
     surface = _make_surface()
     location = _make_location()
     weather = _make_weather()
@@ -159,16 +161,20 @@ def _run_api_case(tiled: bool, anisotropic: bool) -> None:
         )
         _assert_valid_tmrt(result.tmrt)
     else:
-        summary = solweig.calculate(
-            surface=surface,
-            weather=[weather],
-            location=location,
-            use_anisotropic_sky=anisotropic,
-            max_shadow_distance_m=80.0,
-            timestep_outputs=["tmrt"],
-        )
-        result = summary.results[0]
-        _assert_valid_tmrt(result.tmrt)
+        with tempfile.TemporaryDirectory(prefix="solweig-bench-api-") as tmpdir:
+            from conftest import read_timestep_geotiff
+
+            solweig.calculate(
+                surface=surface,
+                weather=[weather],
+                location=location,
+                use_anisotropic_sky=anisotropic,
+                max_shadow_distance_m=80.0,
+                output_dir=tmpdir,
+                outputs=["tmrt"],
+            )
+            tmrt = read_timestep_geotiff(tmpdir, "tmrt", 0)
+            _assert_valid_tmrt(tmrt)
 
 
 def _run_plugin_case(tiled: bool, anisotropic: bool) -> None:

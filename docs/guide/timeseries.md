@@ -1,18 +1,10 @@
 # Timeseries Calculations
 
-For multi-timestep simulations (hours, days, or longer), use `calculate()` with a list of weather objects. It properly carries thermal state between timesteps and optionally saves results to disk as they're computed.
+For multi-timestep simulations (hours, days, or longer), use `calculate()` with a list of weather objects. It properly carries thermal state between timesteps and saves results to disk as they're computed.
 
 ## Thermal state management
 
 Ground and wall temperatures depend on accumulated heating from previous hours (thermal inertia). `calculate()` manages this automatically via a `ThermalState` object when given multiple weather timesteps, producing accurate results for ground-level longwave radiation.
-
-```python
-results = solweig.calculate(
-    surface=surface,
-    location=location,
-    weather=weather_list,
-)
-```
 
 ## Basic timeseries
 
@@ -33,31 +25,19 @@ weather_list = solweig.Weather.from_epw(
 )
 location = solweig.Location.from_epw("data/weather.epw")
 
-# Calculate all timesteps
-results = solweig.calculate(
-    surface=surface,
-    location=location,
-    weather=weather_list,
-)
-
-print(f"Processed {len(results)} timesteps")
-```
-
-## Saving results to disk
-
-For long simulations, save results as GeoTIFFs as they're computed rather than keeping them all in memory:
-
-```python
-results = solweig.calculate(
+# Calculate all timesteps — results saved to output/
+summary = solweig.calculate(
     surface=surface,
     location=location,
     weather=weather_list,
     output_dir="output/",
-    outputs=["tmrt", "shadow"],  # Which outputs to save
+    outputs=["tmrt", "shadow"],
 )
+
+print(f"Processed {len(summary)} timesteps")
 ```
 
-This creates timestamped GeoTIFFs:
+This creates timestamped GeoTIFFs plus summary grids:
 
 ```text
 output/
@@ -68,11 +48,26 @@ output/
 ├── shadow/
 │   ├── shadow_20250701_0000.tif
 │   └── ...
+├── summary/
+│   ├── tmrt_mean.tif
+│   ├── tmrt_max.tif
+│   ├── utci_mean.tif
+│   └── ...
 └── run_metadata.json            # All parameters for reproducibility
 ```
 
-By default, only summary grids are returned (no per-timestep arrays in memory).
-Use `timestep_outputs=["tmrt", "shadow"]` to retain specific per-timestep arrays.
+If you only need summary statistics (mean/max/min Tmrt, UTCI, sun hours), omit
+`outputs` — no per-timestep files are written, but the summary grids are still
+saved to `output/summary/`.
+
+```python
+summary = solweig.calculate(
+    surface=surface,
+    location=location,
+    weather=weather_list,
+    output_dir="output/",  # Summary grids + metadata saved here
+)
+```
 
 ## Inspecting results
 
@@ -119,66 +114,22 @@ summary.plot(save_path="output/timeseries.png") # save to file
 
 Requires `matplotlib` (`pip install matplotlib`).
 
-## Choose an output strategy
-
-### Strategy A: Stream to disk during computation
-
-Use this for long runs and limited RAM.
-
-```python
-summary = solweig.calculate(
-    surface=surface,
-    location=location,
-    weather=weather_list,
-    output_dir="output/",
-    outputs=["tmrt", "shadow"],
-)
-```
-
-- Pros: lowest memory use, immediate GeoTIFF outputs, restart-friendly
-- Cons: more disk I/O/storage
-
-### Strategy B: Summary only (no file output)
-
-Use this when disk space is tight and you only need summary products.
-`TimeseriesSummary` aggregates per-pixel statistics (mean/max/min Tmrt and
-UTCI, sun/shade hours, threshold exceedance) incrementally during the loop,
-so per-timestep arrays are freed immediately.
-
-```python
-summary = solweig.calculate(
-    surface=surface,
-    location=location,
-    weather=weather_list,
-    # No output_dir -> summary-only, minimal memory
-)
-print(summary.report())
-summary.to_geotiff("output/")  # Save summary grids only
-```
-
-- Pros: minimal disk usage and memory, automatic aggregation
-- Cons: no per-timestep files on disk
-
 ## Per-timestep UTCI and PET
 
 UTCI and PET summary grids (mean, max, min, day/night averages) are always
-included in the returned `TimeseriesSummary`. To also retain per-timestep
-UTCI or PET arrays, include them in `timestep_outputs`:
+included in the returned `TimeseriesSummary`. To also save per-timestep
+UTCI or PET GeoTIFFs, include them in `outputs`:
 
 ```python
 summary = solweig.calculate(
     surface=surface,
     weather=weather_list,
-    timestep_outputs=["tmrt", "utci"],  # per-timestep Tmrt + UTCI
     output_dir="output/",
-    outputs=["tmrt", "utci"],           # save both as GeoTIFF files
+    outputs=["tmrt", "utci"],  # per-timestep Tmrt + UTCI saved to disk
 )
-for r in summary.results:
-    print(f"UTCI range: {r.utci.min():.1f} – {r.utci.max():.1f}°C")
 ```
 
-To also save per-timestep files to disk, add `"utci"` or `"pet"` to the
-`outputs` parameter. The indices are computed inline during the main loop
+The indices are computed inline during the main loop
 (UTCI uses a fast Rust polynomial; PET uses an iterative solver).
 
 ## Memory management for long simulations

@@ -107,48 +107,72 @@ class TestWallMaterialInCalculate:
         human = HumanParams()
         return surface, location, weather, human
 
-    def test_wall_material_none_uses_default(self, simple_inputs):
+    def test_wall_material_none_uses_default(self, simple_inputs, tmp_path):
         """wall_material=None should produce same result as no param."""
+        from conftest import read_timestep_geotiff
         from solweig import calculate
 
         surface, location, weather, human = simple_inputs
-        summary_default = calculate(
-            surface, [weather], location, human=human, use_anisotropic_sky=False, timestep_outputs=["tmrt"]
+        out_default = tmp_path / "default"
+        out_none = tmp_path / "none"
+        calculate(
+            surface,
+            [weather],
+            location,
+            human=human,
+            use_anisotropic_sky=False,
+            output_dir=out_default,
+            outputs=["tmrt"],
         )
-        summary_none = calculate(
+        calculate(
             surface,
             [weather],
             location,
             human=human,
             wall_material=None,
             use_anisotropic_sky=False,
-            timestep_outputs=["tmrt"],
+            output_dir=out_none,
+            outputs=["tmrt"],
         )
 
-        np.testing.assert_array_equal(summary_default.results[0].tmrt, summary_none.results[0].tmrt)
+        tmrt_default = read_timestep_geotiff(out_default, "tmrt", 0)
+        tmrt_none = read_timestep_geotiff(out_none, "tmrt", 0)
+        np.testing.assert_array_equal(tmrt_default, tmrt_none)
 
-    def test_brick_differs_from_default(self, simple_inputs):
+    def test_brick_differs_from_default(self, simple_inputs, tmp_path):
         """Brick wall material should produce different Tmrt than default."""
+        from conftest import read_timestep_geotiff
         from solweig import calculate
 
         surface, location, weather, human = simple_inputs
         # Use isotropic sky — this flat surface has no explicit wall pixels,
         # but wall material parameters still affect ground temperature through
         # the isotropic radiation pathway (tgk_wall / tstart_wall scalars).
-        summary_default = calculate(
-            surface, [weather], location, human=human, use_anisotropic_sky=False, timestep_outputs=["tmrt"]
+        out_default = tmp_path / "default"
+        out_brick = tmp_path / "brick"
+        calculate(
+            surface,
+            [weather],
+            location,
+            human=human,
+            use_anisotropic_sky=False,
+            output_dir=out_default,
+            outputs=["tmrt"],
         )
-        summary_brick = calculate(
+        calculate(
             surface,
             [weather],
             location,
             human=human,
             wall_material="brick",
             use_anisotropic_sky=False,
-            timestep_outputs=["tmrt"],
+            output_dir=out_brick,
+            outputs=["tmrt"],
         )
 
-        assert not np.array_equal(summary_default.results[0].tmrt, summary_brick.results[0].tmrt), (
+        tmrt_default = read_timestep_geotiff(out_default, "tmrt", 0)
+        tmrt_brick = read_timestep_geotiff(out_brick, "tmrt", 0)
+        assert not np.array_equal(tmrt_default, tmrt_brick), (
             "Brick wall material should produce different Tmrt than default"
         )
 

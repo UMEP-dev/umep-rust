@@ -522,9 +522,10 @@ class TestFullPipelineValidation:
         return Location(latitude=57.6966, longitude=11.9305, utc_offset=2, altitude=10.0)
 
     @pytest.mark.slow
-    def test_single_timestep_noon(self, surface, location):
+    def test_single_timestep_noon(self, surface, location, tmp_path):
         """Run SOLWEIG for a single noon timestep and check outputs are physical."""
         import solweig
+        from conftest import read_timestep_geotiff
 
         met = solweig.Weather.from_umep_met(
             DATA_DIR / "metdata_10min_july.txt",
@@ -534,19 +535,22 @@ class TestFullPipelineValidation:
         # Pick noon
         noon = [w for w in met if w.datetime.hour == 12][0]
 
-        summary = solweig.calculate(
+        output_dir = tmp_path / "noon"
+        solweig.calculate(
             surface=surface,
             weather=[noon],
             location=location,
-            timestep_outputs=["tmrt", "shadow"],
+            output_dir=output_dir,
+            outputs=["tmrt", "shadow"],
         )
 
+        tmrt = read_timestep_geotiff(output_dir, "tmrt", 0)
         # WOI pixel (row=22, col=28) - at ground level near building wall
-        woi_tmrt = summary.results[0].tmrt[22, 28]
+        woi_tmrt = tmrt[22, 28]
 
         print("\n--- Single Timestep (2023-07-15 12:00) ---")
         print(f"WOI Tmrt:    {woi_tmrt:.1f}°C")
-        print(f"Tmrt range:  {np.nanmin(summary.results[0].tmrt):.1f} to {np.nanmax(summary.results[0].tmrt):.1f}°C")
+        print(f"Tmrt range:  {np.nanmin(tmrt):.1f} to {np.nanmax(tmrt):.1f}°C")
         print(f"Air temp:    {noon.ta:.1f}°C")
 
         # Tmrt should be reasonable (not NaN, not extreme)
@@ -557,9 +561,10 @@ class TestFullPipelineValidation:
         assert woi_tmrt > noon.ta - 5, "Tmrt much lower than Ta at noon"
 
     @pytest.mark.slow
-    def test_timeseries_one_day(self, surface, location):
+    def test_timeseries_one_day(self, surface, location, tmp_path):
         """Run full timeseries for one day and verify diurnal Tmrt pattern."""
         import solweig
+        from conftest import read_timestep_geotiff
 
         met = solweig.Weather.from_umep_met(
             DATA_DIR / "metdata_10min_july.txt",
@@ -567,17 +572,18 @@ class TestFullPipelineValidation:
             end="2023-07-15",
         )
 
+        output_dir = tmp_path / "timeseries"
         summary = solweig.calculate(
             surface=surface,
             weather=met,
             location=location,
-            timestep_outputs=["tmrt"],
+            output_dir=output_dir,
+            outputs=["tmrt"],
         )
-        results = summary.results
 
-        assert len(results) == 24
+        assert summary.n_timesteps == 24
 
-        woi_tmrt = [r.tmrt[22, 28] for r in results]
+        woi_tmrt = [read_timestep_geotiff(output_dir, "tmrt", i)[22, 28] for i in range(len(met))]
         hours = [met[i].datetime.hour for i in range(len(met))]
         ta_series = [met[i].ta for i in range(len(met))]
 

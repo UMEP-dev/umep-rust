@@ -28,11 +28,13 @@ contract is the source of truth.
    - `shadow` uses `1.0 = sunlit`, `0.0 = shaded`.
    - This convention applies to daytime and nighttime outputs.
 
-2. **Timeseries return semantics**
-   - `timestep_outputs=["tmrt", "shadow", ...]`: returned `SolweigResult` objects
-     in `summary.results` keep the requested arrays in memory.
-   - `timestep_outputs=None` (default): implementation frees arrays after
-     aggregation to minimize memory use; `summary.results` is empty.
+2. **Timeseries output semantics**
+   - `output_dir` is always required. Summary grids are saved to
+     `output_dir/summary/`.
+   - Per-timestep arrays are written to disk when `outputs` is specified
+     (e.g., `outputs=["tmrt", "shadow"]`).
+   - Per-timestep arrays are never accumulated in memory; they are freed
+     after accumulation and disk write.
 
 ## Default Behavior
 

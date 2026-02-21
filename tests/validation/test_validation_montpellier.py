@@ -490,20 +490,24 @@ class TestTmrtValidation:
         return compute_observed_tmrt(obs)
 
     @pytest.mark.slow
-    def test_single_timestep_noon(self, surface, location, aug04_weather):
+    def test_single_timestep_noon(self, surface, location, aug04_weather, tmp_path):
         """Run SOLWEIG for noon and check Tmrt is physical."""
         import solweig
+        from conftest import read_timestep_geotiff
 
         noon = [w for w in aug04_weather if w.datetime.hour == 14][0]
-        summary = solweig.calculate(
+        output_dir = tmp_path / "noon"
+        solweig.calculate(
             surface=surface,
             weather=[noon],
             location=location,
             wall_material="concrete",
-            timestep_outputs=["tmrt", "shadow"],
+            output_dir=output_dir,
+            outputs=["tmrt", "shadow"],
         )
 
-        tmrt_center = summary.results[0].tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
+        tmrt = read_timestep_geotiff(output_dir, "tmrt", 0)
+        tmrt_center = tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
         print(f"\n--- Noon Tmrt at canyon center: {tmrt_center:.1f}°C (Ta={noon.ta:.1f}°C) ---")
 
         assert not np.isnan(tmrt_center), "Tmrt at canyon center is NaN"
@@ -512,22 +516,27 @@ class TestTmrtValidation:
         assert tmrt_center > noon.ta, f"Tmrt={tmrt_center:.1f} should exceed Ta={noon.ta:.1f} at peak sun"
 
     @pytest.mark.slow
-    def test_timeseries_diurnal_pattern(self, surface, location, aug04_weather):
+    def test_timeseries_diurnal_pattern(self, surface, location, aug04_weather, tmp_path):
         """Run full-day timeseries and check diurnal Tmrt pattern."""
         import solweig
+        from conftest import read_timestep_geotiff
 
+        output_dir = tmp_path / "diurnal"
         summary = solweig.calculate(
             surface=surface,
             weather=aug04_weather,
             location=location,
             wall_material="concrete",
-            timestep_outputs=["tmrt"],
+            output_dir=output_dir,
+            outputs=["tmrt"],
         )
-        results = summary.results
 
-        assert len(results) == len(aug04_weather)
+        assert summary.n_timesteps == len(aug04_weather)
 
-        tmrt_series = [r.tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL] for r in results]
+        tmrt_series = [
+            read_timestep_geotiff(output_dir, "tmrt", i)[CANYON_CENTER_ROW, CANYON_CENTER_COL]
+            for i in range(len(aug04_weather))
+        ]
         hours = [w.datetime.hour for w in aug04_weather]
 
         print("\n--- Diurnal Tmrt at canyon center (Aug 4, 2023) ---")
@@ -545,7 +554,7 @@ class TestTmrtValidation:
             )
 
     @pytest.mark.slow
-    def test_tmrt_vs_globe_observations(self, surface, location, aug04_weather, aug04_observed_tmrt):
+    def test_tmrt_vs_globe_observations(self, surface, location, aug04_weather, aug04_observed_tmrt, tmp_path):
         """Compare SOLWEIG Tmrt against globe-derived Tmrt.
 
         This is the primary validation test. We compare:
@@ -555,20 +564,23 @@ class TestTmrtValidation:
         The comparison is at hourly resolution.
         """
         import solweig
+        from conftest import read_timestep_geotiff
 
-        summary = solweig.calculate(
+        output_dir = tmp_path / "vs_globe"
+        solweig.calculate(
             surface=surface,
             weather=aug04_weather,
             location=location,
             wall_material="concrete",
-            timestep_outputs=["tmrt"],
+            output_dir=output_dir,
+            outputs=["tmrt"],
         )
-        results = summary.results
 
         # Build model Tmrt dict by hour
         model_tmrt = {}
-        for w, r in zip(aug04_weather, results, strict=False):
-            model_tmrt[w.datetime.hour] = r.tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
+        for i, w in enumerate(aug04_weather):
+            tmrt = read_timestep_geotiff(output_dir, "tmrt", i)
+            model_tmrt[w.datetime.hour] = tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
 
         # Match with hourly observations
         matched = []
@@ -613,29 +625,33 @@ class TestTmrtValidation:
         assert r_squared > 0.3, f"R²={r_squared:.3f} too low (no correlation)"
 
     @pytest.mark.slow
-    def test_canyon_shading_spatial_pattern(self, surface, location, aug04_weather):
+    def test_canyon_shading_spatial_pattern(self, surface, location, aug04_weather, tmp_path):
         """Verify that the canyon shows spatial Tmrt variation from wall shading.
 
         Near the south wall (shaded in morning), Tmrt should differ from
         near the north wall (shaded in afternoon) at asymmetric sun angles.
         """
         import solweig
+        from conftest import read_timestep_geotiff
 
         # Pick early afternoon (14:00) when sun is from the south
         afternoon = [w for w in aug04_weather if w.datetime.hour == 14][0]
-        summary = solweig.calculate(
+        output_dir = tmp_path / "shading"
+        solweig.calculate(
             surface=surface,
             weather=[afternoon],
             location=location,
             wall_material="concrete",
-            timestep_outputs=["tmrt", "shadow"],
+            output_dir=output_dir,
+            outputs=["tmrt", "shadow"],
         )
 
+        tmrt = read_timestep_geotiff(output_dir, "tmrt", 0)
         # Near-south-wall pixel (row 18) vs near-north-wall pixel (row 12)
         # Avoid rows immediately adjacent to walls (may be NaN in SOLWEIG)
-        tmrt_near_south = summary.results[0].tmrt[18, CANYON_CENTER_COL]
-        tmrt_near_north = summary.results[0].tmrt[12, CANYON_CENTER_COL]
-        tmrt_center = summary.results[0].tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
+        tmrt_near_south = tmrt[18, CANYON_CENTER_COL]
+        tmrt_near_north = tmrt[12, CANYON_CENTER_COL]
+        tmrt_center = tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
 
         print("\n--- Canyon spatial Tmrt at 14:00 ---")
         print(f"Near north wall (row 12): {tmrt_near_north:.1f}°C")
@@ -652,13 +668,14 @@ class TestTmrtValidation:
             assert 5 < val < 80, f"Tmrt near {label} wall = {val:.1f}°C out of range"
 
     @pytest.mark.slow
-    def test_multi_day_statistics(self, surface, location):
+    def test_multi_day_statistics(self, surface, location, tmp_path):
         """Compute validation statistics across multiple clear-sky days."""
         import solweig
+        from conftest import read_timestep_geotiff
 
         all_errors = []
 
-        for day_str in ["2023-08-03", "2023-08-04", "2023-08-14"]:
+        for day_idx, day_str in enumerate(["2023-08-03", "2023-08-04", "2023-08-14"]):
             obs = load_presti_observations(day=day_str)
             obs_tmrt = compute_observed_tmrt(obs)
             if not obs_tmrt:
@@ -686,18 +703,20 @@ class TestTmrtValidation:
             if len(weather_list) < 20:
                 continue
 
-            summary = solweig.calculate(
+            output_dir = tmp_path / f"multi_day_{day_idx}"
+            solweig.calculate(
                 surface=surface,
                 weather=weather_list,
                 location=location,
                 wall_material="concrete",
-                timestep_outputs=["tmrt"],
+                output_dir=output_dir,
+                outputs=["tmrt"],
             )
-            results = summary.results
 
             model_tmrt = {}
-            for w, r in zip(weather_list, results, strict=False):
-                model_tmrt[w.datetime] = r.tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
+            for i, w in enumerate(weather_list):
+                tmrt = read_timestep_geotiff(output_dir, "tmrt", i)
+                model_tmrt[w.datetime] = tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
 
             for o in obs_tmrt:
                 # Match on-the-hour observations
@@ -776,7 +795,7 @@ class TestSkyModelComparison:
         return weather_list
 
     @pytest.mark.slow
-    def test_isotropic_sky_rmse(self, surface, location):
+    def test_isotropic_sky_rmse(self, surface, location, tmp_path):
         """Validate isotropic sky model RMSE against globe observations.
 
         Note: The anisotropic (Perez) sky model requires precomputed shadow
@@ -786,23 +805,26 @@ class TestSkyModelComparison:
         would require real DSM data (e.g., from IGN Lidar HD for Montpellier).
         """
         import solweig
+        from conftest import read_timestep_geotiff
 
         day = "2023-08-04"
         weather_list = self._build_weather(day)
         obs_tmrt = compute_observed_tmrt(load_presti_observations(day=day))
 
-        summary_iso = solweig.calculate(
+        output_dir = tmp_path / "isotropic"
+        solweig.calculate(
             surface=surface,
             weather=weather_list,
             location=location,
             use_anisotropic_sky=False,
-            timestep_outputs=["tmrt"],
+            output_dir=output_dir,
+            outputs=["tmrt"],
         )
-        results_iso = summary_iso.results
 
         tmrt_iso = {}
-        for w, r in zip(weather_list, results_iso, strict=False):
-            tmrt_iso[w.datetime.hour] = r.tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
+        for i, w in enumerate(weather_list):
+            tmrt = read_timestep_geotiff(output_dir, "tmrt", i)
+            tmrt_iso[w.datetime.hour] = tmrt[CANYON_CENTER_ROW, CANYON_CENTER_COL]
 
         errors = []
         for o in obs_tmrt:

@@ -91,18 +91,20 @@ class TestAnisotropicNoVegetation:
     diffuse radiation was attenuated by ~97% (psi=0.03).
     """
 
-    def test_aniso_produces_valid_tmrt(self, location, noon_weather):
+    def test_aniso_produces_valid_tmrt(self, location, noon_weather, tmp_path):
         """Anisotropic sky on flat surface with shadows produces valid Tmrt."""
+        from conftest import read_timestep_geotiff
+
         surface = _make_flat_surface_with_shadows()
-        summary = calculate(
+        calculate(
             surface,
             [noon_weather],
             location,
             use_anisotropic_sky=True,
-            timestep_outputs=["tmrt"],
+            output_dir=tmp_path,
+            outputs=["tmrt"],
         )
-        result = summary.results[0]
-        tmrt = result.tmrt
+        tmrt = read_timestep_geotiff(tmp_path, "tmrt", 0)
         assert tmrt.shape == (10, 10)
         # Should be in physically reasonable range (summer noon, open sky)
         valid = ~np.isnan(tmrt)
@@ -110,86 +112,97 @@ class TestAnisotropicNoVegetation:
         assert np.nanmin(tmrt) > 0, "Summer noon Tmrt should be positive"
         assert np.nanmax(tmrt) < 80, "Tmrt should be < 80°C"
 
-    def test_aniso_kdown_not_attenuated(self, location, noon_weather):
+    def test_aniso_kdown_not_attenuated(self, location, noon_weather, tmp_path):
         """With all-visible shadow matrices, kdown should be close to global_rad.
 
         Regression test: if veg shadow = all 0s instead of all 1s,
         diffuse radiation would be attenuated to ~3%, causing kdown << global_rad.
         """
+        from conftest import read_timestep_geotiff
+
         surface = _make_flat_surface_with_shadows()
-        summary = calculate(
+        calculate(
             surface,
             [noon_weather],
             location,
             use_anisotropic_sky=True,
-            timestep_outputs=["kdown"],
+            output_dir=tmp_path,
+            outputs=["kdown"],
         )
-        result = summary.results[0]
+        kdown = read_timestep_geotiff(tmp_path, "kdown", 0)
         # kdown should be close to global radiation for open sky
         # (800 W/m² minus some reflection, but should be > 200)
-        valid = ~np.isnan(result.kdown)
+        valid = ~np.isnan(kdown)
         if np.any(valid):
-            assert np.nanmean(result.kdown) > 200, (
-                f"kdown mean = {np.nanmean(result.kdown):.1f} — "
-                "suspiciously low, may indicate veg shadow attenuation bug"
+            assert np.nanmean(kdown) > 200, (
+                f"kdown mean = {np.nanmean(kdown):.1f} — suspiciously low, may indicate veg shadow attenuation bug"
             )
 
 
 class TestAnisotropicVsIsotropic:
     """Compare anisotropic and isotropic sky models on the same surface."""
 
-    def test_both_produce_valid_tmrt(self, location, noon_weather):
+    def test_both_produce_valid_tmrt(self, location, noon_weather, tmp_path):
         """Both models produce valid Tmrt for the same surface."""
+        from conftest import read_timestep_geotiff
+
         surface_aniso = _make_flat_surface_with_shadows()
         surface_iso = _make_flat_surface_with_shadows()
 
-        summary_aniso = calculate(
+        out_aniso = tmp_path / "aniso"
+        out_iso = tmp_path / "iso"
+        calculate(
             surface_aniso,
             [noon_weather],
             location,
             use_anisotropic_sky=True,
-            timestep_outputs=["tmrt"],
+            output_dir=out_aniso,
+            outputs=["tmrt"],
         )
-        result_aniso = summary_aniso.results[0]
-        summary_iso = calculate(
+        calculate(
             surface_iso,
             [noon_weather],
             location,
             use_anisotropic_sky=False,
-            timestep_outputs=["tmrt"],
+            output_dir=out_iso,
+            outputs=["tmrt"],
         )
-        result_iso = summary_iso.results[0]
 
-        for label, result in [("aniso", result_aniso), ("iso", result_iso)]:
-            valid = ~np.isnan(result.tmrt)
+        for label, out_dir in [("aniso", out_aniso), ("iso", out_iso)]:
+            tmrt = read_timestep_geotiff(out_dir, "tmrt", 0)
+            valid = ~np.isnan(tmrt)
             assert np.any(valid), f"{label} should have valid Tmrt"
-            assert np.nanmin(result.tmrt) > 0, f"{label} Tmrt should be positive"
-            assert np.nanmax(result.tmrt) < 80, f"{label} Tmrt should be < 80°C"
+            assert np.nanmin(tmrt) > 0, f"{label} Tmrt should be positive"
+            assert np.nanmax(tmrt) < 80, f"{label} Tmrt should be < 80°C"
 
-    def test_models_differ_but_correlate(self, location, noon_weather):
+    def test_models_differ_but_correlate(self, location, noon_weather, tmp_path):
         """Anisotropic and isotropic Tmrt should differ but be in the same ballpark."""
+        from conftest import read_timestep_geotiff
+
         surface_aniso = _make_flat_surface_with_shadows()
         surface_iso = _make_flat_surface_with_shadows()
 
-        summary_aniso = calculate(
+        out_aniso = tmp_path / "aniso"
+        out_iso = tmp_path / "iso"
+        calculate(
             surface_aniso,
             [noon_weather],
             location,
             use_anisotropic_sky=True,
-            timestep_outputs=["tmrt"],
+            output_dir=out_aniso,
+            outputs=["tmrt"],
         )
-        result_aniso = summary_aniso.results[0]
-        summary_iso = calculate(
+        calculate(
             surface_iso,
             [noon_weather],
             location,
             use_anisotropic_sky=False,
-            timestep_outputs=["tmrt"],
+            output_dir=out_iso,
+            outputs=["tmrt"],
         )
-        result_iso = summary_iso.results[0]
 
-        tmrt_a = result_aniso.tmrt
-        tmrt_i = result_iso.tmrt
+        tmrt_a = read_timestep_geotiff(out_aniso, "tmrt", 0)
+        tmrt_i = read_timestep_geotiff(out_iso, "tmrt", 0)
         valid = ~np.isnan(tmrt_a) & ~np.isnan(tmrt_i)
 
         if np.sum(valid) > 1:
@@ -203,11 +216,12 @@ class TestAnisotropicVsIsotropic:
 class TestAnisotropicWithPartialShadows:
     """Anisotropic sky with partially blocked shadow matrices."""
 
-    def test_partial_shadows_produce_spatial_variation(self, location, noon_weather):
+    def test_partial_shadows_produce_spatial_variation(self, location, noon_weather, tmp_path):
         """Shadow matrices with spatial variation produce Tmrt variation."""
+        from conftest import make_mock_svf, read_timestep_geotiff
+
         shape = (10, 10)
         n_patches = 153
-        from conftest import make_mock_svf
 
         dsm = np.ones(shape, dtype=np.float32) * 2.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(shape))
@@ -232,16 +246,16 @@ class TestAnisotropicWithPartialShadows:
             _n_patches=n_patches,
         )
 
-        summary = calculate(
+        calculate(
             surface,
             [noon_weather],
             location,
             use_anisotropic_sky=True,
-            timestep_outputs=["tmrt"],
+            output_dir=tmp_path,
+            outputs=["tmrt"],
         )
-        result = summary.results[0]
 
-        tmrt = result.tmrt
+        tmrt = read_timestep_geotiff(tmp_path, "tmrt", 0)
         valid = ~np.isnan(tmrt)
         assert np.any(valid), "Should have valid Tmrt"
         # Mean Tmrt should be valid
@@ -333,39 +347,47 @@ class TestAnisotropicGoldenRegression:
     """
 
     @pytest.fixture(scope="class")
-    def golden_result(self, location, noon_weather):
+    def golden_output_dir(self, location, noon_weather, tmp_path_factory):
         """Compute anisotropic result for golden comparison."""
+        out = tmp_path_factory.mktemp("golden")
         surface = _make_flat_surface_with_shadows(shape=(5, 5))
-        summary = calculate(
+        calculate(
             surface,
             [noon_weather],
             location,
             use_anisotropic_sky=True,
-            timestep_outputs=["tmrt", "shadow", "kdown"],
+            output_dir=out,
+            outputs=["tmrt", "shadow", "kdown"],
         )
-        return summary.results[0]
+        return out
 
-    def test_tmrt_golden_mean(self, golden_result):
+    def test_tmrt_golden_mean(self, golden_output_dir):
         """Mean Tmrt should be stable across code changes."""
-        tmrt = golden_result.tmrt
+        from conftest import read_timestep_geotiff
+
+        tmrt = read_timestep_geotiff(golden_output_dir, "tmrt", 0)
         valid = ~np.isnan(tmrt)
         mean_tmrt = np.nanmean(tmrt[valid])
         # Capture golden range (tight enough to catch regressions, loose enough
         # for f32 variation across platforms)
         assert 20 < mean_tmrt < 70, f"Mean aniso Tmrt = {mean_tmrt:.2f}°C — outside expected range"
 
-    def test_kdown_golden_mean(self, golden_result):
+    def test_kdown_golden_mean(self, golden_output_dir):
         """Mean kdown should be stable across code changes."""
-        kdown = golden_result.kdown
+        from conftest import read_timestep_geotiff
+
+        kdown = read_timestep_geotiff(golden_output_dir, "kdown", 0)
         valid = ~np.isnan(kdown)
         mean_kdown = np.nanmean(kdown[valid])
         # Open sky, 800 W/m² global → kdown should be substantial
         assert mean_kdown > 200, f"Mean kdown = {mean_kdown:.1f} — too low, may indicate attenuation bug"
         assert mean_kdown < 900, f"Mean kdown = {mean_kdown:.1f} — too high for 800 W/m² global"
 
-    def test_shadow_golden(self, golden_result):
+    def test_shadow_golden(self, golden_output_dir):
         """Shadow field should be all-sunlit for flat surface at noon."""
-        shadow = golden_result.shadow
+        from conftest import read_timestep_geotiff
+
+        shadow = read_timestep_geotiff(golden_output_dir, "shadow", 0)
         valid = ~np.isnan(shadow)
         # Flat surface at noon → should be mostly sunlit (shadow = 1)
         assert np.nanmean(shadow[valid]) > 0.9, "Flat surface at noon should be mostly sunlit"

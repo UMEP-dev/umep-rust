@@ -10,6 +10,9 @@ Every SOLWEIG calculation needs exactly three things:
 
 A `SurfaceData` object holds the building/terrain heights and optional vegetation. The only required field is a DSM (Digital Surface Model).
 
+!!! tip "Arrays or files?"
+    Use **numpy arrays** for synthetic grids, parameter sweeps, or when data is already in memory. Use **GeoTIFF files** for real-world data — `prepare()` handles CRS, alignment, caching, and NaN filling automatically.
+
 **From numpy arrays** (in-memory workflows):
 
 ```python
@@ -23,7 +26,7 @@ dsm[80:120, 80:120] = 15.0  # A building
 surface = solweig.SurfaceData.prepare(dsm=dsm, pixel_size=1.0)
 ```
 
-**From GeoTIFF files** (file-based workflows — walls and SVF are computed and cached to `working_dir/`):
+**From GeoTIFF files** (file-based workflows — rasters are aligned to their intersecting extent, walls and SVF are computed and cached to `working_dir/`):
 
 ```python
 surface = solweig.SurfaceData.prepare(
@@ -66,7 +69,7 @@ weather = solweig.Weather(
 )
 ```
 
-`ws` is optional for Tmrt calculations (defaults to 1.0 m/s) but directly affects UTCI and PET results.
+`ws` is optional for Tmrt calculations (defaults to 1.0 m/s) but directly affects UTCI and PET results. A difference of 1–3 m/s can shift UTCI by several degrees, so use measured wind data when computing thermal comfort indices.
 
 For timeseries, load from an EPW file:
 
@@ -97,33 +100,36 @@ location = solweig.Location.from_epw(epw_path)
 ### Single timestep
 
 ```python
-result = solweig.calculate(surface, location, weather)
+summary = solweig.calculate(
+    surface=surface,
+    weather=[weather],
+    location=location,
+    output_dir="output/",
+    outputs=["tmrt", "shadow"],
+)
 ```
 
 ### Multiple timesteps (timeseries)
 
 ```python
-results = solweig.calculate(
+summary = solweig.calculate(
     surface=surface,
     weather=weather_list,
     location=location,
-    output_dir="output/",          # Save GeoTIFFs as they're computed
-    outputs=["tmrt", "shadow"],    # Which outputs to save
+    output_dir="output/",
+    outputs=["tmrt", "shadow"],
 )
 ```
 
 When given a list of weather timesteps, `calculate()` automatically carries **thermal state** between timesteps — ground and wall temperatures from one hour affect the next. Large rasters are automatically tiled to fit GPU memory. This matters for accuracy; avoid looping over `calculate()` manually with single timesteps.
 
-Two common output patterns:
+Per-timestep GeoTIFFs are saved to `output_dir` when `outputs` is specified. Summary grids (mean/max/min Tmrt, UTCI, sun hours) are always saved to `output_dir/summary/`.
 
-1. Stream outputs to disk as they are computed (`output_dir=...`) for long runs and low RAM.
-2. Keep outputs in memory (no `output_dir`), aggregate manually, and save only final products to minimize disk usage.
-
-See [Timeseries](timeseries.md#choose-an-output-strategy) for full examples of both patterns.
+See [Timeseries](timeseries.md) for more detail.
 
 ## Understanding the output
 
-`SolweigResult` contains 2D grids with the same shape as your DSM:
+Each per-timestep GeoTIFF and summary grid has the same shape as your DSM:
 
 | Field | Unit | What it means |
 | ----- | ---- | ------------- |
@@ -134,13 +140,14 @@ See [Timeseries](timeseries.md#choose-an-output-strategy) for full examples of b
 | `ldown` | W/m² | Incoming longwave radiation (thermal, from sky + walls). |
 | `lup` | W/m² | Emitted longwave radiation from the ground. |
 
-```python
-result = solweig.calculate(surface, location, weather)
+**Typical ranges** (mid-latitude summer, midday): Tmrt 20–75 °C (shaded–sunlit), UTCI 25–45 °C. If you see Tmrt above 80 °C or UTCI above 55 °C, check your input data — common causes are incorrect CRS, missing DEM, or unrealistic DSM values.
 
-# Tmrt difference between sun and shade
-sunlit = result.tmrt[result.shadow > 0.5].mean()
-shaded = result.tmrt[result.shadow < 0.5].mean()
-print(f"Sun-shade Tmrt difference: {sunlit - shaded:.0f}°C")
+The `TimeseriesSummary` returned by `calculate()` contains aggregated grids:
+
+```python
+print(f"Mean Tmrt: {summary.tmrt_mean.mean():.1f}°C")
+print(f"Max UTCI: {np.nanmax(summary.utci_max):.1f}°C")
+print(f"Sun hours range: {summary.sun_hours.min():.1f} – {summary.sun_hours.max():.1f}")
 ```
 
 ## Adding vegetation
@@ -234,21 +241,21 @@ result = solweig.calculate(
 
 ## Anisotropic sky model
 
-SOLWEIG supports both isotropic and anisotropic sky models. For reproducible
-behavior, set `use_anisotropic_sky` explicitly in your call:
+The anisotropic sky model is **on by default**. It distributes diffuse radiation
+realistically across the sky dome instead of treating it as uniform. No extra
+setup is needed — `SurfaceData.prepare()` computes everything required (SVF and
+shadow matrices).
+
+To disable it (uniform sky, slightly faster):
 
 ```python
 results = solweig.calculate(
     surface=surface,
     weather=weather_list,
     location=location,
-    use_anisotropic_sky=True,  # More accurate, slightly slower
+    use_anisotropic_sky=False,
 )
 ```
-
-If you explicitly set `use_anisotropic_sky=True`, shadow matrices must already
-be available. They are prepared alongside SVF via `SurfaceData.prepare(...)`.
-Otherwise, `calculate()` raises `MissingPrecomputedData`.
 
 ## Input validation
 
@@ -284,6 +291,22 @@ print(f"Backend: {solweig.get_compute_backend()}")
 ```
 
 The package falls back to CPU automatically. GPU gives ~5–10x speedup for shadow and SVF computation.
+
+### CRS must be projected (metres)
+
+SOLWEIG needs pixel distances in metres for shadow and SVF calculations. If your GeoTIFF uses a geographic CRS (lat/lon in degrees), `prepare()` will raise an error. Reproject to a projected CRS (e.g. UTM) first:
+
+```bash
+gdalwarp -t_srs EPSG:32634 input.tif output_utm.tif
+```
+
+### GridShapeMismatch
+
+All input grids must have the same dimensions. When loading from GeoTIFFs, `prepare()` resamples automatically. When passing numpy arrays, ensure all arrays have the same shape before calling `prepare()`.
+
+### MissingPrecomputedData
+
+This means `calculate()` could not find SVF data. Make sure you used `SurfaceData.prepare()` (which computes SVF) rather than constructing `SurfaceData` directly.
 
 ## Complete working demos
 

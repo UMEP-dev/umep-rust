@@ -18,21 +18,7 @@ summary = solweig.calculate(surface=surface, weather=weather_list)
 print(summary.report())  # Includes Tmrt, UTCI, sun hours, threshold exceedance
 ```
 
-### Per-timestep arrays
-
-Include `"utci"` in `timestep_outputs` to retain per-timestep UTCI grids:
-
-```python
-summary = solweig.calculate(
-    surface=surface,
-    weather=weather_list,
-    timestep_outputs=["tmrt", "utci"],
-)
-for r in summary.results:
-    print(f"UTCI range: {r.utci.min():.1f} – {r.utci.max():.1f}°C")
-```
-
-### Per-timestep GeoTIFF files
+### Per-timestep GeoTIFFs
 
 Include `"utci"` in `outputs` to save per-timestep UTCI GeoTIFFs:
 
@@ -94,13 +80,14 @@ PET is the air temperature of a reference indoor environment at which the human 
 
 ### Per-timestep PET
 
-Include `"pet"` in `timestep_outputs` or `outputs`:
+Include `"pet"` in `outputs`:
 
 ```python
 summary = solweig.calculate(
     surface=surface,
     weather=weather_list,
-    timestep_outputs=["tmrt", "pet"],
+    output_dir="output/",
+    outputs=["tmrt", "pet"],
     human=solweig.HumanParams(weight=60, height=1.65, age=70),
 )
 ```

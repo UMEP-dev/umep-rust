@@ -83,7 +83,10 @@ def profile_calculation(size: int) -> dict:
     weather = Weather(datetime=datetime(2024, 7, 21, 12, 0), ta=30.0, rh=50.0, global_rad=800.0, ws=2.0)
 
     # Run calculation
-    result = calculate(surface, [weather], location)
+    import tempfile
+
+    tmpdir = tempfile.mkdtemp()
+    result = calculate(surface, [weather], location, output_dir=tmpdir)
 
     after_calc = tracemalloc.get_traced_memory()
 

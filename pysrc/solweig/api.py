@@ -373,6 +373,8 @@ def calculate(
     surface: SurfaceData,
     weather: list[Weather],
     location: Location | None = None,
+    *,
+    output_dir: str | Path,
     config: ModelConfig | None = None,
     human: HumanParams | None = None,
     precomputed: PrecomputedData | None = None,
@@ -382,9 +384,7 @@ def calculate(
     materials: SimpleNamespace | None = None,
     wall_material: str | None = None,
     max_shadow_distance_m: float | None = None,
-    output_dir: str | Path | None = None,
     outputs: list[str] | None = None,
-    timestep_outputs: list[str] | None = None,
     heat_thresholds_day: list[float] | None = None,
     heat_thresholds_night: list[float] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
@@ -392,57 +392,46 @@ def calculate(
     """
     Calculate mean radiant temperature (Tmrt).
 
-    This is the single entry point for all SOLWEIG calculations. Pass a list
-    of weather snapshots (even a single-element list) and get back a
-    :class:`TimeseriesSummary`. Large rasters are automatically tiled.
+    Single entry point for all SOLWEIG calculations. SVF and shadow matrices
+    must already be on ``surface`` (via :meth:`SurfaceData.prepare`) or in
+    ``precomputed``. The anisotropic sky model is on by default.
 
     Args:
-        surface: Surface/terrain data (DSM required, CDSM/DEM optional).
-        weather: List of Weather objects (one per timestep).
-        location: Geographic location (lat, lon, UTC offset). If None,
-            automatically extracted from surface's CRS metadata.
-        config: Model configuration object providing base settings.
-            Explicit parameters override config values when provided.
-        human: Human body parameters (absorption, posture, weight, height, etc.).
-            If None, uses config.human or HumanParams defaults.
-        precomputed: Pre-computed preprocessing data (walls, SVF, shadow matrices).
-        use_anisotropic_sky: Use anisotropic sky model for radiation.
-            If None, uses config.use_anisotropic_sky (default True).
-        conifer: Treat vegetation as evergreen conifers (always leaf-on).
+        surface: Prepared surface data from :meth:`SurfaceData.prepare`.
+        weather: One or more Weather objects.
+        location: Geographic location. If None, extracted from surface CRS.
+        config: Model settings. Explicit keyword args override config values.
+        human: Human body parameters (posture, absorption, etc.).
+        precomputed: Alternative source for SVF/shadow matrices (advanced).
+        use_anisotropic_sky: Anisotropic (True) or uniform (False) sky
+            diffuse radiation. Default True.
+        conifer: Treat vegetation as evergreen (always leaf-on).
         physics: Physics parameters from load_physics().
         materials: Material properties from load_materials().
         wall_material: Wall material type ("brick", "concrete", "wood", "cobblestone").
         max_shadow_distance_m: Maximum shadow reach in metres (default 1000.0).
-        output_dir: Directory to save results as GeoTIFFs.
-        outputs: Which per-timestep outputs to save (e.g., ["tmrt", "shadow"]).
-        timestep_outputs: Which per-timestep arrays to retain in memory.
+        output_dir: Working directory for all output. Summary grids are always
+            saved to ``output_dir/summary/``. Per-timestep GeoTIFFs are saved
+            when ``outputs`` is specified.
+        outputs: Which per-timestep outputs to save as GeoTIFFs
+            (e.g., ``["tmrt", "shadow"]``). If None, only summary grids are saved.
         heat_thresholds_day: Daytime UTCI thresholds for exceedance grids.
         heat_thresholds_night: Nighttime UTCI thresholds for exceedance grids.
         progress_callback: Called as progress_callback(current, total) per timestep.
 
     Returns:
-        TimeseriesSummary with aggregated per-pixel grids (mean/max/min Tmrt
-        and UTCI, sun/shade hours, heat-stress exceedance). For a single
-        timestep, the summary fields equal the single result.
+        TimeseriesSummary with per-pixel grids (mean/max/min Tmrt and UTCI,
+        sun/shade hours, heat-stress exceedance).
 
     Example::
 
-        import solweig
+        surface = solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="cache/")
+        weather = solweig.Weather.from_epw("weather.epw")
 
-        # Single timestep
         summary = solweig.calculate(
             surface=surface,
-            weather=[weather],
-            location=location,
-        )
-
-        # Multi-timestep timeseries
-        summary = solweig.calculate(
-            surface=surface,
-            weather=weather_list,
-            location=location,
-            output_dir="./results",
-            outputs=["tmrt", "shadow"],
+            weather=weather,
+            output_dir="output/",
         )
     """
     from .timeseries import _calculate_timeseries
@@ -462,7 +451,6 @@ def calculate(
         max_shadow_distance_m=max_shadow_distance_m,
         output_dir=output_dir,
         outputs=outputs,
-        timestep_outputs=timestep_outputs,
         heat_thresholds_day=heat_thresholds_day,
         heat_thresholds_night=heat_thresholds_night,
         progress_callback=progress_callback,

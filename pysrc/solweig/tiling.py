@@ -1007,9 +1007,9 @@ def _calculate_timeseries_tiled(
     tile_workers: int | None = None,
     tile_queue_depth: int | None = None,
     prefetch_tiles: bool | None = None,
-    output_dir: str | Path | None = None,
+    *,
+    output_dir: str | Path,
     outputs: list[str] | None = None,
-    timestep_outputs: list[str] | None = None,
     heat_thresholds_day: list[float] | None = None,
     heat_thresholds_night: list[float] | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
@@ -1046,10 +1046,10 @@ def _calculate_timeseries_tiled(
             If None, uses config.tile_queue_depth or runtime default.
         prefetch_tiles: Whether to prefetch queued tile tasks. If None,
             uses config.prefetch_tiles or defaults to True.
-        output_dir: Directory to save results incrementally as GeoTIFF.
-        outputs: Which outputs to save (e.g., ["tmrt", "shadow"]).
-        timestep_outputs: Which per-timestep arrays to retain in memory
-            (e.g., ``["tmrt", "shadow"]``). Default None (summary-only).
+        output_dir: Working directory for all output. Summary grids are always
+            saved to ``output_dir/summary/``.
+        outputs: Which per-timestep outputs to save as GeoTIFFs
+            (e.g., ``["tmrt", "shadow"]``). If None, only summary grids are saved.
         heat_thresholds_day: UTCI thresholds (°C) for daytime exceedance hours.
             Default ``[32, 38]``.
         heat_thresholds_night: UTCI thresholds (°C) for nighttime exceedance hours.
@@ -1112,15 +1112,9 @@ def _calculate_timeseries_tiled(
         effective_physics = load_physics()
     anisotropic_arg = effective_aniso if (anisotropic_requested_explicitly or effective_aniso is False) else None
 
-    requested_outputs = None
-    if output_dir is not None and effective_outputs:
-        requested_outputs = {"tmrt", "shadow"} | set(effective_outputs)
-    elif timestep_outputs is not None:
-        # Keep specific per-timestep arrays; always include tmrt + shadow for accumulator.
-        requested_outputs = {"tmrt", "shadow"} | set(timestep_outputs)
-    else:
-        # Summary-only mode: only need tmrt + shadow for accumulation.
-        requested_outputs = {"tmrt", "shadow"}
+    requested_outputs: set[str] = {"tmrt", "shadow"}
+    if effective_outputs:
+        requested_outputs |= set(effective_outputs)
 
     need_shadow = requested_outputs is None or "shadow" in requested_outputs
     need_kdown = requested_outputs is None or "kdown" in requested_outputs
@@ -1207,17 +1201,10 @@ def _calculate_timeseries_tiled(
     precompute_time = time.time() - precompute_start
     logger.info(f"  Pre-computed {n_steps} timesteps in {precompute_time:.1f}s")
 
-    output_path: Path | None = None
-    # Create output directory if needed
-    if output_dir is not None:
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-    use_async_output = output_dir is not None and effective_outputs and async_output_enabled()
-    _writer = (
-        AsyncGeoTiffWriter(output_dir=output_path, surface=surface)
-        if use_async_output and output_path is not None
-        else None
-    )
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    use_async_output = bool(effective_outputs) and async_output_enabled()
+    _writer = AsyncGeoTiffWriter(output_dir=output_path, surface=surface) if use_async_output else None
 
     from .api import _calculate_single
 
@@ -1252,7 +1239,6 @@ def _calculate_timeseries_tiled(
         timestep_hours=_timestep_hours,
     )
 
-    results = []
     processed_steps = 0
     total_work = n_steps * n_tiles
     start_time = time.time()
@@ -1400,25 +1386,19 @@ def _calculate_timeseries_tiled(
                 # Update grid accumulator (before potential array release)
                 _accumulator.update(result, weather, compute_utci_fn=compute_utci_grid)
 
-                # Compute per-timestep UTCI/PET if requested (for in-memory or file output)
-                _need_utci = (timestep_outputs is not None and "utci" in timestep_outputs) or (
-                    effective_outputs is not None and "utci" in effective_outputs
-                )
-                _need_pet = (timestep_outputs is not None and "pet" in timestep_outputs) or (
-                    effective_outputs is not None and "pet" in effective_outputs
-                )
-                if _need_utci and result.utci is None:
+                # Compute per-timestep UTCI/PET if requested for file output
+                if effective_outputs is not None and "utci" in effective_outputs and result.utci is None:
                     result.utci = compute_utci_grid(result.tmrt, weather.ta, weather.rh, weather.ws)
-                if _need_pet and result.pet is None:
+                if effective_outputs is not None and "pet" in effective_outputs and result.pet is None:
                     result.pet = compute_pet_grid(result.tmrt, weather.ta, weather.rh, weather.ws, effective_human)
 
-                # Save per-timestep outputs if output_dir and outputs are provided
+                # Save per-timestep outputs to disk
                 if _writer is not None and effective_outputs:
                     _writer.submit(
                         timestamp=weather.datetime,
                         arrays=collect_output_arrays(result, effective_outputs),
                     )
-                elif output_dir is not None and effective_outputs:
+                elif effective_outputs:
                     result.to_geotiff(
                         output_dir=output_dir,
                         timestamp=weather.datetime,
@@ -1426,36 +1406,15 @@ def _calculate_timeseries_tiled(
                         surface=surface,
                     )
 
-                if timestep_outputs is not None:
-                    # Keep only requested fields; free the rest.
-                    _keep = set(timestep_outputs)
-                    if "tmrt" not in _keep:
-                        result.tmrt = None  # type: ignore[assignment]
-                    if "shadow" not in _keep:
-                        result.shadow = None
-                    if "kdown" not in _keep:
-                        result.kdown = None
-                    if "kup" not in _keep:
-                        result.kup = None
-                    if "ldown" not in _keep:
-                        result.ldown = None
-                    if "lup" not in _keep:
-                        result.lup = None
-                    if "utci" not in _keep:
-                        result.utci = None
-                    if "pet" not in _keep:
-                        result.pet = None
-                    results.append(result)
-                else:
-                    # Summary-only: free all large arrays.
-                    result.tmrt = None  # type: ignore[assignment]
-                    result.shadow = None
-                    result.kdown = None
-                    result.kup = None
-                    result.ldown = None
-                    result.lup = None
-                    result.utci = None
-                    result.pet = None
+                # Free all large arrays after accumulation + disk write
+                result.tmrt = None  # type: ignore[assignment]
+                result.shadow = None
+                result.kdown = None
+                result.kup = None
+                result.ldown = None
+                result.lup = None
+                result.utci = None
+                result.pet = None
                 processed_steps += 1
     finally:
         if _progress is not None:
@@ -1465,7 +1424,6 @@ def _calculate_timeseries_tiled(
 
     # Finalize summary
     summary = _accumulator.finalize()
-    summary.results = results  # empty list when timestep_outputs=None
     summary._surface = surface
 
     # Log summary
@@ -1481,29 +1439,28 @@ def _calculate_timeseries_tiled(
         _valid_max = np.nanmax(summary.tmrt_max)
         logger.info(f"  Tmrt range: {_valid_min:.1f}C - {_valid_max:.1f}C (mean: {_valid_mean:.1f}C)")
 
-    if output_dir is not None and effective_outputs is not None:
+    if effective_outputs is not None:
         file_count = processed_steps * len(effective_outputs)
         logger.info(f"  Files saved: {file_count} GeoTIFFs in {output_dir}")
     logger.info("=" * 60)
 
-    # Save summary grids and run metadata if output_dir provided
-    if output_dir is not None:
-        summary.to_geotiff(output_dir, surface=surface)
-        summary._output_dir = Path(output_dir)
-        from .metadata import create_run_metadata, save_run_metadata
+    # Save summary grids and run metadata
+    summary.to_geotiff(output_dir, surface=surface)
+    summary._output_dir = Path(output_dir)
+    from .metadata import create_run_metadata, save_run_metadata
 
-        metadata = create_run_metadata(
-            surface=surface,
-            location=location,
-            weather_series=weather_series,
-            human=effective_human,
-            physics=effective_physics,
-            materials=effective_materials,
-            use_anisotropic_sky=effective_aniso,
-            conifer=conifer,
-            output_dir=output_dir,
-            outputs=effective_outputs,
-        )
-        save_run_metadata(metadata, output_dir)
+    metadata = create_run_metadata(
+        surface=surface,
+        location=location,
+        weather_series=weather_series,
+        human=effective_human,
+        physics=effective_physics,
+        materials=effective_materials,
+        use_anisotropic_sky=effective_aniso,
+        conifer=conifer,
+        output_dir=output_dir,
+        outputs=effective_outputs,
+    )
+    save_run_metadata(metadata, output_dir)
 
     return summary

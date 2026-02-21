@@ -215,18 +215,16 @@ print(f"  Date range: {metadata['timeseries']['start']} to {metadata['timeseries
 # Note: Prefer the new three-parameter model for clarity!
 
 # %%
-# Step 4: Per-timestep UTCI/PET (via timestep_outputs)
-# To get per-timestep UTCI or PET arrays, include them in timestep_outputs:
+# Step 4: Per-timestep UTCI/PET GeoTIFFs
+# To save per-timestep UTCI or PET, include them in outputs:
 #
 # summary = solweig.calculate(
 #     surface=surface,
 #     weather=weather_list,
 #     location=location,
-#     timestep_outputs=["tmrt", "utci"],  # retain per-timestep Tmrt + UTCI
 #     output_dir=str(output_dir),
+#     outputs=["tmrt", "utci"],  # per-timestep Tmrt + UTCI saved to disk
 # )
-# for r in summary.results:
-#     print(f"UTCI range: {np.nanmin(r.utci):.1f} - {np.nanmax(r.utci):.1f}")
 #
 # Note: Summary grids (utci_mean, utci_max, etc.) are always computed regardless.
 

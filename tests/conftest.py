@@ -29,6 +29,23 @@ def pytest_configure(config: pytest.Config) -> None:
         )
 
 
+def read_timestep_geotiff(output_dir, field_name: str, index: int = 0):
+    """Read the i-th per-timestep GeoTIFF from output_dir/field_name/.
+
+    Returns the numpy array. Raises FileNotFoundError if no files exist
+    or the index is out of range.
+    """
+    from solweig.io import load_raster
+
+    tifs = sorted(Path(output_dir).joinpath(field_name).glob("*.tif"))
+    if not tifs:
+        raise FileNotFoundError(f"No GeoTIFFs in {Path(output_dir) / field_name}")
+    if index >= len(tifs):
+        raise FileNotFoundError(f"Only {len(tifs)} files in {field_name}/, requested index {index}")
+    arr, _, _, _ = load_raster(str(tifs[index]))
+    return arr
+
+
 def make_mock_svf(shape: tuple[int, ...]):
     """Create a mock SvfArrays for tests (fully open sky)."""
     from solweig.models.precomputed import SvfArrays

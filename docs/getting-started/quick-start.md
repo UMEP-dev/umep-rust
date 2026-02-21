@@ -109,16 +109,14 @@ When you call `SurfaceData.prepare()`, it automatically:
 Tmrt tells you how much radiation a person absorbs, but thermal comfort also depends on air temperature, humidity, and wind. UTCI and PET combine all of these.
 
 UTCI and PET summary grids are included in the `TimeseriesSummary` by default.
-For per-timestep arrays or saved files, include `"utci"` or `"pet"` in
-`timestep_outputs` or `outputs`:
+To also save per-timestep GeoTIFFs, include `"utci"` or `"pet"` in `outputs`:
 
 ```python
 summary = solweig.calculate(
     surface=surface,
     weather=weather_list,
-    outputs=["tmrt", "utci"],           # save per-timestep GeoTIFFs
-    timestep_outputs=["tmrt", "utci"],  # keep per-timestep arrays in memory
     output_dir="output/",
+    outputs=["tmrt", "utci"],  # per-timestep GeoTIFFs
 )
 print(summary.report())  # Full summary with Tmrt, UTCI, sun hours, thresholds
 ```

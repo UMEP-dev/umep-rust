@@ -9,7 +9,7 @@ from datetime import datetime
 
 import numpy as np
 import pytest
-from conftest import make_mock_svf
+from conftest import make_mock_svf, read_timestep_geotiff
 from solweig.api import (
     HumanParams,
     Location,
@@ -470,7 +470,7 @@ class TestSolweigResultMethods:
 class TestConfigPrecedence:
     """Tests for config precedence - explicit parameters override config values."""
 
-    def test_explicit_anisotropic_overrides_config(self):
+    def test_explicit_anisotropic_overrides_config(self, tmp_path):
         """Explicit use_anisotropic_sky=False overrides config.use_anisotropic_sky=True."""
 
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
@@ -492,12 +492,13 @@ class TestConfigPrecedence:
             location,
             config=config,
             use_anisotropic_sky=False,  # Explicit wins
+            output_dir=tmp_path,
         )
 
         assert isinstance(summary, TimeseriesSummary)
         assert summary.tmrt_mean is not None
 
-    def test_explicit_human_overrides_config(self):
+    def test_explicit_human_overrides_config(self, tmp_path):
         """Explicit human params override config.human."""
 
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
@@ -520,13 +521,14 @@ class TestConfigPrecedence:
             location,
             config=config,
             human=explicit_human,  # Should use standing, abs_k=0.8
+            output_dir=tmp_path,
         )
 
         # Result should exist (test doesn't crash)
         assert isinstance(summary, TimeseriesSummary)
         assert summary.tmrt_mean is not None
 
-    def test_none_param_uses_config_value(self):
+    def test_none_param_uses_config_value(self, tmp_path):
         """When explicit param is None, config value is used."""
 
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
@@ -549,12 +551,13 @@ class TestConfigPrecedence:
             location,
             config=config,
             human=None,  # Should fall back to config.human
+            output_dir=tmp_path,
         )
 
         assert isinstance(summary, TimeseriesSummary)
         assert summary.tmrt_mean is not None
 
-    def test_no_config_uses_defaults(self):
+    def test_no_config_uses_defaults(self, tmp_path):
         """When no config provided, defaults are used."""
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
@@ -567,7 +570,7 @@ class TestConfigPrecedence:
         )
 
         # No config, no explicit params - should use defaults
-        summary = calculate(surface, [weather], location)
+        summary = calculate(surface, [weather], location, output_dir=tmp_path)
 
         assert isinstance(summary, TimeseriesSummary)
         assert summary.tmrt_mean is not None
@@ -577,7 +580,7 @@ class TestConfigPrecedence:
 class TestCalculateIntegration:
     """Integration tests for the calculate() function."""
 
-    def test_basic_calculation(self):
+    def test_basic_calculation(self, tmp_path):
         """calculate() returns valid Tmrt for simple DSM."""
 
         # Simple flat DSM with one building
@@ -593,26 +596,32 @@ class TestCalculateIntegration:
             global_rad=800.0,
         )
 
-        summary = calculate(surface, [weather], location, timestep_outputs=["tmrt", "shadow"])
+        summary = calculate(
+            surface,
+            [weather],
+            location,
+            output_dir=tmp_path,
+            outputs=["tmrt", "shadow"],
+        )
 
         assert isinstance(summary, TimeseriesSummary)
-        assert len(summary.results) == 1
-        result = summary.results[0]
 
-        # Check output structure
-        assert result.tmrt.shape == (30, 30)
-        assert result.shadow is not None
-        assert result.shadow.shape == (30, 30)
-        # UTCI/PET are not auto-computed - use post-processing functions
-        assert result.utci is None
-        assert result.pet is None
+        # Check output structure by reading from disk
+        tmrt = read_timestep_geotiff(tmp_path, "tmrt", 0)
+        shadow = read_timestep_geotiff(tmp_path, "shadow", 0)
+
+        assert tmrt.shape == (30, 30)
+        assert shadow.shape == (30, 30)
+        # UTCI/PET are not auto-computed - subdirectories should not exist
+        assert not (tmp_path / "utci").exists()
+        assert not (tmp_path / "pet").exists()
 
         # Check Tmrt is in reasonable range (use nanmin/nanmax to handle NaN)
         # -50 is used as a sentinel for invalid/building pixels
-        assert np.nanmin(result.tmrt) >= -50
-        assert np.nanmax(result.tmrt) < 80
+        assert np.nanmin(tmrt) >= -50
+        assert np.nanmax(tmrt) < 80
 
-    def test_nighttime_calculation(self):
+    def test_nighttime_calculation(self, tmp_path):
         """calculate() handles nighttime (sun below horizon)."""
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
@@ -626,23 +635,31 @@ class TestCalculateIntegration:
             global_rad=0.0,
         )
 
-        summary = calculate(surface, [weather], location, timestep_outputs=["tmrt", "kdown", "kup"])
+        calculate(
+            surface,
+            [weather],
+            location,
+            output_dir=tmp_path,
+            outputs=["tmrt", "kdown", "kup"],
+        )
 
-        assert len(summary.results) == 1
-        result = summary.results[0]
+        # Read results from disk
+        tmrt = read_timestep_geotiff(tmp_path, "tmrt", 0)
+        kdown = read_timestep_geotiff(tmp_path, "kdown", 0)
+        kup = read_timestep_geotiff(tmp_path, "kup", 0)
 
         # At night, Tmrt is computed from full longwave balance (no shortwave).
         # Under open sky (SVF~1) the cold sky pulls Tmrt well below Ta — typically
         # ~5-10 C lower. This matches UMEP behaviour; the old Python shortcut
         # (Tmrt=Ta) was wrong.
-        valid = result.tmrt[np.isfinite(result.tmrt)]
+        valid = tmrt[np.isfinite(tmrt)]
         assert np.all(valid < 15.0), "Night Tmrt should be below Ta under open sky"
         assert np.all(valid > -5.0), "Night Tmrt should not be unreasonably cold"
         # Shortwave must be zero at night
-        assert result.kdown is not None and np.allclose(result.kdown[np.isfinite(result.kdown)], 0.0, atol=1e-3)
-        assert result.kup is not None and np.allclose(result.kup[np.isfinite(result.kup)], 0.0, atol=1e-3)
+        assert np.allclose(kdown[np.isfinite(kdown)], 0.0, atol=1e-3)
+        assert np.allclose(kup[np.isfinite(kup)], 0.0, atol=1e-3)
 
-    def test_explicit_anisotropic_requires_shadow_matrices(self):
+    def test_explicit_anisotropic_requires_shadow_matrices(self, tmp_path):
         """Explicit anisotropic request must fail without shadow matrices."""
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
@@ -655,9 +672,9 @@ class TestCalculateIntegration:
         )
 
         with pytest.raises(MissingPrecomputedData):
-            calculate(surface, [weather], location, use_anisotropic_sky=True)
+            calculate(surface, [weather], location, use_anisotropic_sky=True, output_dir=tmp_path)
 
-    def test_shadows_exist(self):
+    def test_shadows_exist(self, tmp_path):
         """Shadows are cast by buildings during daytime."""
         # Tall building that should cast shadows
         dsm = np.zeros((40, 40), dtype=np.float32)
@@ -672,17 +689,22 @@ class TestCalculateIntegration:
             global_rad=600.0,
         )
 
-        summary = calculate(surface, [weather], location, timestep_outputs=["shadow"])
+        calculate(
+            surface,
+            [weather],
+            location,
+            output_dir=tmp_path,
+            outputs=["shadow"],
+        )
 
-        assert len(summary.results) == 1
-        result = summary.results[0]
+        # Read shadow from disk
+        shadow = read_timestep_geotiff(tmp_path, "shadow", 0)
 
         # Should have some shadow pixels (not all 0 or all 1)
-        assert result.shadow is not None
-        shadow_fraction = result.shadow.sum() / result.shadow.size
+        shadow_fraction = shadow.sum() / shadow.size
         assert 0.1 < shadow_fraction < 0.9, "Expected partial shadowing"
 
-    def test_utci_postprocessing(self):
+    def test_utci_postprocessing(self, tmp_path):
         """UTCI is computed via post-processing, not by default."""
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
@@ -695,15 +717,21 @@ class TestCalculateIntegration:
         )
 
         # Calculate Tmrt (UTCI not auto-computed on per-timestep results)
-        summary = calculate(surface, [weather], location, timestep_outputs=["tmrt"])
+        calculate(
+            surface,
+            [weather],
+            location,
+            output_dir=tmp_path,
+            outputs=["tmrt"],
+        )
 
-        assert len(summary.results) == 1
-        result = summary.results[0]
+        # Tmrt should exist on disk
+        tmrt = read_timestep_geotiff(tmp_path, "tmrt", 0)
+        assert tmrt is not None
+        # UTCI not auto-computed - subdirectory should not exist
+        assert not (tmp_path / "utci").exists()
 
-        assert result.tmrt is not None
-        assert result.utci is None  # Not auto-computed - use compute_utci_grid()
-
-    def test_with_custom_human_params(self):
+    def test_with_custom_human_params(self, tmp_path):
         """Custom human parameters affect calculation."""
         dsm = np.ones((20, 20), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
@@ -716,8 +744,20 @@ class TestCalculateIntegration:
         )
 
         # Different postures should give slightly different results
-        summary_standing = calculate(surface, [weather], location, human=HumanParams(posture="standing"))
-        summary_sitting = calculate(surface, [weather], location, human=HumanParams(posture="sitting"))
+        summary_standing = calculate(
+            surface,
+            [weather],
+            location,
+            human=HumanParams(posture="standing"),
+            output_dir=tmp_path / "run1",
+        )
+        summary_sitting = calculate(
+            surface,
+            [weather],
+            location,
+            human=HumanParams(posture="sitting"),
+            output_dir=tmp_path / "run2",
+        )
 
         # Results should exist and be valid
         assert summary_standing.tmrt_mean is not None
@@ -795,7 +835,7 @@ class TestTiledProcessing:
         assert len(tiles) == 1
         assert tiles[0].core_shape == (30, 30)
 
-    def test_tiled_vs_nontiled_parity(self):
+    def test_tiled_vs_nontiled_parity(self, tmp_path):
         """Tiled calculation produces same results as non-tiled."""
         # Create a test DSM with a building
         dsm = np.zeros((60, 60), dtype=np.float32)
@@ -811,17 +851,24 @@ class TestTiledProcessing:
         )
 
         # Run both methods (UTCI/PET not auto-computed in new API)
-        summary_nontiled = calculate(surface, [weather], location, timestep_outputs=["tmrt", "shadow"])
+        calculate(
+            surface,
+            [weather],
+            location,
+            output_dir=tmp_path,
+            outputs=["tmrt", "shadow"],
+        )
         result_tiled = _calculate_tiled(surface, location, weather, tile_size=256)
 
-        assert len(summary_nontiled.results) == 1
-        result_nontiled = summary_nontiled.results[0]
+        # Read non-tiled results from disk
+        tmrt_nontiled = read_timestep_geotiff(tmp_path, "tmrt", 0)
+        shadow_nontiled = read_timestep_geotiff(tmp_path, "shadow", 0)
 
         # Compare Tmrt
-        valid = np.isfinite(result_nontiled.tmrt) & np.isfinite(result_tiled.tmrt)
+        valid = np.isfinite(tmrt_nontiled) & np.isfinite(result_tiled.tmrt)
         assert valid.sum() > 0, "No valid pixels to compare"
 
-        diff = np.abs(result_tiled.tmrt[valid] - result_nontiled.tmrt[valid])
+        diff = np.abs(result_tiled.tmrt[valid] - tmrt_nontiled[valid])
         mean_diff = diff.mean()
         max_diff = diff.max()
 
@@ -830,8 +877,7 @@ class TestTiledProcessing:
 
         # Compare shadow (should be identical)
         assert result_tiled.shadow is not None
-        assert result_nontiled.shadow is not None
-        shadow_match = np.allclose(result_tiled.shadow, result_nontiled.shadow, equal_nan=True)
+        shadow_match = np.allclose(result_tiled.shadow, shadow_nontiled, equal_nan=True)
         assert shadow_match, "Shadow grids differ between tiled and non-tiled"
 
     def test_calculate_tiled_with_building(self):
