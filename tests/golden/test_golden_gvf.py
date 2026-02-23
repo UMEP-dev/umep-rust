@@ -16,10 +16,11 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from scipy import ndimage
-from solweig.constants import SBC
-from solweig.rustalgos import gvf as gvf_module
-from solweig.rustalgos import shadowing
+
+ndimage = pytest.importorskip("scipy.ndimage", reason="scipy required for golden GVF tests")
+from solweig.constants import SBC  # noqa: E402
+from solweig.rustalgos import gvf as gvf_module  # noqa: E402
+from solweig.rustalgos import shadowing  # noqa: E402
 
 pytestmark = pytest.mark.slow
 
