@@ -71,24 +71,26 @@ include = ["LICENSE"]
 packages = ["solweig"]
 
 [dependency-groups]
-dev = [
+test = [
     "pytest>=7.2.0",
     "pandas-stubs>=1.5.2.221213",
     "memory-profiler>=0.61.0",
+    "umep>=0.0.1a18",             # Cross-checking tests against reference implementation
+    "scipy>=1.13.0",              # Golden tests (ndimage)
+    # Full optional dependencies needed for test coverage
+    "geopandas>=1.0.1", # POI/WOI point-of-interest analysis
+    "rasterio>=1.3.0",  # Fast raster I/O (falls back to GDAL)
+    "tqdm>=4.67.1",     # Terminal progress bars
+    "pillow>=9.0.0",    # Preview PNG generation for GeoTIFFs
+]
+dev = [
     "jupyterlab>=3.5.2",
     "jupyter>=1.0.0",
     "maturin>=1.8.3",
     "pip>=23.2",
     "ruff>=0.5.1",
     "poethepoet>=0.29.0",
-    "umep>=0.0.1a18",             # For cross-checking tests against reference implementation
     "ty>=0.0.12",
-    # Include full optional dependencies for dev/testing
-    "geopandas>=1.0.1",  # POI/WOI point-of-interest analysis
-    "rasterio>=1.3.0",   # Fast raster I/O (falls back to GDAL)
-    "tqdm>=4.67.1",      # Terminal progress bars
-    "pillow>=9.0.0",     # Preview PNG generation for GeoTIFFs
-    "scipy>=1.13.0",     # Golden tests (ndimage)
     "pre-commit>=4.3.0",
     # Documentation
     "mkdocs>=1.6.0",
