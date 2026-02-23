@@ -180,6 +180,9 @@ class TestRasterIO:
         import importlib
         import sys
 
+        # Skip if rasterio is not available
+        pytest.importorskip("rasterio", reason="rasterio not available")
+
         from solweig import _compat
 
         # Ensure environment variable is not set
