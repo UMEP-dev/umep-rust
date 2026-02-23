@@ -42,6 +42,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # Full installation with all features (recommended for standalone use)
+# uv sync --extra full
 full = [
     "geopandas>=1.0.1", # POI/WOI point-of-interest analysis
     "rasterio>=1.3.0",  # Fast raster I/O (pip-installable, falls back to GDAL in QGIS)
