@@ -19,7 +19,6 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
-from affine import Affine as AffineClass
 
 from .. import io
 from .. import walls as walls_module
@@ -101,8 +100,8 @@ def _save_svfs_zip(svf_data: SvfArrays, svf_cache_dir: Path, aligned_rasters: di
     }
 
     # Convert Affine to GDAL geotransform list if needed
-    if isinstance(geotransform, AffineClass):
-        geotransform = [geotransform.c, geotransform.a, geotransform.b, geotransform.f, geotransform.d, geotransform.e]
+    if hasattr(geotransform, "to_gdal"):
+        geotransform = list(geotransform.to_gdal())
 
     svf_zip_path = svf_cache_dir / "svfs.zip"
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -1121,8 +1120,6 @@ class SurfaceData:
         Returns:
             SurfaceData instance with loaded terrain and preprocessing data.
         """
-        from affine import Affine as AffineClass
-
         # Create SurfaceData instance
         surface_data = cls(
             dsm=aligned_rasters["dsm_arr"],
@@ -1143,7 +1140,7 @@ class SurfaceData:
 
         # Store geotransform and CRS for later export
         dsm_transform = aligned_rasters["dsm_transform"]
-        if isinstance(dsm_transform, AffineClass):
+        if hasattr(dsm_transform, "to_gdal"):
             surface_data._geotransform = list(dsm_transform.to_gdal())
         else:
             surface_data._geotransform = dsm_transform
@@ -1192,7 +1189,7 @@ class SurfaceData:
         io.save_raster(
             str(resampled_dsm_path),
             aligned_rasters["dsm_arr"],
-            list(dsm_transform.to_gdal()) if isinstance(dsm_transform, AffineClass) else dsm_transform,
+            list(dsm_transform.to_gdal()) if hasattr(dsm_transform, "to_gdal") else dsm_transform,
             aligned_rasters["dsm_crs"],
         )
 

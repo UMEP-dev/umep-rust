@@ -169,7 +169,7 @@ def resample_to_grid(
     target_pixel_size: float,
     method: str = "bilinear",
     src_crs: str | None = None,
-) -> tuple[NDArray, Affine]:
+) -> tuple[NDArray, list[float] | Affine]:
     """
     Resample array to match target grid specification.
 
@@ -186,8 +186,6 @@ def resample_to_grid(
     Returns:
         Tuple of (resampled_array, target_transform as Affine)
     """
-    from affine import Affine as AffineClass
-
     minx, miny, maxx, maxy = target_bbox
 
     # Calculate target dimensions
@@ -195,6 +193,7 @@ def resample_to_grid(
     height = int(np.round((maxy - miny) / target_pixel_size))
 
     if RASTERIO_AVAILABLE:
+        from affine import Affine as AffineClass
         from rasterio.transform import from_bounds
         from rasterio.warp import Resampling, reproject
 
@@ -273,10 +272,7 @@ def resample_to_grid(
         src_ds = None
         dst_ds = None
 
-        # Create Affine transform for return value
-        target_transform = AffineClass.from_gdal(*target_gt)
-
-        return destination, target_transform
+        return destination, target_gt
 
     else:
         raise ImportError(
