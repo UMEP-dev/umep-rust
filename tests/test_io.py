@@ -138,7 +138,7 @@ DATA PERIODS,1,1,Data,Sunday, 1/ 1,12/31
 
     def test_to_dataframe_converts_when_pandas_available(self, epw_file):
         """Test that to_dataframe() converts to pandas when available."""
-        import pandas as pd
+        pd = pytest.importorskip("pandas", reason="pandas not available")
 
         df, _ = io.read_epw(epw_file)
         pdf = df.to_dataframe()
