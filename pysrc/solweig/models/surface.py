@@ -887,6 +887,13 @@ class SurfaceData:
                 if shadow_data is not None:
                     result["shadow_data"] = shadow_data
                     logger.info("  ✓ Existing shadow matrices found (anisotropic sky enabled)")
+                else:
+                    # SVFs loaded but no shadow matrices (e.g. old UMEP zip without
+                    # shadow data).  Recompute from scratch so that shadow matrices
+                    # are generated alongside SVFs — required for anisotropic sky.
+                    logger.info("  → Shadow matrices not found alongside SVFs — will recompute to generate them")
+                    result["svf_data"] = None
+                    result["compute_svf"] = True
             else:
                 logger.info(f"  → SVF directory provided but no SVF files found: {svf_path}")
                 logger.info("  → SVF will be computed and cached")
@@ -919,6 +926,12 @@ class SurfaceData:
                     if shadow_data is not None:
                         result["shadow_data"] = shadow_data
                         logger.info("  ✓ Shadow matrices found (anisotropic sky enabled)")
+                    else:
+                        logger.info(
+                            "  → Shadow matrices not found in working_dir cache — will recompute to generate them"
+                        )
+                        result["svf_data"] = None
+                        result["compute_svf"] = True
                 else:
                     # No cached SVF - will compute and cache
                     logger.info("  → No SVF found in working_dir - will compute and cache")

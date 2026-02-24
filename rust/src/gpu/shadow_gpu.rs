@@ -1317,7 +1317,12 @@ impl ShadowGpuContext {
             sin_azimuth: azimuth_rad.sin(),
             cos_azimuth: azimuth_rad.cos(),
             tan_azimuth: azimuth_rad.tan(),
-            tan_altitude_by_scale: altitude_rad.tan() / scale,
+            // Guard: f32 tan(~90°) can return a large negative number when
+            // the f32 representation of π/2 slightly exceeds the true value.
+            // For above-horizon patches, tan must be non-negative; use abs()
+            // so the large negative becomes large positive → dz exceeds
+            // max_local_dsm_ht immediately → no shadow (physically correct).
+            tan_altitude_by_scale: altitude_rad.tan().abs() / scale,
             scale,
             max_index,
             max_local_dsm_ht,
@@ -1805,7 +1810,12 @@ impl ShadowGpuContext {
             sin_azimuth: azimuth_rad.sin(),
             cos_azimuth: azimuth_rad.cos(),
             tan_azimuth: azimuth_rad.tan(),
-            tan_altitude_by_scale: altitude_rad.tan() / scale,
+            // Guard: f32 tan(~90°) can return a large negative number when
+            // the f32 representation of π/2 slightly exceeds the true value.
+            // For above-horizon patches, tan must be non-negative; use abs()
+            // so the large negative becomes large positive → dz exceeds
+            // max_local_dsm_ht immediately → no shadow (physically correct).
+            tan_altitude_by_scale: altitude_rad.tan().abs() / scale,
             scale,
             max_index,
             max_local_dsm_ht,

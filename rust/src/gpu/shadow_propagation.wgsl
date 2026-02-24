@@ -122,7 +122,15 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
         }
         
         let dz = (ds * index) * params.tan_altitude_by_scale;
-        
+
+        // Guard: dz must be non-negative for above-horizon patches.
+        // Negative dz can occur when f32 tan(~90°) returns a large negative
+        // number due to the f32 representation of π/2 slightly exceeding
+        // the true value, flipping the sign of tan near the singularity.
+        if (dz < 0.0) {
+            break;
+        }
+
         // Check if dz exceeds maximum height
         if (dz > params.max_local_dsm_ht) {
             break;

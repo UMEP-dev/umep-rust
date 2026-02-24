@@ -994,6 +994,20 @@ pub fn compute_timestep(
 
             let ground_dur = t_ground.elapsed();
 
+            // At night (sun below horizon), UMEP Python zeros Tgwall and Tg.
+            // The sinusoidal model keeps producing non-zero values after sunrise
+            // (since dectime > snup_frac even after sunset), but UMEP's runner
+            // explicitly overrides them to zero when altitude <= 0.
+            let ground = if !weather.is_daytime {
+                GroundTempResult {
+                    tg: Array2::<f32>::zeros(ground.tg.dim()),
+                    tg_wall: 0.0,
+                    ci_tg: ground.ci_tg,
+                }
+            } else {
+                ground
+            };
+
             // ── Step 3: GVF ─────────────────────────────────────────────────────
             let t_gvf = Instant::now();
             let first = {

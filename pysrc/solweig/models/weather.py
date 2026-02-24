@@ -391,7 +391,11 @@ class Weather:
                 )
                 _, self.clearness_index, _, _, _ = result
             else:
-                self.clearness_index = 0.0
+                # Night/no-radiation: CI is undefined.  Use 1.0 ("clear")
+                # so the Ldown cloud-correction branch (ci < 0.95) is NOT
+                # triggered — otherwise esky is replaced by 1.0 (blackbody)
+                # and nighttime Ldown becomes SBC·Ta⁴ regardless of SVF.
+                self.clearness_index = 1.0
         elif self.sun_altitude > 0 and self.global_rad > 0:
             # Compute clearness index
             zen_rad = self.sun_zenith * (np.pi / 180.0)
@@ -415,7 +419,9 @@ class Weather:
             # Night or no radiation
             self.direct_rad = 0.0
             self.diffuse_rad = self.global_rad
-            self.clearness_index = 0.0
+            # CI is undefined at night.  Use 1.0 ("clear") so the Ldown
+            # cloud-correction (ci < 0.95) is not triggered — see above.
+            self.clearness_index = 1.0
 
         self._derived_computed = True
 
@@ -711,6 +717,25 @@ class Weather:
         if resample_hourly:
             rows = [r for r in rows if r["minute"] == 0]
 
+        # Auto-detect timestep from consecutive rows (default 60 min).
+        # When resample_hourly=False the data may still be hourly but with
+        # imin ≠ 0 (e.g. imin=7).  A hard-coded 10 min would give the wrong
+        # half-timestep offset for sun position, so we infer the actual gap.
+        if len(rows) >= 2:
+            t0 = dt(int(rows[0]["year"]), 1, 1) + timedelta(
+                days=int(rows[0]["doy"]) - 1,
+                hours=int(rows[0]["hour"]),
+                minutes=int(rows[0]["minute"]),
+            )
+            t1 = dt(int(rows[1]["year"]), 1, 1) + timedelta(
+                days=int(rows[1]["doy"]) - 1,
+                hours=int(rows[1]["hour"]),
+                minutes=int(rows[1]["minute"]),
+            )
+            detected_timestep = max((t1 - t0).total_seconds() / 60.0, 1.0)
+        else:
+            detected_timestep = 60.0
+
         # Convert to Weather objects
         weather_list = []
         for r in rows:
@@ -732,7 +757,7 @@ class Weather:
             # Wind speed (-999 means missing)
             ws = r["wind"] if r["wind"] > -998 else 1.0
 
-            timestep = 60.0 if resample_hourly else 10.0
+            timestep = detected_timestep
 
             w = cls(
                 datetime=timestamp,

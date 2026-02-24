@@ -13,6 +13,9 @@ demos/data/athens/solweig*
 tests/validation_data/
 tests/validation/montpellier/AIR.csv
 tests/validation/montpellier/AIR-Readme.pdf
+tests/validation/kronenhuset/umep_python_poi_results.csv
+tests/validation/kronenhuset/REPORT.html
+tests/validation/kronenhuset/REPORT_files/
 
 # geopackage peripheral files
 *.gpkg-*

@@ -98,6 +98,20 @@ def _precompute_weather(weather_series: list, location: Location) -> None:
         if not weather._derived_computed:
             weather.compute_derived(location)
 
+    # Step 4: Carry forward clearness index at night.
+    # UMEP Python does not recompute CI when the sun is below the horizon;
+    # instead the last daytime CI value persists into the nighttime hours.
+    # This matters for the Ldown cloud-correction: if the last daytime CI
+    # was < 0.95, the correction raises nighttime Ldown (more cloud → more
+    # downwelling longwave).  Without carry-forward, CI defaults to 1.0
+    # at night and the correction is never triggered.
+    last_daytime_ci = 1.0
+    for weather in weather_series:
+        if weather.sun_altitude > 0 and weather.global_rad > 0:
+            last_daytime_ci = weather.clearness_index
+        else:
+            weather.clearness_index = last_daytime_ci
+
 
 if TYPE_CHECKING:
     from .models import (

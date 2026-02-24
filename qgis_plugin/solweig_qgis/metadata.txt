@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=4.0
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta55
+version=0.1.0-beta56
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -45,6 +45,12 @@ deprecated=False
 supportsQt6=True
 
 changelog=
+    0.1.0-beta56
+    - Fix nighttime Ldown: CI now defaults to 1.0 (clear) instead of 0 at night; carry forward last daytime CI into nighttime hours
+    - Fix GPU SVF: guard against f32 tan(~90°) sign flip in shadow propagation shader
+    - Fix SVF recompute: fall back to recomputation when old SVF zips lack shadow matrices needed for anisotropic sky
+    - Auto-detect met file timestep instead of hard-coding 60/10 min
+    - Add Kronenhuset validation test and report (Lindberg et al. 2008)
     0.1.0-beta55
     - Adds tutorial for Bilbao; Fixes DEM vs CDSM absolute handling.
     0.1.0-beta54

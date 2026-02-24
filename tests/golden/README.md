@@ -6,10 +6,10 @@ ensure consistency and catch regressions.
 
 ## Test Summary
 
-**Total Golden Tests: 100**
+**Total Golden Tests: 130** (see [REPORT.md](REPORT.md) for quantitative comparison results)
 
 | Module | Test File | Tests | Description |
-|--------|-----------|-------|-------------|
+|--------|-----------|------:|-------------|
 | Anisotropic Sky | `test_golden_anisotropic_sky.py` | 16 | Direction-dependent sky radiation model |
 | Ground Temp | `test_golden_ground_temp.py` | 6 | TsWaveDelay thermal inertia model |
 | GVF | `test_golden_gvf.py` | 13 | Ground View Factor calculations |
@@ -19,6 +19,7 @@ ensure consistency and catch regressions.
 | SVF | `test_golden_svf.py` | 8 | Sky View Factor (total, directional, vegetation) |
 | Tmrt | `test_golden_tmrt.py` | 6 | Mean Radiant Temperature |
 | UTCI | `test_golden_utci.py` | 12 | Universal Thermal Climate Index |
+| Wall Geometry | `test_golden_wall_geometry.py` | 30 | Wall height/aspect extraction, rotation, dilation |
 | Wall Temp | `test_golden_walls.py` | 7 | Ground and wall temperature deviations |
 
 ## Covered Rust Modules
