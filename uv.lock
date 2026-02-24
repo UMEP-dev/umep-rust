@@ -2623,21 +2623,13 @@ dev = [
 ]
 qgis-compat = [
     { name = "maturin" },
-    { name = "numpy" },
-    { name = "pandas" },
-    { name = "pyproj" },
     { name = "pytest" },
-    { name = "shapely" },
 ]
 test = [
-    { name = "geopandas" },
     { name = "memory-profiler" },
     { name = "pandas-stubs" },
-    { name = "pillow" },
     { name = "pytest" },
-    { name = "rasterio" },
     { name = "scipy" },
-    { name = "tqdm" },
     { name = "umep" },
 ]
 
@@ -2651,7 +2643,7 @@ requires-dist = [
     { name = "shapely", specifier = ">=2.0.4" },
     { name = "tqdm", marker = "extra == 'full'", specifier = ">=4.67.1" },
 ]
-provides-extras = ["full", "qgis"]
+provides-extras = ["full"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2672,21 +2664,13 @@ dev = [
 ]
 qgis-compat = [
     { name = "maturin", specifier = ">=1.8.3" },
-    { name = "numpy", specifier = ">=1.26.0" },
-    { name = "pandas", specifier = ">=2.2.2" },
-    { name = "pyproj", specifier = ">=3.7.0" },
     { name = "pytest", specifier = ">=7.2.0" },
-    { name = "shapely", specifier = ">=2.0.4" },
 ]
 test = [
-    { name = "geopandas", specifier = ">=1.0.1" },
     { name = "memory-profiler", specifier = ">=0.61.0" },
     { name = "pandas-stubs", specifier = ">=1.5.2.221213" },
-    { name = "pillow", specifier = ">=9.0.0" },
     { name = "pytest", specifier = ">=7.2.0" },
-    { name = "rasterio", specifier = ">=1.3.0" },
     { name = "scipy", specifier = ">=1.13.0" },
-    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "umep", specifier = ">=0.0.1a18" },
 ]
 
