@@ -20,11 +20,8 @@ UMEP Python parity is covered separately by the golden tests (see
 ## Notes
 
 - **Ldown bias (+30–53 W/m²):** Both modes overestimate Ldown (mean bias
-  +38.8 iso, +31.3 aniso). The Jonsson
-  et al. (2006) longwave model assumes shaded walls emit at air temperature
-  and uses a sinusoidal sunlit-wall offset — both tend to overestimate wall
-  emission, especially in autumn when walls are cooler than air. The
-  anisotropic sky model reduces the bias by ~7 W/m².
+  +38.8 iso, +31.3 aniso). The anisotropic sky model reduces the bias
+  by ~7 W/m².
 
 - **Hour 16 shadow mismatch:** The model predicts shade at hour 16 while
   observations show direct sun (Kdown = 158 W/m²). At 1 m DSM resolution
