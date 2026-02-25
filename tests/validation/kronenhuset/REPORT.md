@@ -17,6 +17,20 @@ run in both **isotropic** and **anisotropic** (Perez et al. 1993) sky modes.
 UMEP Python parity is covered separately by the golden tests (see
 [tests/golden/REPORT.md](../../golden/REPORT.md)).
 
+## Notes
+
+- **Ldown bias (+30–53 W/m²):** Both modes overestimate Ldown (mean bias
+  +38.8 iso, +31.3 aniso). The Jonsson
+  et al. (2006) longwave model assumes shaded walls emit at air temperature
+  and uses a sinusoidal sunlit-wall offset — both tend to overestimate wall
+  emission, especially in autumn when walls are cooler than air. The
+  anisotropic sky model reduces the bias by ~7 W/m².
+
+- **Hour 16 shadow mismatch:** The model predicts shade at hour 16 while
+  observations show direct sun (Kdown = 158 W/m²). At 1 m DSM resolution
+  the exact sun-to-shade transition time cannot be resolved precisely. This
+  hour dominates the Kdown and Tmrt error statistics.
+
 ## Radiation Budget Comparison
 
 ### Kdown — Downwelling Shortwave (W/m²)
@@ -221,89 +235,20 @@ Computed over matched daytime observation hours. Kdown excludes hour 7
 | MAE    | Tmrt      |      4.3 |        5.7 |
 | R²     | Tmrt      |    0.482 |      0.325 |
 
-## Notes
-
-### Ldown structural bias (+30–53 W/m²)
-
-Both isotropic and anisotropic configurations overestimate Ldown by +30 to
-+53 W/m² (mean bias +38.8 iso, +31.3 aniso). This matches UMEP Python
-(mean bias +40.5), confirming it is a structural feature of the Jonsson et al.
-(2006) model, not an implementation bug.
-
-**Decomposition of the bias into three sources:**
-
-At this POI, SVF = 0.655 with no vegetation (svfveg = svfaveg = 1.0). The
-Jonsson formula sees 65.5% sky and 34.5% walls. Wall emissivity (0.9) exceeds
-clear-sky emissivity (~0.78), so replacing sky with walls always increases
-Ldown relative to an open-sky reference.
-
-1. **Wall temperature assumption (+12–20 W/m²).** The model assumes shaded
-   walls emit at air temperature. In this October scenario (max solar
-   altitude 26°, massive stone buildings), walls are 7–20°C cooler than air
-   due to thermal inertia. The model has no wall surface energy balance and
-   cannot represent this.
-
-2. **Tgwall sinusoidal model (+9–27 W/m²).** The sunlit-wall term uses
-   (Ta + Tgwall)⁴, where Tgwall is a sinusoidal offset driven by global
-   radiation. In a deep canyon at 57.7°N in October most walls are shaded,
-   but the model applies the boost to the entire (svfaveg − svf) fraction.
-
-3. **CI cloud correction at hours 15–18 (+7–29 W/m²).** Clearness index
-   drops below 0.95 in late afternoon (CI = 0.90 → 0.48), triggering a
-   blend of esky towards 1.0 (blackbody clouds). This is carried forward
-   into nighttime via CI persistence. At hour 18, the cloud correction alone
-   adds ~29 W/m² on top of the base wall-temperature bias.
-
-The paper's Ldown RMSE of 17.5 W/m² was measured over 7 days including summer
-when the wall-at-air-temperature assumption holds better. The anisotropic sky
-model reduces the bias (RMSE 32.1 vs 39.2 W/m²) by distributing sky emission
-more realistically across zenith angles.
-
-### Hour 16 shadow mismatch
-
-Both isotropic and anisotropic predict the POI is in shade at hour 16, but
-observations show Kdown = 158 W/m² (direct sun). This is inherent to the DSM
-geometry — the 1 m resolution raster cannot capture the exact moment when the
-courtyard transitions from sun to shade. This single hour dominates the Kdown
-and Tmrt error statistics.
-
-### Nighttime Ldown (hours 18–23)
-
-Producing correct nighttime Ldown required two fixes (both matching UMEP
-Python's behaviour):
-
-1. Zeroing `tg_wall` and `Tg` when the sun is below the horizon
-2. Carrying forward the last daytime clearness index into nighttime hours
-   (our code previously defaulted to CI = 1.0 at night)
-
 ## Comparison with Original Paper
 
-Lindberg et al. (2008) report validation statistics for SOLWEIG 1.0 using data
-from two Gothenburg sites (Kronenhuset and Hogsbo) over 7 clear-sky days in
-2005–2006. Their aggregate results (Table 3, all days and sites combined):
+Lindberg et al. (2008) report aggregate statistics over 7 days at two
+Gothenburg sites (~189 hours):
 
-| Component | R²   | RMSE      | n         |
-| --------- | ---- | --------- | --------- |
-| Tmrt      | 0.94 | 4.8 K     | 189 hours |
-| L↓        | 0.73 | 17.5 W/m² | 189 hours |
-| L↑        | 0.94 | 15.6 W/m² | 189 hours |
-| L (sides) | 0.92 | 48.9 W/m² | 189 hours |
+| Component | R²   | RMSE      |
+| --------- | ---- | --------- |
+| Tmrt      | 0.94 | 4.8 K     |
+| L↓        | 0.73 | 17.5 W/m² |
+| L↑        | 0.94 | 15.6 W/m² |
 
-**Important caveats when comparing with our results above:**
-
-- The paper aggregates 7 days across 2 sites (~189 matched hours); this report
-  covers 1 day at Kronenhuset only (12 hours). Single-day statistics are much
-  noisier and more sensitive to individual-hour outliers (e.g. hour 16 shadow
-  mismatch).
-- The paper uses SOLWEIG 1.0 (2008 vintage); our results use the modernised
-  Rust reimplementation of SOLWEIG 2025a. Differences in Ldown parameterisation,
-  ground temperature model, and anisotropic sky option will affect results.
-- Shortwave per-component statistics (K↓, K↑, K sides) are reported in the
-  paper but were not available from the abstract. The paper notes that shortwave
-  errors are dominated by shadow timing — consistent with our hour 16 finding.
-- The paper's Tmrt RMSE of 4.8 K is the benchmark target. Our single-day
-  Tmrt RMSE of 5.8 K (Rust isotropic) and 6.6 K (Rust anisotropic) are
-  reasonable given the single-day sample size and the hour 16 shadow outlier.
+This report covers a single day (12 hours), so statistics are noisier. Our
+Tmrt RMSE of 5.8 K (iso) / 6.6 K (aniso) is in the same range as the paper's
+4.8 K, and shortwave errors are similarly dominated by shadow timing.
 
 **Reference:** Lindberg, F., Holmer, B. & Thorsson, S. (2008). SOLWEIG 1.0 —
 Modelling spatial variations of 3D radiant fluxes and mean radiant temperature
