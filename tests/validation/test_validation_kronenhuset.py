@@ -11,11 +11,14 @@ This is the classic SOLWEIG validation site and the only one that directly
 validates the core radiation budget components (shortwave and longwave
 fluxes), not just derived quantities like Tmrt or wall temperature.
 
-Geodata includes DSM, DEM, CDSM, pre-computed wall height/aspect,
-landcover, and pre-computed SVFs — a complete SOLWEIG input set.
+Geodata (DSM, DEM, CDSM, landcover) comes from the Gothenburg demo
+directory (demos/data/Goteborg_SWEREF99_1200/). Met data, field
+measurements, and parameters are in tests/validation/kronenhuset/.
+All inputs are checked into git. Walls and SVFs are computed by
+SurfaceData.prepare().
 
 Tests are marked @pytest.mark.validation. Full-pipeline tests additionally
-require @pytest.mark.slow and external geodata in tests/validation_data/.
+require @pytest.mark.slow and the demo geodata.
 
 Reference:
     Lindberg, F., Holmer, B., & Thorsson, S. (2008). SOLWEIG 1.0 — Modelling
@@ -35,10 +38,12 @@ import pytest
 # Paths and constants
 # ---------------------------------------------------------------------------
 
-MEASUREMENTS_CSV = Path(__file__).parent / "kronenhuset" / "measurements_kr.csv"
-UMEP_PYTHON_CSV = Path(__file__).parent / "kronenhuset" / "umep_python_poi_results.csv"
-GEODATA_DIR = Path(__file__).parent.parent / "validation_data" / "kronenhuset"
-KR_PARAMS_JSON = GEODATA_DIR / "parametersforsolweig_KR.json"
+KR_DIR = Path(__file__).parent / "kronenhuset"
+MEASUREMENTS_CSV = KR_DIR / "measurements_kr.csv"
+KR_PARAMS_JSON = KR_DIR / "parametersforsolweig_KR.json"
+
+# Shared rasters live in the demos directory (checked into git).
+DEMO_DIR = Path(__file__).parent.parent.parent / "demos" / "data" / "Goteborg_SWEREF99_1200"
 
 # POI pixel in the DSM grid (row, col) — Kronenhuset courtyard
 POI_ROW, POI_COL = 51, 117
@@ -70,6 +75,9 @@ def load_kr_measurements() -> list[dict]:
         for row in reader:
             rows.append({k: float(v) if v else float("nan") for k, v in row.items()})
     return rows
+
+
+UMEP_PYTHON_CSV = KR_DIR / "umep_python_poi_results.csv"
 
 
 def load_umep_python_poi() -> dict[int, dict]:
@@ -129,31 +137,30 @@ class TestDataLoading:
 # ---------------------------------------------------------------------------
 
 
-_geodata_present = GEODATA_DIR.exists() and (GEODATA_DIR / "DSM_KR.tif").exists()
+_geodata_present = DEMO_DIR.exists() and (DEMO_DIR / "DSM_KRbig.tif").exists()
 
 
 class TestFullPipelineValidation:
     """Run the full SOLWEIG pipeline on the Kronenhuset site and validate
     radiation outputs and Tmrt against the 2005 field measurements.
 
-    Requires geodata in tests/validation_data/kronenhuset/ (gitignored).
+    Uses shared demo rasters from demos/data/Goteborg_SWEREF99_1200/.
+    Met data and parameters from tests/validation/kronenhuset/.
     """
 
     @pytest.fixture
     def surface(self, tmp_path):
-        """Load SurfaceData from the Kronenhuset GeoTIFFs."""
+        """Load SurfaceData from the Gothenburg demo rasters.
+
+        Walls and SVFs are computed by prepare() and cached in working_dir.
+        """
         import solweig
 
-        # SVFs are in GEODATA_DIR/svfs.zip — the loader finds svfs.zip
-        # inside the svf_dir and loads it directly (no extraction needed).
         surface = solweig.SurfaceData.prepare(
-            dsm=str(GEODATA_DIR / "DSM_KR.tif"),
-            dem=str(GEODATA_DIR / "DEM_KR.tif"),
-            cdsm=str(GEODATA_DIR / "CDSM_KR.asc"),
-            wall_height=str(GEODATA_DIR / "heightnew_KR.tif"),
-            wall_aspect=str(GEODATA_DIR / "aspectnew_KR.tif"),
-            land_cover=str(GEODATA_DIR / "landcover_KR_update.asc"),
-            svf_dir=str(GEODATA_DIR),
+            dsm=str(DEMO_DIR / "DSM_KRbig.tif"),
+            dem=str(DEMO_DIR / "DEM_KRbig.tif"),
+            cdsm=str(DEMO_DIR / "CDSM_KRbig.asc"),
+            land_cover=str(DEMO_DIR / "landcover.tif"),
             working_dir=str(tmp_path / "kr_work"),
         )
         return surface
@@ -170,7 +177,7 @@ class TestFullPipelineValidation:
 
         # The KR met file has imin=7 for all rows (not on-the-hour),
         # so we disable the default hourly resampling filter.
-        return Weather.from_umep_met(GEODATA_DIR / "MetFile_Prepared.txt", resample_hourly=False)
+        return Weather.from_umep_met(KR_DIR / "MetFile_Prepared.txt", resample_hourly=False)
 
     @pytest.fixture
     def kr_materials(self):
