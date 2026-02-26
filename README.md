@@ -43,12 +43,6 @@ The computation pipeline is implemented in Rust and exposed to Python via PyO3. 
 pip install solweig
 ```
 
-For all features (rasterio, geopandas, progress bars):
-
-```bash
-pip install solweig[full]
-```
-
 **Requirements:** Python 3.11–3.13. Pre-built wheels are available for Linux, macOS, and Windows.
 
 ### From source
