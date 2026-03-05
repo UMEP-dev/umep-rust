@@ -95,7 +95,9 @@ nav:
       - Data Classes: api/dataclasses.md
       - I/O Functions: api/io.md
       - Errors: api/errors.md
-  - Physics: physics/index.md
+  - Physics:
+      - Overview: physics/index.md
+      - Validation: physics/validation.md
   - Development:
       - Contributing: development/contributing.md
       - Architecture: development/architecture.md
