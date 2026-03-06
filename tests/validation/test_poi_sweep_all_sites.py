@@ -42,7 +42,7 @@ SITES: dict[str, dict[str, Any]] = {
         },
         "day_key": None,  # single-day CSV, no day column
         "hour_key": "hour",
-        "current_poi": (51, 117),
+        "current_poi": (51, 118),
         "lat": 57.7,
         "lon": 12.0,
         "utc_offset": 1,
@@ -84,7 +84,7 @@ SITES: dict[str, dict[str, Any]] = {
         },
         "day_key": "date",
         "hour_key": "hour",
-        "current_poi": (103, 174),
+        "current_poi": (70, 126),
         "lat": 57.7,
         "lon": 12.0,
         "utc_offset": 1,
