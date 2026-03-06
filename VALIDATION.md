@@ -48,7 +48,7 @@ automatically in CI on every push and PR.
 
 ---
 
-## Results — v0.1.0b59 (2026-03-06)
+## Results — v0.1.0b60 (2026-03-06)
 
 ### Summary
 
@@ -264,6 +264,7 @@ pytest tests/validation/test_poi_sweep_all_sites.py -v -s
 | 0.1.0b57 | 2026-03-05 |     3 |     3.4–17.7 °C | Initial 3-site validation. POI sweep analysis added for all sites. Ldown wall-temperature bias documented. |
 | 0.1.0b58 | 2026-03-06 |     3 |     3.4–17.7 °C | Add validation CI job. Remove non-reproducible Kolumbus/Montpellier tests. Clarify POI sweep documentation. |
 | 0.1.0b59 | 2026-03-06 |     3 |     4.0–17.7 °C | Move GVC POI to courtyard cluster (70, 126). Shift Kronenhuset POI +1 col to match shadow profile. Move validation report to repo root. |
+| 0.1.0b60 | 2026-03-06 |     3 |     4.0–17.7 °C | GPU GVF compute shader (wgpu). Cached thermal accumulation offloaded to GPU with automatic CPU fallback.                                                       |
 
 ---
 

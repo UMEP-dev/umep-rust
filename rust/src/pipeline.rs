@@ -14,6 +14,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::ground::{compute_ground_temperature_pure, ts_wave_delay_batch_pure, GroundTempResult};
 use crate::gvf::{gvf_calc_pure, gvf_calc_with_cache, GvfResultPure};
+#[cfg(feature = "gpu")]
+use crate::gvf::gvf_calc_with_cache_gpu;
 use crate::gvf_geometry::{precompute_gvf_geometry, GvfGeometryCache};
 use crate::shadowing::{calculate_shadows_rust, ShadowingResultRust};
 use crate::sky::{anisotropic_sky_pure, cylindric_wedge_pure_masked};
@@ -22,6 +24,8 @@ use crate::vegetation::{kside_veg_isotropic_pure, lside_veg_pure};
 
 #[cfg(feature = "gpu")]
 use crate::gpu::AnisoGpuContext;
+#[cfg(feature = "gpu")]
+use crate::gpu::GvfGpuContext;
 
 use std::time::Instant;
 
@@ -86,6 +90,55 @@ pub fn disable_aniso_gpu() {
 /// Check if GPU acceleration is enabled for anisotropic sky
 pub fn is_aniso_gpu_enabled() -> bool {
     ANISO_GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+// ── GPU GVF context (lazy-initialized, shares device with shadows) ──────
+
+#[cfg(feature = "gpu")]
+static GVF_GPU_CONTEXT: OnceLock<Option<GvfGpuContext>> = OnceLock::new();
+
+#[cfg(feature = "gpu")]
+static GVF_GPU_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+#[cfg(feature = "gpu")]
+fn get_gvf_gpu_context() -> Option<&'static GvfGpuContext> {
+    if !GVF_GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    GVF_GPU_CONTEXT
+        .get_or_init(|| {
+            let shadow_ctx = crate::shadowing::get_gpu_context()?;
+            let device = shadow_ctx.device.clone();
+            let queue = shadow_ctx.queue.clone();
+            let ctx = GvfGpuContext::new(device, queue);
+            eprintln!("[GPU] GVF GPU context initialized");
+            Some(ctx)
+        })
+        .as_ref()
+}
+
+#[cfg(feature = "gpu")]
+#[pyfunction]
+/// Enable GPU acceleration for GVF computation
+pub fn enable_gvf_gpu() {
+    GVF_GPU_ENABLED.store(true, std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[GPU] GVF GPU acceleration enabled");
+}
+
+#[cfg(feature = "gpu")]
+#[pyfunction]
+/// Disable GPU acceleration for GVF computation (CPU fallback)
+pub fn disable_gvf_gpu() {
+    GVF_GPU_ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);
+    eprintln!("[GPU] GVF GPU acceleration disabled");
+}
+
+#[cfg(feature = "gpu")]
+#[pyfunction]
+/// Check if GPU acceleration is enabled for GVF
+pub fn is_gvf_gpu_enabled() -> bool {
+    GVF_GPU_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 // ── Input structs (created once in Python, passed by reference) ───────────
@@ -785,6 +838,20 @@ pub fn precompute_gvf_cache(
         wall_albedo,
     );
 
+    // Upload geometry to GPU if available
+    #[cfg(feature = "gpu")]
+    {
+        if let Some(ctx) = get_gvf_gpu_context() {
+            match ctx.upload_geometry(&cache) {
+                Ok(()) => eprintln!("[GPU] GVF geometry uploaded to GPU"),
+                Err(e) => {
+                    eprintln!("[GPU] GVF geometry upload failed, falling back to CPU: {}", e);
+                    GVF_GPU_ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        }
+    }
+
     Ok(PyGvfGeometryCache { inner: cache })
 }
 
@@ -1022,7 +1089,72 @@ pub fn compute_timestep(
 
             let gvf: GvfResultPure = if config.has_walls {
                 if let Some(cache) = gvf_cache_inner {
-                    // Use cached geometry — thermal-only pass
+                    // Try GPU first, fall back to CPU
+                    #[cfg(feature = "gpu")]
+                    {
+                        if let Some(ctx) = get_gvf_gpu_context() {
+                            match gvf_calc_with_cache_gpu(
+                                ctx,
+                                cache,
+                                wallsun.view(),
+                                buildings_v,
+                                shadow_f32.view(),
+                                ground.tg.view(),
+                                ground.tg_wall,
+                                weather.ta,
+                                emis_grid_v,
+                                config.emis_wall,
+                                alb_grid_v,
+                                SBC,
+                                config.albedo_wall,
+                                weather.ta,
+                                lc_grid_v,
+                                lc_grid_v.is_some(),
+                            ) {
+                                Ok(result) => result,
+                                Err(e) => {
+                                    eprintln!("[GPU] GVF GPU dispatch failed, falling back to CPU: {}", e);
+                                    GVF_GPU_ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);
+                                    gvf_calc_with_cache(
+                                        cache,
+                                        wallsun.view(),
+                                        buildings_v,
+                                        shadow_f32.view(),
+                                        ground.tg.view(),
+                                        ground.tg_wall,
+                                        weather.ta,
+                                        emis_grid_v,
+                                        config.emis_wall,
+                                        alb_grid_v,
+                                        SBC,
+                                        config.albedo_wall,
+                                        weather.ta,
+                                        lc_grid_v,
+                                        lc_grid_v.is_some(),
+                                    )
+                                }
+                            }
+                        } else {
+                            gvf_calc_with_cache(
+                                cache,
+                                wallsun.view(),
+                                buildings_v,
+                                shadow_f32.view(),
+                                ground.tg.view(),
+                                ground.tg_wall,
+                                weather.ta,
+                                emis_grid_v,
+                                config.emis_wall,
+                                alb_grid_v,
+                                SBC,
+                                config.albedo_wall,
+                                weather.ta,
+                                lc_grid_v,
+                                lc_grid_v.is_some(),
+                            )
+                        }
+                    }
+                    #[cfg(not(feature = "gpu"))]
                     gvf_calc_with_cache(
                         cache,
                         wallsun.view(),

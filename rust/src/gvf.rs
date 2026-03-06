@@ -532,6 +532,123 @@ pub(crate) fn gvf_calc_with_cache(
     }
 }
 
+/// GPU-accelerated cached GVF thermal accumulation.
+///
+/// Prepares the same input arrays as `gvf_calc_with_cache`, dispatches to GPU,
+/// and applies scaling/baselines to the raw GPU output.
+#[cfg(feature = "gpu")]
+#[allow(clippy::too_many_arguments)]
+#[allow(non_snake_case)]
+pub(crate) fn gvf_calc_with_cache_gpu(
+    gpu_ctx: &crate::gpu::GvfGpuContext,
+    cache: &crate::gvf_geometry::GvfGeometryCache,
+    wallsun: ArrayView2<f32>,
+    buildings: ArrayView2<f32>,
+    shadow: ArrayView2<f32>,
+    tg: ArrayView2<f32>,
+    tgwall: f32,
+    ta: f32,
+    emis_grid: ArrayView2<f32>,
+    ewall: f32,
+    alb_grid: ArrayView2<f32>,
+    sbc: f32,
+    albedo_b: f32,
+    twater: f32,
+    lc_grid: Option<ArrayView2<f32>>,
+    landcover: bool,
+) -> Result<GvfResultPure, String> {
+    let num_azimuths = cache.azimuths.len() as f32;
+    let num_azimuths_half = num_azimuths / 2.0;
+    let ta_k = ta + 273.15;
+    let ta_k_pow4 = ta_k.powi(4);
+
+    // Prepare inputs (same as CPU path)
+    let mut sunwall_mask = wallsun.to_owned();
+    sunwall_mask.mapv_inplace(|x| if x > 0. { 1. } else { x });
+
+    let lup = Zip::from(emis_grid)
+        .and(tg)
+        .and(shadow)
+        .map_collect(|&emis, &tg, &sh| {
+            sbc * emis * (tg * sh + ta_k).powi(4) - sbc * emis * ta_k_pow4
+        });
+    let albshadow = &alb_grid * &shadow;
+
+    let mut tg_for_lup_final = tg.to_owned();
+    if landcover {
+        if let Some(lc_grid) = lc_grid {
+            Zip::from(&mut tg_for_lup_final)
+                .and(lc_grid)
+                .for_each(|tg, &lc| {
+                    if lc == 3. {
+                        *tg = twater - ta;
+                    }
+                });
+        }
+    }
+    let lup_final = Zip::from(emis_grid)
+        .and(&tg_for_lup_final)
+        .and(shadow)
+        .map_collect(|&emis, &tg, &sh| {
+            sbc * emis * (tg * sh + ta_k).powi(4) - sbc * emis * ta_k_pow4
+        });
+    let buildings_inv = buildings.mapv(|x| 1.0 - x);
+    let lup_base = &lup_final * &buildings_inv;
+    let alb_base = &alb_grid * &buildings_inv * &shadow;
+    let lwall = sbc * ewall * (tgwall + ta_k).powi(4) - sbc * ewall * ta_k_pow4;
+
+    let first = cache.first;
+    let second = cache.second;
+
+    // GPU dispatch
+    let pending = gpu_ctx.dispatch_begin(
+        lup.view(),
+        albshadow.view(),
+        sunwall_mask.view(),
+        first,
+        second,
+        lwall,
+        albedo_b,
+    )?;
+    let gpu_result = gpu_ctx.dispatch_end(pending)?;
+
+    // Apply scaling and baselines (same as CPU post-loop)
+    let scale_all = 1.0 / num_azimuths;
+    let scale_half = 1.0 / num_azimuths_half;
+    let ambient_lup = emis_grid.mapv(|emis| sbc * emis * ta_k_pow4);
+
+    let gvf_lup = gpu_result.lup.mapv(|v| v * scale_all) + &lup_base + &ambient_lup;
+    let gvfalb = gpu_result.alb.mapv(|v| v * scale_all) + &alb_base;
+    let gvf_lup_e = gpu_result.lup_e.mapv(|v| v * scale_half) + &lup_base + &ambient_lup;
+    let gvfalb_e = gpu_result.alb_e.mapv(|v| v * scale_half) + &alb_base;
+    let gvf_lup_s = gpu_result.lup_s.mapv(|v| v * scale_half) + &lup_base + &ambient_lup;
+    let gvfalb_s = gpu_result.alb_s.mapv(|v| v * scale_half) + &alb_base;
+    let gvf_lup_w = gpu_result.lup_w.mapv(|v| v * scale_half) + &lup_base + &ambient_lup;
+    let gvfalb_w = gpu_result.alb_w.mapv(|v| v * scale_half) + &alb_base;
+    let gvf_lup_n = gpu_result.lup_n.mapv(|v| v * scale_half) + &lup_base + &ambient_lup;
+    let gvfalb_n = gpu_result.alb_n.mapv(|v| v * scale_half) + &alb_base;
+
+    Ok(GvfResultPure {
+        gvf_lup,
+        gvfalb,
+        gvfalbnosh: None,
+        gvf_lup_e,
+        gvfalb_e,
+        gvfalbnosh_e: None,
+        gvf_lup_s,
+        gvfalb_s,
+        gvfalbnosh_s: None,
+        gvf_lup_w,
+        gvfalb_w,
+        gvfalbnosh_w: None,
+        gvf_lup_n,
+        gvfalb_n,
+        gvfalbnosh_n: None,
+        gvf_sum: None,
+        gvf_norm: None,
+    })
+}
+
 /// Compute Ground View Factor (GVF) for upwelling longwave and albedo components.
 ///
 /// GVF represents how much a person "sees" the ground and walls from a given height.
