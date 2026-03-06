@@ -210,21 +210,23 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis.
         feedback.setProgressText("Downloading from PVGIS...")
         feedback.setProgress(10)
 
-        # Use QgsNetworkAccessManager instead of urllib to respect QGIS proxy settings
-        from qgis.core import QgsNetworkAccessManager
+        from qgis.core import QgsBlockingNetworkRequest
         from qgis.PyQt.QtCore import QUrl
         from qgis.PyQt.QtNetwork import QNetworkRequest
 
         url = f"https://re.jrc.ec.europa.eu/api/v5_3/tmy?lat={latitude}&lon={longitude}&outputformat=epw"
-        request = QNetworkRequest(QUrl(url))
-        reply = QgsNetworkAccessManager.instance().blockingGet(request)
+        req = QgsBlockingNetworkRequest()
+        err = req.get(QNetworkRequest(QUrl(url)))
 
-        # Check for network errors
-        error_code = reply.error()
-        if error_code != 0:
-            error_msg = reply.errorString()
-            raise QgsProcessingException(f"Cannot reach PVGIS server. Check your internet connection.\n{error_msg}")
+        if err != QgsBlockingNetworkRequest.NoError:
+            error_msg = req.errorMessage()
+            raise QgsProcessingException(
+                f"PVGIS download failed: {error_msg}\n"
+                f"URL: {url}\n"
+                "Check your internet connection and QGIS proxy settings."
+            )
 
+        reply = req.reply()
         http_status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
         data = bytes(reply.content())
 
