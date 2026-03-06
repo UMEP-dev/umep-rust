@@ -376,33 +376,17 @@ class TestCalculateTimeseries:
 
     def test_invalid_tile_workers_raises_from_config(self, flat_surface, location, tmp_path, monkeypatch):
         """Invalid tile_workers in ModelConfig raises ValueError."""
-        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
         monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
-        config = ModelConfig(tile_workers=0)
 
         with pytest.raises(ValueError, match="tile_workers must be >= 1"):
-            calculate(
-                flat_surface,
-                weather_series,
-                location=location,
-                output_dir=tmp_path,
-                config=config,
-            )
+            ModelConfig(tile_workers=0)
 
     def test_invalid_tile_queue_depth_raises_from_config(self, flat_surface, location, tmp_path, monkeypatch):
         """Invalid tile_queue_depth in ModelConfig raises ValueError."""
-        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
         monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
-        config = ModelConfig(tile_queue_depth=-1)
 
         with pytest.raises(ValueError, match="tile_queue_depth must be >= 0"):
-            calculate(
-                flat_surface,
-                weather_series,
-                location=location,
-                output_dir=tmp_path,
-                config=config,
-            )
+            ModelConfig(tile_queue_depth=-1)
 
 
 class TestModelConfigTilingRuntimeSerialization:

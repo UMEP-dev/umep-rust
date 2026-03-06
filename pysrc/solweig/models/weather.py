@@ -134,19 +134,19 @@ class Location:
             raise ImportError("pyproj is required for CRS extraction. Install with: pip install pyproj") from err
 
         # Check if geotransform and CRS are available
-        if not hasattr(surface, "_geotransform") or surface._geotransform is None:
+        if surface.geotransform is None:
             raise ValueError(
                 "Surface data has no geotransform metadata.\n"
                 "Load surface with SurfaceData.from_geotiff() or provide location manually."
             )
-        if not hasattr(surface, "_crs_wkt") or surface._crs_wkt is None:
+        if surface.crs is None:
             raise ValueError(
                 "Surface data has no CRS metadata.\n"
                 "Provide location manually: Location(latitude=X, longitude=Y, utc_offset=0)"
             )
 
-        transform = surface._geotransform
-        crs_wkt = surface._crs_wkt
+        transform = surface.geotransform
+        crs_wkt = surface.crs
         rows, cols = surface.dsm.shape
 
         # Get center point from geotransform
@@ -283,6 +283,16 @@ class Weather:
             raise ValueError(f"Relative humidity must be in [0, 100], got {self.rh}")
         if self.global_rad < 0:
             raise ValueError(f"Global radiation must be >= 0, got {self.global_rad}")
+        if self.ws < 0:
+            raise ValueError(f"Wind speed must be >= 0, got {self.ws}")
+        if not 300 <= self.pressure <= 1100:
+            raise ValueError(f"Pressure must be in [300, 1100] hPa, got {self.pressure}")
+        if self.timestep_minutes <= 0:
+            raise ValueError(f"timestep_minutes must be > 0, got {self.timestep_minutes}")
+        if self.measured_direct_rad is not None and self.measured_direct_rad < 0:
+            raise ValueError(f"measured_direct_rad must be >= 0, got {self.measured_direct_rad}")
+        if self.measured_diffuse_rad is not None and self.measured_diffuse_rad < 0:
+            raise ValueError(f"measured_diffuse_rad must be >= 0, got {self.measured_diffuse_rad}")
 
     def compute_derived(self, location: Location) -> None:
         """

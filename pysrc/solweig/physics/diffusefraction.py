@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import numpy as np
 
 
-def diffusefraction(radG, altitude, Kt, Ta, RH):
+def diffusefraction(radG: float, altitude: float, Kt: float, Ta: float, RH: float) -> tuple[float, float]:
     """
     This function estimates diffuse and directbeam radiation according to
     Reindl et al (1990), Solar Energy 45:1

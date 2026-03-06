@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import numpy as np
 
 
-def daylen(DOY, XLAT):
+def daylen(DOY: int, XLAT: float) -> tuple[float, float, float, float]:
     # Calculation of declination of sun (Eqn. 16). Amplitude= +/-23.45
     # deg. Minimum = DOY 355 (DEC 21), maximum = DOY 172.5 (JUN 21/22).
     # Sun angles.  SOC limited for latitudes above polar circles.

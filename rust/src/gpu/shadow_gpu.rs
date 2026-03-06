@@ -1577,7 +1577,37 @@ impl ShadowGpuContext {
             }
         }
 
-        // Create SVF-specific buffers
+        // Reuse SVF accumulation buffers when dimensions and veg config match.
+        // This avoids GPU buffer allocation overhead in tiled mode where all tiles
+        // have the same dimensions.
+        let n_pack = (total_patches + 7) / 8;
+        let svf_buffers_reusable = buffers.svf_data_buffer.is_some()
+            && buffers.svf_has_veg == has_veg
+            && buffers.svf_num_arrays == num_arrays
+            && buffers.shadow_u8_n_pack == n_pack;
+
+        if svf_buffers_reusable {
+            // Buffers exist with matching config — just clear data and bitpack buffers
+            let svf_data_buf = buffers.svf_data_buffer.as_ref().unwrap();
+            let shadow_u8_out = buffers.shadow_u8_output_buffer.as_ref().unwrap();
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("SVF Reinit Encoder"),
+                });
+            encoder.clear_buffer(svf_data_buf, 0, None);
+            encoder.clear_buffer(shadow_u8_out, 0, None);
+            self.queue.submit(Some(encoder.finish()));
+
+            eprintln!(
+                "[GPU] SVF accumulation reused: {}x{} grid, {} SVF arrays",
+                rows, cols, num_arrays,
+            );
+
+            return Ok(());
+        }
+
+        // Create SVF-specific buffers (first call or config changed)
         let make_buffer = |label: &str, size: u64, usage: wgpu::BufferUsages| -> wgpu::Buffer {
             self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -1643,7 +1673,6 @@ impl ShadowGpuContext {
         });
 
         // --- Shadow bitpack buffers (persist across all patch dispatches) ---
-        let n_pack = (total_patches + 7) / 8; // ceil(n_patches/8)
         let matrix_bytes = total_pixels * n_pack;
         let matrix_words = (matrix_bytes + 3) / 4; // u32 words
         let num_matrices = if has_veg { 3usize } else { 1usize };

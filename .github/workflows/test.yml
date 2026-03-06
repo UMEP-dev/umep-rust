@@ -129,6 +129,38 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
           UMEP_USE_GDAL: "1"
 
+  validation:
+    name: Validation suite (3 sites)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: uv sync --group test
+
+      - name: Build Rust extension
+        run: uv run maturin develop --release
+
+      - name: Run validation tests (Kronenhuset, Gustav Adolfs, GVC)
+        run: >
+          uv run python -m pytest
+          tests/validation/test_validation_kronenhuset.py
+          tests/validation/test_validation_gustav_adolfs.py
+          tests/validation/test_validation_gvc.py
+          -v --tb=short
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
   test-spec:
     name: Test scientific spec/parity gates
     runs-on: ubuntu-latest

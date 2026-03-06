@@ -16,7 +16,6 @@ import numpy as np
 from ._compat import GDAL_ENV
 from .buffers import as_float32
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Conditional imports based on the backend chosen in _compat

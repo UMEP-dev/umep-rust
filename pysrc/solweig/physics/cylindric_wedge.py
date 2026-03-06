@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import numpy as np
+from numpy.typing import NDArray
 
 from ..constants import MIN_SUN_ELEVATION_DEG
 
@@ -6,7 +9,7 @@ from ..constants import MIN_SUN_ELEVATION_DEG
 _MIN_SUN_ALTITUDE_RAD = MIN_SUN_ELEVATION_DEG * (np.pi / 180.0)
 
 
-def cylindric_wedge(zen, svfalfa, rows, cols):
+def cylindric_wedge(zen: float, svfalfa: NDArray[np.floating], rows: int, cols: int) -> NDArray[np.float32]:
     """
     Fraction of sunlit walls based on sun altitude and SVF-weighted building angles.
 
@@ -70,40 +73,3 @@ def cylindric_wedge(zen, svfalfa, rows, cols):
     F_sh = (2 * np.pi * ba - Ssurf) / (2 * np.pi * ba)
 
     return F_sh.astype(np.float32)
-
-
-def cylindric_wedge_voxel(zen, svfalfa):
-    np.seterr(divide="ignore", invalid="ignore")
-
-    # Fraction of sunlit walls based on sun altitude and svf wieghted building angles
-    # input:
-    # sun zenith angle "beta"
-    # svf related angle "alfa"
-
-    beta = zen
-
-    xa = 1 - 2.0 / (np.tan(svfalfa) * np.tan(beta))
-    ha = 2.0 / (np.tan(svfalfa) * np.tan(beta))
-    ba = 1.0 / np.tan(svfalfa)
-    hkil = 2.0 * ba * ha
-
-    qa = np.zeros((svfalfa.shape[0]), dtype=np.float32)
-    qa[xa < 0] = np.tan(beta) / 2
-
-    Za = np.zeros((svfalfa.shape[0]), dtype=np.float32)
-    Za[xa < 0] = ((ba[xa < 0] ** 2) - ((qa[xa < 0] ** 2) / 4)) ** 0.5
-
-    phi = np.zeros((svfalfa.shape[0]), dtype=np.float32)
-    phi[xa < 0] = np.arctan(Za[xa < 0] / qa[xa < 0])
-
-    A = np.zeros((svfalfa.shape[0]), dtype=np.float32)
-    A[xa < 0] = (np.sin(phi[xa < 0]) - phi[xa < 0] * np.cos(phi[xa < 0])) / (1 - np.cos(phi[xa < 0]))
-
-    ukil = np.zeros((svfalfa.shape[0]), dtype=np.float32)
-    ukil[xa < 0] = 2 * ba[xa < 0] * xa[xa < 0] * A[xa < 0]
-
-    Ssurf = hkil + ukil
-
-    F_sh = (2 * np.pi * ba - Ssurf) / (2 * np.pi * ba)
-
-    return F_sh

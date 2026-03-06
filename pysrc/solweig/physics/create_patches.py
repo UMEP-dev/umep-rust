@@ -7,10 +7,23 @@ constructs patch geometry internally.
 Retained for readability, tests, and validation against UMEP.
 """
 
+from __future__ import annotations
+
 import numpy as np
+from numpy.typing import NDArray
 
 
-def create_patches(patch_option):
+def create_patches(
+    patch_option: int,
+) -> tuple[
+    NDArray[np.floating],
+    NDArray[np.floating],
+    NDArray[np.integer],
+    NDArray[np.integer],
+    NDArray[np.integer],
+    NDArray[np.floating],
+    NDArray[np.integer],
+]:
     # patch_option = 1 = 145 patches (Robinson & Stone, 2004)
     # patch_option = 2 = 153 patches (Wallenberg et al., 2022)
     # patch_option = 3 = 306 patches -> test

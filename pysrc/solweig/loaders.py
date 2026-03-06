@@ -57,7 +57,8 @@ def load_params(params_json_path: str | Path | None = None) -> SimpleNamespace:
         params_dict = json.load(f)
 
     result = dict_to_namespace(params_dict)
-    assert isinstance(result, SimpleNamespace)
+    if not isinstance(result, SimpleNamespace):
+        raise TypeError(f"Expected SimpleNamespace from JSON, got {type(result).__name__}")
     return result
 
 
@@ -147,7 +148,8 @@ def load_materials(materials_json_path: str | Path) -> SimpleNamespace:
         materials_dict = json.load(f)
 
     result = dict_to_namespace(materials_dict)
-    assert isinstance(result, SimpleNamespace)
+    if not isinstance(result, SimpleNamespace):
+        raise TypeError(f"Expected SimpleNamespace from JSON, got {type(result).__name__}")
     return result
 
 
@@ -176,11 +178,19 @@ def get_lc_properties_from_params(
         Tuple of (albedo_grid, emissivity_grid, tgk_grid, tstart_grid, tmaxlst_grid).
     """
     rows, cols = shape
-    alb_grid = np.full((rows, cols), 0.15, dtype=np.float32)
-    emis_grid = np.full((rows, cols), 0.95, dtype=np.float32)
-    tgk_grid = np.full((rows, cols), 0.37, dtype=np.float32)
-    tstart_grid = np.full((rows, cols), -3.41, dtype=np.float32)
-    tmaxlst_grid = np.full((rows, cols), 15.0, dtype=np.float32)
+
+    # Defaults for pixels with no land-cover match (cobblestone/generic urban)
+    _DEFAULT_ALBEDO = 0.15
+    _DEFAULT_EMISSIVITY = 0.95
+    _DEFAULT_TGK = 0.37  # Ground thermal response coefficient (K/W·m⁻²)
+    _DEFAULT_TSTART = -3.41  # Ground temperature offset (°C)
+    _DEFAULT_TMAXLST = 15.0  # Max land surface temperature amplitude (°C)
+
+    alb_grid = np.full((rows, cols), _DEFAULT_ALBEDO, dtype=np.float32)
+    emis_grid = np.full((rows, cols), _DEFAULT_EMISSIVITY, dtype=np.float32)
+    tgk_grid = np.full((rows, cols), _DEFAULT_TGK, dtype=np.float32)
+    tstart_grid = np.full((rows, cols), _DEFAULT_TSTART, dtype=np.float32)
+    tmaxlst_grid = np.full((rows, cols), _DEFAULT_TMAXLST, dtype=np.float32)
 
     # Get unique land cover IDs and filter to valid ones (0-7)
     lc = np.copy(land_cover)

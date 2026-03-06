@@ -1513,9 +1513,11 @@ class SurfaceData:
             Tuple of (SvfArrays, (shmat_mm, vegshmat_mm, vbshmat_mm))
             where the shadow matrix memmaps are bitpacked uint8 (rows, cols, n_pack).
         """
+        from .. import _ensure_gpu_initialized
         from ..progress import ProgressReporter
         from ..tiling import calculate_buffer_distance, generate_tiles, validate_tile_size
 
+        _ensure_gpu_initialized()
         rows, cols = dsm_f32.shape
 
         buffer_m = calculate_buffer_distance(max_height)
@@ -1922,6 +1924,9 @@ class SurfaceData:
         max_height = _max_shadow_height(dsm_f32, cdsm_f32 if use_veg else None, use_veg=use_veg)
 
         logger.info("Computing Sky View Factor...")
+        from .. import _ensure_gpu_initialized
+
+        _ensure_gpu_initialized()
         svf_result = skyview.calculate_svf(
             dsm_f32,
             cdsm_f32,
@@ -2000,6 +2005,11 @@ class SurfaceData:
         """Return DSM shape (rows, cols)."""
         rows, cols = self.dsm.shape
         return (rows, cols)
+
+    @property
+    def geotransform(self) -> list[float] | None:
+        """Return the raster geotransform, or None if not set."""
+        return self._geotransform
 
     @property
     def crs(self) -> str | None:

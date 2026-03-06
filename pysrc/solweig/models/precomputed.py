@@ -55,33 +55,18 @@ class SvfArrays:
     svf_aveg_west: NDArray[np.floating]
 
     def __post_init__(self):
-        # Ensure all arrays are float32 for memory efficiency
-        # Note: np.asarray preserves memmap arrays (doesn't copy unless dtype changes)
-        def ensure_f32(arr):
-            if isinstance(arr, np.memmap):
-                # Preserve memmap - only convert dtype if needed
-                if arr.dtype != np.float32:
-                    # This would load into memory - warn user
-                    logger.warning("Memmap array has wrong dtype, loading into memory")
-                    return np.asarray(arr, dtype=np.float32)
-                return arr
-            return np.asarray(arr, dtype=np.float32)
+        import dataclasses
 
-        self.svf = ensure_f32(self.svf)
-        self.svf_north = ensure_f32(self.svf_north)
-        self.svf_east = ensure_f32(self.svf_east)
-        self.svf_south = ensure_f32(self.svf_south)
-        self.svf_west = ensure_f32(self.svf_west)
-        self.svf_veg = ensure_f32(self.svf_veg)
-        self.svf_veg_north = ensure_f32(self.svf_veg_north)
-        self.svf_veg_east = ensure_f32(self.svf_veg_east)
-        self.svf_veg_south = ensure_f32(self.svf_veg_south)
-        self.svf_veg_west = ensure_f32(self.svf_veg_west)
-        self.svf_aveg = ensure_f32(self.svf_aveg)
-        self.svf_aveg_north = ensure_f32(self.svf_aveg_north)
-        self.svf_aveg_east = ensure_f32(self.svf_aveg_east)
-        self.svf_aveg_south = ensure_f32(self.svf_aveg_south)
-        self.svf_aveg_west = ensure_f32(self.svf_aveg_west)
+        # Ensure all arrays are float32 for memory efficiency.
+        # np.asarray preserves memmap arrays (doesn't copy unless dtype changes).
+        for f in dataclasses.fields(self):
+            arr = getattr(self, f.name)
+            if isinstance(arr, np.memmap):
+                if arr.dtype != np.float32:
+                    logger.warning(f"Memmap array {f.name} has wrong dtype, loading into memory")
+                    setattr(self, f.name, np.asarray(arr, dtype=np.float32))
+            else:
+                setattr(self, f.name, np.asarray(arr, dtype=np.float32))
 
     @property
     def svfalfa(self) -> NDArray[np.floating]:

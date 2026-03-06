@@ -18,3 +18,9 @@ bytemuck = { version = "1.24", optional = true, features = ["derive"] }
 [features]
 default = ["gpu"]
 gpu = ["wgpu", "pollster", "bytemuck"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

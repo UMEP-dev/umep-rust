@@ -86,7 +86,7 @@ epw_path = str(input_path / "athens_2023.epw")
 weather_list = solweig.Weather.from_epw(
     epw_path,
     start="2023-07-01",
-    end="2023-07-04",  # 4 days: July 1-4
+    end="2023-08-01",
 )
 location = solweig.Location.from_epw(epw_path)  # lat, lon, UTC offset, elevation
 

@@ -27,6 +27,7 @@ I/O helpers::
 
 import contextlib
 import logging
+import os
 from importlib.metadata import PackageNotFoundError, version
 
 logger = logging.getLogger(__name__)
@@ -73,17 +74,22 @@ from .errors import SolweigError  # noqa: E402
 try:
     from .rustalgos import GPU_ENABLED, RELEASE_BUILD, gvf, pet, shadowing, sky, skyview, utci, vegetation
 
-    # Enable GPU by default if available
-    if GPU_ENABLED:
-        shadowing.enable_gpu()
-        logger.info("GPU acceleration enabled by default")
-    else:
+    # Defer GPU initialization until first use (avoids import-time failures
+    # on headless systems). Set SOLWEIG_NO_GPU=1 to disable entirely.
+    _gpu_initialized = False
+
+    if GPU_ENABLED and not os.environ.get("SOLWEIG_NO_GPU"):
+        logger.debug("GPU support compiled in; will enable on first use")
+    elif not GPU_ENABLED:
         logger.debug("GPU support not compiled in this build")
+    else:
+        logger.debug("GPU disabled via SOLWEIG_NO_GPU environment variable")
 
 except ImportError as e:
     logger.warning(f"Failed to import Rust algorithms: {e}")
     GPU_ENABLED = False
     RELEASE_BUILD = False
+    _gpu_initialized = False
     shadowing = None
     skyview = None
     gvf = None
@@ -91,6 +97,23 @@ except ImportError as e:
     vegetation = None
     utci = None
     pet = None
+
+
+def _ensure_gpu_initialized() -> None:
+    """Lazily initialize GPU on first use."""
+    global _gpu_initialized
+    if _gpu_initialized:
+        return
+    _gpu_initialized = True
+    if not GPU_ENABLED or shadowing is None:
+        return
+    if os.environ.get("SOLWEIG_NO_GPU"):
+        return
+    try:
+        shadowing.enable_gpu()
+        logger.info("GPU acceleration enabled")
+    except Exception:
+        logger.warning("GPU initialization failed, falling back to CPU", exc_info=True)
 
 
 def is_gpu_available() -> bool:
@@ -106,6 +129,7 @@ def is_gpu_available() -> bool:
     Returns:
         True if GPU acceleration is available, False otherwise.
     """
+    _ensure_gpu_initialized()
     if not GPU_ENABLED:
         return False
     if shadowing is None:

@@ -36,8 +36,12 @@ import pytest
 GVC_DIR = Path(__file__).parent / "gvc"
 MEASUREMENTS_CSV = GVC_DIR / "measurements_gvc.csv"
 
-# POI pixel in the DSM grid (row, col) — GVC Site 1 measurement point
-POI_ROW, POI_COL = 51, 122
+# POI pixel in the DSM grid (row, col) — hypothetical best-fit location for
+# GVC Site 1, pending confirmation with original authors. No POI shapefile
+# or GPS coordinates were available; this was identified via a sensitivity
+# sweep (see test_poi_sweep_all_sites.py). An earlier estimate of (51, 122)
+# produced R² = 0.01–0.14, suggesting it did not match the measurement site.
+POI_ROW, POI_COL = 103, 174
 
 # Site location
 LAT, LON, UTC_OFFSET = 57.7, 12.0, 1

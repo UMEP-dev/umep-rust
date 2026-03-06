@@ -82,9 +82,20 @@ class TestMemoryBenchmark:
         # Preprocess surface first (one-time cost not counted in per-timestep)
         benchmark_surface.preprocess()
 
+        # Warmup run: triggers all lazy imports (matplotlib, rasterio, etc.)
+        # so tracemalloc only measures actual computation memory, not import overhead.
+        warmup_dir = tmp_path / "warmup"
+        calculate(
+            benchmark_surface,
+            [benchmark_weather],
+            benchmark_location,
+            output_dir=warmup_dir,
+            outputs=["tmrt"],
+        )
+
         output_dir = tmp_path / "memory"
 
-        # Start memory tracing
+        # Start memory tracing after warmup
         tracemalloc.start()
         tracemalloc.reset_peak()
 

@@ -23,6 +23,10 @@ KELVIN_OFFSET = 273.15
 # Below this threshold, shadows are not computed (negligible solar radiation)
 MIN_SUN_ELEVATION_DEG = 3.0
 
+# Effective solar constant (W/m²)
+# Reference: Crawford and Duchon (1999)
+SOLAR_CONSTANT = 1370.0
+
 
 # =============================================================================
 # View Factor Constants
@@ -80,4 +84,5 @@ __all__ = [
     "DEFAULT_ALBEDO_WALL",
     "DEFAULT_EMIS_WALL",
     "DEFAULT_TG_WALL",
+    "SOLAR_CONSTANT",
 ]

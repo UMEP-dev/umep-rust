@@ -1,7 +1,11 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
 import numpy as np
 
 
-def sun_position(time, location):
+def sun_position(time: dict | SimpleNamespace, location: dict | SimpleNamespace) -> dict:
     """
     % sun = sun_position(time, location)
     %

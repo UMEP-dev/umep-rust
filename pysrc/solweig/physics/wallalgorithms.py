@@ -1,14 +1,16 @@
-__author__ = "xlinfr"
+from __future__ import annotations
 
 import math
+from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from ..progress import get_progress_iterator
 from .morphology import rotate_array
 
 
-def findwalls(a, walllimit):
+def findwalls(a: NDArray[np.floating], walllimit: float) -> NDArray[np.float32]:
     # This function identifies walls based on a DSM and a wall-height limit
     # Walls are represented by outer pixels within building footprints
     #
@@ -44,7 +46,9 @@ def findwalls(a, walllimit):
     return walls
 
 
-def filter1Goodwin_as_aspect_v3(walls, scale, a, feedback=None):
+def filter1Goodwin_as_aspect_v3(
+    walls: NDArray[np.floating], scale: float, a: NDArray[np.floating], feedback: Any = None
+) -> NDArray[np.float32]:
     """
     tThis function applies the filter processing presented in Goodwin et al (2010) but instead for removing
     linear fetures it calculates wall aspect based on a wall pixels grid, a dsm (a) and a scale factor
@@ -113,7 +117,11 @@ def filter1Goodwin_as_aspect_v3(walls, scale, a, feedback=None):
     row = a.shape[0]
     col = a.shape[1]
 
-    filtersize = np.floor((scale + 0.0000000001) * 9)
+    # Filter size is 9× the DSM-to-wall scale factor, rounded to an odd integer.
+    # Epsilon avoids float truncation at exact integer boundaries.
+    _FILTER_MULTIPLIER = 9
+    _EPSILON = 1e-10
+    filtersize = np.floor((scale + _EPSILON) * _FILTER_MULTIPLIER)
     if filtersize <= 2:
         filtersize = 3
     elif filtersize != 9 and filtersize % 2 == 0:
@@ -194,7 +202,9 @@ def filter1Goodwin_as_aspect_v3(walls, scale, a, feedback=None):
     return dirwalls
 
 
-def cart2pol(x, y, units="deg"):
+def cart2pol(
+    x: NDArray[np.floating], y: NDArray[np.floating], units: str = "deg"
+) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     radius = np.sqrt(x**2 + y**2)
     theta = np.arctan2(y, x)
     if units in ["deg", "degs"]:
@@ -202,7 +212,7 @@ def cart2pol(x, y, units="deg"):
     return theta, radius
 
 
-def get_ders(dsm, scale):
+def get_ders(dsm: NDArray[np.floating], scale: float) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
     # dem,_,_=read_dem_grid(dem_file)
     dx = 1 / scale
     # dx=0.5

@@ -89,7 +89,12 @@ class ModelConfig:
         Default ``HumanParams()`` is instantiated by ``calculate()``
         when no human params are provided.
         """
-        pass
+        if self.max_shadow_distance_m <= 0:
+            raise ValueError(f"max_shadow_distance_m must be > 0, got {self.max_shadow_distance_m}")
+        if self.tile_workers is not None and self.tile_workers < 1:
+            raise ValueError(f"tile_workers must be >= 1, got {self.tile_workers}")
+        if self.tile_queue_depth is not None and self.tile_queue_depth < 0:
+            raise ValueError(f"tile_queue_depth must be >= 0, got {self.tile_queue_depth}")
 
     @classmethod
     def defaults(cls) -> ModelConfig:
@@ -265,3 +270,15 @@ class HumanParams:
             raise ValueError(f"abs_k must be in (0, 1], got {self.abs_k}")
         if not 0 < self.abs_l <= 1:
             raise ValueError(f"abs_l must be in (0, 1], got {self.abs_l}")
+        if not 0 <= self.age <= 150:
+            raise ValueError(f"age must be in [0, 150], got {self.age}")
+        if self.weight <= 0:
+            raise ValueError(f"weight must be > 0, got {self.weight}")
+        if not 0.5 <= self.height <= 2.5:
+            raise ValueError(f"height must be in [0.5, 2.5] m, got {self.height}")
+        if self.sex not in (1, 2):
+            raise ValueError(f"sex must be 1 (male) or 2 (female), got {self.sex}")
+        if self.activity < 0:
+            raise ValueError(f"activity must be >= 0, got {self.activity}")
+        if self.clothing < 0:
+            raise ValueError(f"clothing must be >= 0, got {self.clothing}")

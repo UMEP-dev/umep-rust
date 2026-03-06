@@ -1,13 +1,16 @@
+from __future__ import annotations
+
 import math
 
 import numpy as np
 
+from ..constants import SOLAR_CONSTANT
 from . import sun_distance
 
-__author__ = "xlinfr"
 
-
-def clearnessindex_2013b(zen, jday, Ta, RH, radG, location, P):
+def clearnessindex_2013b(
+    zen: float, jday: int, Ta: float, RH: float, radG: float, location: dict[str, float], P: float
+) -> tuple[float, float, float, float, float]:
     """Clearness Index at the Earth's surface calculated from Crawford and Duchon 1999
 
     :param zen: zenith angle in radians
@@ -22,7 +25,7 @@ def clearnessindex_2013b(zen, jday, Ta, RH, radG, location, P):
 
     p = 1013.0 if P == -999.0 else P * 10.0  # Pressure in millibars (convert hPa to mb)
 
-    Itoa = 1370.0  # Effective solar constant
+    Itoa = SOLAR_CONSTANT
     D = sun_distance.sun_distance(jday)  # irradiance differences due to Sun-Earth distances
     m = 35.0 * np.cos(zen) * ((1224.0 * (np.cos(zen) ** 2) + 1) ** (-1 / 2.0))  # optical air mass at p=1013
     Trpg = (

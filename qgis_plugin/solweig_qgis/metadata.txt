@@ -2,7 +2,7 @@
 name=SOLWEIG
 qgisMinimumVersion=4.0
 description=Calculate Mean Radiant Temperature & UTCI thermal comfort using the SOLWEIG model.
-version=0.1.0-beta57
+version=0.1.0-beta58
 author=SOLWEIG Development Team
 email=gareth.simons@ucl.ac.uk
 
@@ -45,6 +45,10 @@ deprecated=False
 supportsQt6=True
 
 changelog=
+    0.1.0-beta58
+    - HPC performance: Cargo release profile (LTO, codegen-units=1), parallel SVF bitpacking, dynamic tile worker scaling, tile array view optimization, GPU SVF buffer reuse, increased GPU inflight submissions
+    - Codebase cleanup: input validation, dead code removal, constants consolidation, deduplication, type hints
+    - Fix test expectations for early ModelConfig validation
     0.1.0-beta57
     - Move optional deps (rasterio, geopandas, tqdm, pillow) to core so pip install solweig works out of the box
     0.1.0-beta56

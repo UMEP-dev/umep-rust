@@ -401,7 +401,7 @@ fn calculate_svf_inner(
                 )
             })?;
             let min_elev = min_sun_elev_deg.unwrap_or(3.0_f32);
-            const MAX_INFLIGHT_SVF_SUBMITS: usize = 8;
+            const MAX_INFLIGHT_SVF_SUBMITS: usize = 16;
             let progress_cap = patches.len().saturating_sub(1);
             let mut inflight_submissions: VecDeque<wgpu::SubmissionIndex> = VecDeque::new();
             let mut completed_patches: usize = 0;
@@ -572,24 +572,30 @@ fn calculate_svf_inner(
             {
                 let byte_idx = patch_idx >> 3;
                 let bit_mask = 1u8 << (patch_idx & 7);
-                for r in 0..num_rows {
-                    for c in 0..num_cols {
-                        if shadow_result.bldg_sh[[r, c]] >= 0.5 {
-                            inter.bldg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
+                let mut bldg_plane = inter.bldg_sh_matrix.slice_mut(s![.., .., byte_idx]);
+                Zip::from(&shadow_result.bldg_sh)
+                    .and(&mut bldg_plane)
+                    .par_for_each(|&b, bp| {
+                        if b >= 0.5 {
+                            *bp |= bit_mask;
                         }
-                    }
-                }
+                    });
                 if usevegdem {
-                    for r in 0..num_rows {
-                        for c in 0..num_cols {
-                            if shadow_result.veg_sh[[r, c]] >= 0.5 {
-                                inter.veg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
+                    let mut veg_plane = inter.veg_sh_matrix.slice_mut(s![.., .., byte_idx]);
+                    let mut vb_plane =
+                        inter.veg_blocks_bldg_sh_matrix.slice_mut(s![.., .., byte_idx]);
+                    Zip::from(&shadow_result.veg_sh)
+                        .and(&shadow_result.veg_blocks_bldg_sh)
+                        .and(&mut veg_plane)
+                        .and(&mut vb_plane)
+                        .par_for_each(|&v, &vb, vp, vbp| {
+                            if v >= 0.5 {
+                                *vp |= bit_mask;
                             }
-                            if shadow_result.veg_blocks_bldg_sh[[r, c]] >= 0.5 {
-                                inter.veg_blocks_bldg_sh_matrix[[r, c, byte_idx]] |= bit_mask;
+                            if vb >= 0.5 {
+                                *vbp |= bit_mask;
                             }
-                        }
-                    }
+                        });
                 }
             }
 

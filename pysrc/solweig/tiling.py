@@ -89,7 +89,7 @@ _GPU_HEADROOM = 0.80  # Use 80% of GPU max buffer to leave headroom
 # constrain by the largest single buffer and rely on init_svf_accumulation()
 # falling back to CPU if total VRAM is exceeded.
 _TOTAL_MEMORY_BACKENDS = {"Metal", "Dx12"}
-_MAX_AUTO_TILE_WORKERS = 6  # Hard cap to avoid bandwidth/cache thrash on many-core CPUs
+_MAX_AUTO_TILE_WORKERS = min(os.cpu_count() or 4, 16)  # Scale with CPU count, cap at 16
 
 # Cache for computed tile limits (populated once per context on first call)
 _cached_max_tile_side: dict[str, int] = {}
@@ -405,13 +405,16 @@ def _extract_tile_surface(
     """
     read_slice = tile.read_slice
 
-    tile_dsm = surface.dsm[read_slice].copy()
-    tile_cdsm = surface.cdsm[read_slice].copy() if surface.cdsm is not None else None
-    tile_tdsm = surface.tdsm[read_slice].copy() if surface.tdsm is not None else None
-    tile_dem = surface.dem[read_slice].copy() if surface.dem is not None else None
-    tile_lc = surface.land_cover[read_slice].copy() if surface.land_cover is not None else None
-    tile_albedo = surface.albedo[read_slice].copy() if surface.albedo is not None else None
-    tile_emis = surface.emissivity[read_slice].copy() if surface.emissivity is not None else None
+    # Use views (no .copy()) for read-only surface arrays. These are never mutated
+    # during computation — Rust receives PyReadonlyArray2 and Python never writes.
+    # Views avoid redundant allocation, especially for overlapping tile buffers.
+    tile_dsm = surface.dsm[read_slice]
+    tile_cdsm = surface.cdsm[read_slice] if surface.cdsm is not None else None
+    tile_tdsm = surface.tdsm[read_slice] if surface.tdsm is not None else None
+    tile_dem = surface.dem[read_slice] if surface.dem is not None else None
+    tile_lc = surface.land_cover[read_slice] if surface.land_cover is not None else None
+    tile_albedo = surface.albedo[read_slice] if surface.albedo is not None else None
+    tile_emis = surface.emissivity[read_slice] if surface.emissivity is not None else None
 
     # Slice precomputed SVF if available (avoids per-tile recomputation)
     tile_svf = None

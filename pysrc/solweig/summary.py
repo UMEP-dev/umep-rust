@@ -600,10 +600,16 @@ class GridAccumulator:
         sun_fraction = np.nan
         if result.shadow is not None:
             self._shadow_seen = True
-            self._sun_hours += np.where(valid, result.shadow * self.timestep_hours, 0.0)
-            self._shade_hours += np.where(valid, (1.0 - result.shadow) * self.timestep_hours, 0.0)
-            n_valid = valid.sum()
-            sun_fraction = float(result.shadow[valid].sum() / n_valid) if n_valid > 0 else np.nan
+            if is_day:
+                self._sun_hours += np.where(valid, result.shadow * self.timestep_hours, 0.0)
+                self._shade_hours += np.where(valid, (1.0 - result.shadow) * self.timestep_hours, 0.0)
+                n_valid = valid.sum()
+                sun_fraction = float(result.shadow[valid].sum() / n_valid) if n_valid > 0 else np.nan
+            else:
+                # At night the shadow grid is all-sunlit (no shadows cast) which is
+                # physically meaningless — skip accumulation and report 0 sun fraction.
+                self._shade_hours += np.where(valid, self.timestep_hours, 0.0)
+                sun_fraction = 0.0
 
         # --- UTCI threshold exceedance ---
         active_thresholds = self._day_thresholds_set if is_day else self._night_thresholds_set
