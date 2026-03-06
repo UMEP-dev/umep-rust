@@ -363,7 +363,7 @@ SOLWEIG is validated against field radiation measurements from three sites in Go
 | Gustav Adolfs torg (open square, 2 m) | Autumn + Summer | 3 | 11.7–17.7 °C | 0.56–0.90 |
 | GVC (university campus, 2 m) | Summer | 3 | 5.2–11.8 °C | 0.91–0.98 |
 
-Anisotropic sky mode, matched daytime observation hours. Full details, radiation budget comparisons, and version history: **[Validation Report](docs/physics/validation.md)**.
+Anisotropic sky mode, matched daytime observation hours. Full details, radiation budget comparisons, and version history: **[Validation Report](VALIDATION.md)**.
 
 ---
 

@@ -132,7 +132,7 @@ Run with: `pytest tests/validation/test_poi_sweep_all_sites.py -v -s`
 
 ### Gustav Adolfs torg sweep
 
-![POI sweep RMSE — Gustav Adolfs](../../tests/validation/gustav_adolfs/poi_sweep_results/poi_sweep_rmse.png)
+![POI sweep RMSE — Gustav Adolfs](tests/validation/gustav_adolfs/poi_sweep_results/poi_sweep_rmse.png)
 
 |           | Current POI (33, 77) | Best pixel (63, 5) |
 | --------- | -------------------: | -----------------: |
@@ -149,7 +149,7 @@ authors.
 
 ### Kronenhuset sweep
 
-![POI sweep RMSE — Kronenhuset](../../tests/validation/kronenhuset/poi_sweep_results/poi_sweep_rmse.png)
+![POI sweep RMSE — Kronenhuset](tests/validation/kronenhuset/poi_sweep_results/poi_sweep_rmse.png)
 
 |           | Current POI (51, 117) | Best pixel (133, 199) |
 | --------- | --------------------: | --------------------: |
@@ -164,7 +164,7 @@ smaller at pixels with less sky obstruction.
 
 ### GVC sweep
 
-![POI sweep RMSE — GVC](../../tests/validation/gvc/poi_sweep_results/poi_sweep_rmse.png)
+![POI sweep RMSE — GVC](tests/validation/gvc/poi_sweep_results/poi_sweep_rmse.png)
 
 |           | Current POI (103, 174) | Best pixel (41, 173) |
 | --------- | ---------------------: | -------------------: |

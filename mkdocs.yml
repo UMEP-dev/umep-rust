@@ -97,7 +97,6 @@ nav:
       - Errors: api/errors.md
   - Physics:
       - Overview: physics/index.md
-      - Validation: physics/validation.md
   - Development:
       - Contributing: development/contributing.md
       - Architecture: development/architecture.md
