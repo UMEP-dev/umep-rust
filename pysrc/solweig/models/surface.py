@@ -498,16 +498,9 @@ class SurfaceData:
                 preprocess_data["compute_svf"] = True
                 surface_data.svf = None
 
-        # Compute and cache walls if needed
-        if preprocess_data["compute_walls"]:
-            cls._compute_and_cache_walls(surface_data, aligned_rasters, working_path, pixel_size=pixel_size)
-
-        # Compute and cache SVF if needed
-        if preprocess_data["compute_svf"]:
-            cls._compute_and_cache_svf(surface_data, aligned_rasters, working_path, trunk_ratio, feedback=feedback)
-
         # Preprocess layers: convert relative heights to absolute and
         # enforce DSM >= DEM (terrain is the minimum surface elevation).
+        # This must happen BEFORE walls/SVF so they see absolute heights.
         needs_preprocess = (
             dsm_relative
             or (cdsm_relative and surface_data.cdsm is not None)
@@ -517,6 +510,20 @@ class SurfaceData:
         if needs_preprocess:
             logger.debug("  Preprocessing heights")
             surface_data.preprocess()
+            # Sync aligned_rasters so cache helpers see absolute heights
+            aligned_rasters["dsm_arr"] = surface_data.dsm
+            if surface_data.cdsm is not None:
+                aligned_rasters["cdsm_arr"] = surface_data.cdsm
+            if surface_data.tdsm is not None:
+                aligned_rasters["tdsm_arr"] = surface_data.tdsm
+
+        # Compute and cache walls if needed
+        if preprocess_data["compute_walls"]:
+            cls._compute_and_cache_walls(surface_data, aligned_rasters, working_path, pixel_size=pixel_size)
+
+        # Compute and cache SVF if needed
+        if preprocess_data["compute_svf"]:
+            cls._compute_and_cache_svf(surface_data, aligned_rasters, working_path, trunk_ratio, feedback=feedback)
 
         # Compute unified valid mask, apply across all layers, crop to valid bbox
         surface_data.compute_valid_mask()

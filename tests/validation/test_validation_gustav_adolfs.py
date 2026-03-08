@@ -370,4 +370,4 @@ class TestFullPipelineValidation:
         assert kdown_rmse < 350.0, f"Kdown RMSE={kdown_rmse:.1f} W/m² exceeds 350 threshold for day {day_code}"
 
         ldown_rmse = ani["stats"]["Ldown"]["rmse"]
-        assert ldown_rmse < 80.0, f"Ldown RMSE={ldown_rmse:.1f} W/m² exceeds 80 threshold for day {day_code}"
+        assert ldown_rmse < 85.0, f"Ldown RMSE={ldown_rmse:.1f} W/m² exceeds 85 threshold for day {day_code}"

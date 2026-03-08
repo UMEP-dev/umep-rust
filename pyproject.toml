@@ -1,6 +1,6 @@
 [project]
 name = "solweig"
-version = "0.1.0b60"
+version = "0.1.0b61"
 description = "High-performance SOLWEIG urban microclimate model (Rust + Python)"
 readme = "README.md"
 requires-python = ">=3.11, <3.14"
@@ -89,10 +89,7 @@ dev = [
 ]
 # QGIS 4 compatibility: minimal deps + system GDAL, no rasterio/scipy/geopandas
 # CI: uv sync --group qgis-compat && uv pip install gdal==$(gdal-config --version)
-qgis-compat = [
-    "pytest>=7.2.0",
-    "maturin>=1.8.3",
-]
+qgis-compat = ["pytest>=7.2.0", "maturin>=1.8.3"]
 
 [project.urls]
 homepage = "https://github.com/UMEP-dev/solweig"

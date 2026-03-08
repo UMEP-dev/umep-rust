@@ -148,6 +148,7 @@ class ModelConfig:
         return cls(
             human=human,
             material_params=params,
+            materials=params,
         )
 
     def save(self, path: str | Path):

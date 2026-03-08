@@ -367,7 +367,7 @@ def _calculate_single(
 
 def calculate(
     surface: SurfaceData,
-    weather: list[Weather],
+    weather: Weather | list[Weather],
     location: Location | None = None,
     *,
     output_dir: str | Path,
@@ -394,7 +394,7 @@ def calculate(
 
     Args:
         surface: Prepared surface data from :meth:`SurfaceData.prepare`.
-        weather: One or more Weather objects.
+        weather: One or more Weather objects. A single Weather is auto-wrapped.
         location: Geographic location. If None, extracted from surface CRS.
         config: Model settings. Explicit keyword args override config values.
         human: Human body parameters (posture, absorption, etc.).
@@ -432,9 +432,12 @@ def calculate(
     """
     from .timeseries import _calculate_timeseries
 
+    # Accept a single Weather or a list
+    weather_series = [weather] if isinstance(weather, Weather) else weather
+
     return _calculate_timeseries(
         surface=surface,
-        weather_series=weather,
+        weather_series=weather_series,
         location=location,
         config=config,
         human=human,

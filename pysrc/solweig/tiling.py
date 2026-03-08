@@ -415,6 +415,8 @@ def _extract_tile_surface(
     tile_lc = surface.land_cover[read_slice] if surface.land_cover is not None else None
     tile_albedo = surface.albedo[read_slice] if surface.albedo is not None else None
     tile_emis = surface.emissivity[read_slice] if surface.emissivity is not None else None
+    tile_wall_ht = surface.wall_height[read_slice] if surface.wall_height is not None else None
+    tile_wall_asp = surface.wall_aspect[read_slice] if surface.wall_aspect is not None else None
 
     # Slice precomputed SVF if available (avoids per-tile recomputation)
     tile_svf = None
@@ -451,6 +453,8 @@ def _extract_tile_surface(
         land_cover=tile_lc,
         albedo=tile_albedo,
         emissivity=tile_emis,
+        wall_height=tile_wall_ht,
+        wall_aspect=tile_wall_asp,
         pixel_size=pixel_size,
         svf=tile_svf,
         shadow_matrices=tile_shadow_matrices,

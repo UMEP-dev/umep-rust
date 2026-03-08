@@ -706,15 +706,15 @@ def _apply_lc_materials(
         if all(v is None for v in values):
             continue
 
-        # Register the type name for this code
+        # Resolve base values from the UMEP default for this code (if any)
+        # so that empty cells inherit from the existing land-cover class
+        default_name = getattr(materials.Names.Value, str(code), None)
+        if default_name is None:
+            default_name = "Cobble_stone_2014a"  # fallback if code has no UMEP default
+
+        # Register the type name for this code (after reading the old default)
         type_name = f"LC_{code}_{name.replace(' ', '_')}"
         setattr(materials.Names.Value, str(code), type_name)
-
-        # Resolve base values from the UMEP default for this code (if any)
-        # so that empty cells inherit sensible defaults
-        default_name = getattr(materials.Names.Value, str(code), None)
-        if default_name == type_name:
-            default_name = "Cobble_stone_2014a"  # fallback
 
         for i, section_path in enumerate(prop_sections):
             parts = section_path.split(".")
@@ -852,13 +852,21 @@ def load_weather_from_epw(
         )
 
     # Convert to Weather objects — normalize timestamps to requested year
+    # For cross-year ranges (e.g., Dec 15 → Jan 15), months after December
+    # must advance to target_year+1 to keep timestamps monotonic.
     target_year = start_dt.year
+    cross_year = end_dt.year > start_dt.year or (
+        end_dt.month < start_dt.month  # e.g., Dec→Jan within TMY
+    )
     weather_series = []
     for timestamp, row in df_filtered.iterrows():
         dt = timestamp.to_pydatetime() if hasattr(timestamp, "to_pydatetime") else timestamp
         # Remap to target year so timestamps are contiguous
+        year = target_year
+        if cross_year and dt.month < start_dt.month:
+            year = target_year + 1
         try:
-            dt = dt.replace(year=target_year)
+            dt = dt.replace(year=year)
         except ValueError:
             # Feb 29 in a non-leap target year → skip
             continue
@@ -882,6 +890,9 @@ def load_weather_from_epw(
             f"The EPW file contains data from {epw_start} to {epw_end}.\n"
             f"Please adjust the date range to overlap with the EPW data."
         )
+
+    # Sort by datetime to ensure monotonic order after year remapping
+    weather_series.sort(key=lambda w: w.datetime)
 
     feedback.pushInfo(f"Loaded {len(weather_series)} timesteps from EPW")
     feedback.pushInfo(f"Period: {weather_series[0].datetime} to {weather_series[-1].datetime}")
