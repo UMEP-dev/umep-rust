@@ -28,7 +28,7 @@ from .physics import wallalgorithms as wa
 
 def generate_wall_hts(
     dsm_path: str,
-    bbox: list[int] | None,
+    bbox: list[float] | None,
     out_dir: str,
     wall_limit: float = 1,
 ):
@@ -50,10 +50,9 @@ def generate_wall_hts(
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
-    out_path_str = str(out_path)
 
     walls = wa.findwalls(dsm_rast, wall_limit)
-    common.save_raster(out_path_str + "/" + "wall_hts.tif", walls, dsm_transf, dsm_crs, ensure_float32=True)
+    common.save_raster(str(out_path / "wall_hts.tif"), walls, dsm_transf, dsm_crs, ensure_float32=True)
 
     dirwalls = wa.filter1Goodwin_as_aspect_v3(walls, dsm_scale, dsm_rast)
-    common.save_raster(out_path_str + "/" + "wall_aspects.tif", dirwalls, dsm_transf, dsm_crs, ensure_float32=True)
+    common.save_raster(str(out_path / "wall_aspects.tif"), dirwalls, dsm_transf, dsm_crs, ensure_float32=True)

@@ -72,4 +72,4 @@ def cylindric_wedge(zen: float, svfalfa: NDArray[np.floating], rows: int, cols: 
     Ssurf = hkil + ukil
     F_sh = (2 * np.pi * ba - Ssurf) / (2 * np.pi * ba)
 
-    return F_sh.astype(np.float32)
+    return np.clip(F_sh, 0.0, 1.0).astype(np.float32)

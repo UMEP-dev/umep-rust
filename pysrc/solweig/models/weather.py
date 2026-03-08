@@ -41,7 +41,7 @@ class Location:
     latitude: float
     longitude: float
     altitude: float = 0.0
-    utc_offset: int = 0
+    utc_offset: float = 0
 
     def __post_init__(self):
         if not -90 <= self.latitude <= 90:
@@ -50,7 +50,7 @@ class Location:
             raise ValueError(f"Longitude must be in [-180, 180], got {self.longitude}")
 
     @classmethod
-    def from_dsm_crs(cls, dsm_path: str | Path, utc_offset: int = 0, altitude: float = 0.0) -> Location:
+    def from_dsm_crs(cls, dsm_path: str | Path, utc_offset: float = 0, altitude: float = 0.0) -> Location:
         """
         Extract location from DSM raster's CRS by converting center point to WGS84.
 
@@ -99,11 +99,11 @@ class Location:
         transformer = Transformer.from_crs(crs_wkt, "EPSG:4326", always_xy=True)
         lon, lat = transformer.transform(center_x, center_y)
 
-        logger.info(f"Extracted location from DSM CRS: {lat:.4f}°N, {lon:.4f}°E (UTC{utc_offset:+d})")
+        logger.info(f"Extracted location from DSM CRS: {lat:.4f}°N, {lon:.4f}°E (UTC{utc_offset:+g})")
         return cls(latitude=lat, longitude=lon, altitude=altitude, utc_offset=utc_offset)
 
     @classmethod
-    def from_surface(cls, surface: SurfaceData, utc_offset: int | None = None, altitude: float = 0.0) -> Location:
+    def from_surface(cls, surface: SurfaceData, utc_offset: float | None = None, altitude: float = 0.0) -> Location:
         """
         Extract location from SurfaceData's CRS by converting center point to WGS84.
 
@@ -170,7 +170,7 @@ class Location:
             )
             utc_offset = 0
 
-        logger.debug(f"Auto-extracted location: {lat:.4f}°N, {lon:.4f}°E (UTC{utc_offset:+d})")
+        logger.debug(f"Auto-extracted location: {lat:.4f}°N, {lon:.4f}°E (UTC{utc_offset:+g})")
         return cls(latitude=lat, longitude=lon, altitude=altitude, utc_offset=utc_offset)
 
     @classmethod
@@ -198,12 +198,12 @@ class Location:
         from .. import io as common
 
         metadata = common._parse_epw_metadata(Path(path))
-        utc_offset = int(metadata["tz_offset"])
+        utc_offset = float(metadata["tz_offset"])
 
         logger.info(
             f"Location from EPW: {metadata['city']} — "
             f"{metadata['latitude']:.4f}°N, {metadata['longitude']:.4f}°E "
-            f"(UTC{utc_offset:+d}, {metadata['elevation']:.0f}m)"
+            f"(UTC{utc_offset:+g}, {metadata['elevation']:.0f}m)"
         )
         return cls(
             latitude=metadata["latitude"],
@@ -446,7 +446,7 @@ class Weather:
         ta: float,
         rh: float,
         global_rad: float,
-        datetime: dt | None = None,
+        datetime: dt,
         ws: float = 1.0,
         **kwargs: Any,
     ) -> Weather:
@@ -460,7 +460,7 @@ class Weather:
             ta: Air temperature in °C.
             rh: Relative humidity in % (0-100).
             global_rad: Global solar radiation in W/m².
-            datetime: Date and time. If None, uses current time.
+            datetime: Date and time of measurement.
             ws: Wind speed in m/s. Default 1.0.
             **kwargs: Additional Weather parameters (pressure, etc.)
 
@@ -468,17 +468,11 @@ class Weather:
             Weather object ready for calculation.
 
         Example:
-            # Quick weather for testing
-            weather = Weather.from_values(ta=25, rh=50, global_rad=800)
-
-            # With specific datetime
             weather = Weather.from_values(
                 ta=30, rh=60, global_rad=900,
                 datetime=datetime(2025, 7, 15, 14, 0)
             )
         """
-        if datetime is None:
-            datetime = dt.now()
         return cls(datetime=datetime, ta=ta, rh=rh, global_rad=global_rad, ws=ws, **kwargs)
 
     @classmethod

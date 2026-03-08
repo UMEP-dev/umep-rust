@@ -46,9 +46,8 @@ KR_PARAMS_JSON = KR_DIR / "parametersforsolweig_KR.json"
 DEMO_DIR = Path(__file__).parent.parent.parent / "demos" / "data" / "Goteborg_SWEREF99_1200"
 
 # POI pixel in the DSM grid (row, col) — Kronenhuset courtyard
-# Shifted +1 column from the shapefile position (51, 117) to better match
-# the observed shadow timing profile.
-POI_ROW, POI_COL = 51, 118
+# Matches the original measurement location from POI_KR.shp.
+POI_ROW, POI_COL = 51, 117
 
 # Site location
 LAT, LON, UTC_OFFSET = 57.7, 12.0, 1

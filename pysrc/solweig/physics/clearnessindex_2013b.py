@@ -25,6 +25,9 @@ def clearnessindex_2013b(
 
     p = 1013.0 if P == -999.0 else P * 10.0  # Pressure in millibars (convert hPa to mb)
 
+    if RH <= 0:
+        RH = 0.01  # Guard against log(0); physically RH > 0
+
     Itoa = SOLAR_CONSTANT
     D = sun_distance.sun_distance(jday)  # irradiance differences due to Sun-Earth distances
     m = 35.0 * np.cos(zen) * ((1224.0 * (np.cos(zen) ** 2) + 1) ** (-1 / 2.0))  # optical air mass at p=1013
@@ -33,23 +36,24 @@ def clearnessindex_2013b(
     )  # Transmission coefficient for Rayliegh scattering and permanent gases
 
     # empirical constant depending on latitude
-    if location["latitude"] < 10.0:
+    abs_latitude = abs(location["latitude"])
+    if abs_latitude < 10.0:
         G_coeffs = [3.37, 2.85, 2.80, 2.64]
-    elif location["latitude"] >= 10.0 and location["latitude"] < 20.0:
+    elif abs_latitude < 20.0:
         G_coeffs = [2.99, 3.02, 2.70, 2.93]
-    elif location["latitude"] >= 20.0 and location["latitude"] < 30.0:
+    elif abs_latitude < 30.0:
         G_coeffs = [3.60, 3.00, 2.98, 2.93]
-    elif location["latitude"] >= 30.0 and location["latitude"] < 40.0:
+    elif abs_latitude < 40.0:
         G_coeffs = [3.04, 3.11, 2.92, 2.94]
-    elif location["latitude"] >= 40.0 and location["latitude"] < 50.0:
+    elif abs_latitude < 50.0:
         G_coeffs = [2.70, 2.95, 2.77, 2.71]
-    elif location["latitude"] >= 50.0 and location["latitude"] < 60.0:
+    elif abs_latitude < 60.0:
         G_coeffs = [2.52, 3.07, 2.67, 2.93]
-    elif location["latitude"] >= 60.0 and location["latitude"] < 70.0:
+    elif abs_latitude < 70.0:
         G_coeffs = [1.76, 2.69, 2.61, 2.61]
-    elif location["latitude"] >= 70.0 and location["latitude"] < 80.0:
+    elif abs_latitude < 80.0:
         G_coeffs = [1.60, 1.67, 2.24, 2.63]
-    else:  # latitude >= 80.0
+    else:  # abs_latitude >= 80.0
         G_coeffs = [1.11, 1.44, 1.94, 2.02]
 
     if jday > 335 or jday <= 60:

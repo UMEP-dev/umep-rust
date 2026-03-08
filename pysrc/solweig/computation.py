@@ -17,9 +17,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .bundles import LupBundle
-from .rustalgos import ground as ground_rust
-
 _OUT_SHADOW = 1 << 0
 _OUT_KDOWN = 1 << 1
 _OUT_KUP = 1 << 2
@@ -28,104 +25,7 @@ _OUT_LUP = 1 << 4
 _OUT_ALL = _OUT_SHADOW | _OUT_KDOWN | _OUT_KUP | _OUT_LDOWN | _OUT_LUP
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray
-
     from .api import HumanParams, Location, PrecomputedData, SolweigResult, SurfaceData, ThermalState, Weather
-    from .bundles import GvfBundle
-
-
-def _apply_thermal_delay(
-    gvf_bundle: GvfBundle,
-    ground_tg: NDArray[np.floating],
-    shadow: NDArray[np.floating],
-    weather: Weather,
-    state: ThermalState | None,
-) -> LupBundle:
-    """
-    Apply thermal inertia (TsWaveDelay) to upwelling longwave radiation.
-
-    This models the thermal mass of ground and walls, smoothing rapid temperature
-    changes throughout the day. Essential for accurate time-series simulations.
-
-    Uses batched Rust function to reduce FFI overhead from 6 calls to 1.
-
-    Args:
-        gvf_bundle: Ground view factor results (raw Lup before delay)
-        ground_tg: Ground temperature deviation from air temperature (K)
-        shadow: Shadow fraction (for ground temperature with shadow effect)
-        weather: Weather data (for air temperature and daytime flag)
-        state: Thermal state carrying forward surface temperature history
-
-    Returns:
-        LupBundle with thermally-delayed upwelling longwave and updated state
-    """
-    from .buffers import as_float32
-
-    output_state = None
-
-    if state is not None:
-        # Compute ground temperature with shadow effect
-        tg_temp = (ground_tg * shadow + weather.ta).astype(np.float32)
-
-        # Apply TsWaveDelay for thermal mass effect (batched - 6 calls → 1)
-        firstdaytime_int = int(state.firstdaytime)
-        result = ground_rust.ts_wave_delay_batch(
-            as_float32(gvf_bundle.lup),
-            as_float32(gvf_bundle.lup_e),
-            as_float32(gvf_bundle.lup_s),
-            as_float32(gvf_bundle.lup_w),
-            as_float32(gvf_bundle.lup_n),
-            tg_temp,
-            firstdaytime_int,
-            state.timeadd,
-            state.timestep_dec,
-            as_float32(state.tgmap1),
-            as_float32(state.tgmap1_e),
-            as_float32(state.tgmap1_s),
-            as_float32(state.tgmap1_w),
-            as_float32(state.tgmap1_n),
-            as_float32(state.tgout1),
-        )
-
-        # Extract delayed outputs
-        lup = np.asarray(result.lup)
-        lup_e = np.asarray(result.lup_e)
-        lup_s = np.asarray(result.lup_s)
-        lup_w = np.asarray(result.lup_w)
-        lup_n = np.asarray(result.lup_n)
-
-        # Build output state from result (copy first, then mutate the copy)
-        output_state = state.copy()
-        output_state.timeadd = result.timeadd
-        output_state.tgmap1 = np.asarray(result.tgmap1)
-        output_state.tgmap1_e = np.asarray(result.tgmap1_e)
-        output_state.tgmap1_s = np.asarray(result.tgmap1_s)
-        output_state.tgmap1_w = np.asarray(result.tgmap1_w)
-        output_state.tgmap1_n = np.asarray(result.tgmap1_n)
-        output_state.tgout1 = np.asarray(result.tgout1)
-
-        # Update firstdaytime flag for next timestep
-        if weather.is_daytime:
-            output_state.firstdaytime = 0.0
-        else:
-            output_state.firstdaytime = 1.0
-            output_state.timeadd = 0.0
-    else:
-        # Single timestep: use raw GVF values (no thermal delay)
-        lup = gvf_bundle.lup
-        lup_e = gvf_bundle.lup_e
-        lup_s = gvf_bundle.lup_s
-        lup_w = gvf_bundle.lup_w
-        lup_n = gvf_bundle.lup_n
-
-    return LupBundle(
-        lup=lup.astype(np.float32),
-        lup_e=lup_e.astype(np.float32),
-        lup_s=lup_s.astype(np.float32),
-        lup_w=lup_w.astype(np.float32),
-        lup_n=lup_n.astype(np.float32),
-        state=output_state,
-    )
 
 
 def calculate_core_fused(
@@ -277,15 +177,9 @@ def calculate_core_fused(
     max_height = surface.max_height
 
     # SVF resolution (cached between timesteps)
-    svf_bundle, _needs_psi_adjustment = resolve_svf(
+    svf_bundle = resolve_svf(
         surface=surface,
         precomputed=precomputed,
-        dsm=surface.dsm,
-        cdsm=cdsm,
-        tdsm=tdsm,
-        pixel_size=pixel_size,
-        use_veg=use_veg,
-        max_height=max_height,
     )
 
     # Vegetation transmissivity

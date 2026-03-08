@@ -121,10 +121,10 @@ class SolweigResult:
 
         # Use surface metadata if available and not overridden
         if surface is not None:
-            if transform is None and surface._geotransform is not None:
-                transform = surface._geotransform
-            if crs_wkt is None and surface._crs_wkt is not None:
-                crs_wkt = surface._crs_wkt
+            if transform is None and surface.geotransform is not None:
+                transform = surface.geotransform
+            if crs_wkt is None and surface.crs is not None:
+                crs_wkt = surface.crs
 
         # Default transform: identity (top-left origin, 1m pixels)
         if transform is None:

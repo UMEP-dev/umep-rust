@@ -158,7 +158,11 @@ def check_path(path_str: str | Path, make_dir: bool = False) -> Path:
             raise OSError(
                 f"Parent directory {path.parent} does not exist for path {path}. Set make_dir=True to create it."
             )
-    if not path.exists() and not path.suffix:
+    if path.is_dir():
+        # Already an existing directory; nothing to do.
+        pass
+    elif not path.exists() and not path.suffix:
+        # Looks like a directory path (no file extension); create or raise.
         if make_dir:
             path.mkdir(parents=True, exist_ok=True)
         else:
@@ -498,7 +502,7 @@ def read_raster_window(path_str: str | Path, window: tuple[slice, slice], band: 
 
 
 def load_raster(
-    path_str: str, bbox: list[int] | None = None, band: int = 0, ensure_float32: bool = True
+    path_str: str, bbox: list[float] | None = None, band: int = 0, ensure_float32: bool = True
 ) -> tuple[np.ndarray, list[float], str | None, float | None]:
     """
     Load raster, optionally crop to bbox.
@@ -593,6 +597,8 @@ def load_raster(
     # Handle no-data (support NaN)
     if no_data_val is not None and not np.isnan(no_data_val):
         logger.info(f"No-data value is {no_data_val}, replacing with NaN")
+        if not np.issubdtype(rast_arr.dtype, np.floating):
+            rast_arr = rast_arr.astype(np.float32)
         rast_arr[rast_arr == no_data_val] = np.nan
     if rast_arr.size == 0:
         raise ValueError("Raster array is empty after loading/cropping")

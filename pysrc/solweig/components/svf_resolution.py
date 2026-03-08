@@ -22,23 +22,13 @@ if TYPE_CHECKING:
 def resolve_svf(
     surface: SurfaceData,
     precomputed: PrecomputedData | None,
-    dsm: NDArray[np.floating],
-    cdsm: NDArray[np.floating] | None,
-    tdsm: NDArray[np.floating] | None,
-    pixel_size: float,
-    use_veg: bool,
-    max_height: float,
-    psi: float | None = None,
-) -> tuple[SvfBundle, bool]:
+) -> SvfBundle:
     """
     Look up SVF from surface or precomputed data.
 
-    Returns (SvfBundle, needs_psi_adjustment). Raises
-    MissingPrecomputedData if SVF is not available from either source.
+    Returns SvfBundle. Raises MissingPrecomputedData if SVF is not
+    available from either source.
     """
-    # Import here to avoid circular dependency
-
-    needs_psi_adjustment = False
 
     # Priority 1: Check surface.svf (from prepare/cache)
     if surface.svf is not None:
@@ -65,8 +55,6 @@ def resolve_svf(
             west=svf_data.svf_aveg_west,
         )
         svfbuveg = svf_data.svfbuveg
-        # Geometric svfbuveg without psi — adjusted at calculation time
-        needs_psi_adjustment = False
 
     # Priority 2: Check precomputed.svf (legacy)
     elif precomputed is not None and precomputed.svf is not None:
@@ -93,8 +81,6 @@ def resolve_svf(
             west=svf_data.svf_aveg_west,
         )
         svfbuveg = svf_data.svfbuveg
-        # Geometric svfbuveg without psi — adjusted at calculation time
-        needs_psi_adjustment = False
 
     # No SVF available — require explicit computation
     else:
@@ -110,9 +96,8 @@ def resolve_svf(
     # Formula: svfalfa = arcsin(exp(log(1 - (svf + svf_veg - 1)) / 2))
     # Used in anisotropic sky calculations
     tmp = np.clip(svf + svf_veg - 1.0, 0.0, 1.0)
-    eps = np.finfo(np.float32).tiny
-    safe_term = np.clip(1.0 - tmp, eps, 1.0)
-    svfalfa = np.arcsin(np.exp(np.log(safe_term) / 2.0))
+    safe_term = np.clip(1.0 - tmp, 0.0, 1.0)
+    svfalfa = np.arcsin(np.sqrt(safe_term))
 
     # Construct bundle
     bundle = SvfBundle(
@@ -126,7 +111,7 @@ def resolve_svf(
         svfalfa=svfalfa,
     )
 
-    return bundle, needs_psi_adjustment
+    return bundle
 
 
 def adjust_svfbuveg_with_psi(

@@ -92,7 +92,7 @@ def compute_ground_temperature(
     deg2rad = np.pi / 180.0
 
     # Get clear sky radiation (I0) from clearnessindex function
-    location_dict = {"latitude": location.latitude, "longitude": location.longitude, "altitude": 0.0}
+    location_dict = {"latitude": location.latitude, "longitude": location.longitude, "altitude": location.altitude}
     i0, _, _, _, _ = clearnessindex_2013b(
         zen, jday, weather.ta, weather.rh / 100.0, weather.global_rad, location_dict, -999.0
     )

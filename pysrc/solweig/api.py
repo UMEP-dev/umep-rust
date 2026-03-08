@@ -314,10 +314,6 @@ def _calculate_single(
     physics = effective_physics
     materials = effective_materials
 
-    # Use default human params if not provided
-    if human is None:
-        human = HumanParams()
-
     # Load default physics if not provided
     if physics is None:
         physics = load_physics()
@@ -434,6 +430,20 @@ def calculate(
 
     # Accept a single Weather or a list
     weather_series = [weather] if isinstance(weather, Weather) else weather
+
+    # Validate chronological order and positive timestep
+    if len(weather_series) >= 2:
+        for i in range(1, len(weather_series)):
+            if weather_series[i].datetime <= weather_series[i - 1].datetime:
+                raise WeatherDataError(
+                    field="datetime",
+                    value=str(weather_series[i].datetime),
+                    reason=(
+                        f"Weather series must be in strict chronological order. "
+                        f"Entry {i} ({weather_series[i].datetime}) is not after "
+                        f"entry {i - 1} ({weather_series[i - 1].datetime})."
+                    ),
+                )
 
     return _calculate_timeseries(
         surface=surface,

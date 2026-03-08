@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import json
 from datetime import datetime as dt
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .models import HumanParams, Location, SurfaceData, Weather
+
+
+def _get_version() -> str:
+    """Get installed package version, with fallback."""
+    try:
+        return _pkg_version("solweig")
+    except Exception:
+        return "unknown"
 
 
 def create_run_metadata(
@@ -45,7 +54,7 @@ def create_run_metadata(
     from .utils import namespace_to_dict
 
     metadata = {
-        "solweig_version": "0.0.1a1",
+        "solweig_version": _get_version(),
         "run_timestamp": dt.now().isoformat(),
         "grid": {
             "rows": surface.shape[0],

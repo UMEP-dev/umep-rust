@@ -16,12 +16,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-if RASTERIO_AVAILABLE:
-    from rasterio.transform import array_bounds, from_bounds  # noqa: F401
-    from rasterio.warp import Resampling, reproject  # noqa: F401
-elif GDAL_AVAILABLE:
-    from osgeo import gdal, gdalconst  # noqa: F401
-
 
 # =============================================================================
 # Namespace Conversion (for JSON parameter loading)

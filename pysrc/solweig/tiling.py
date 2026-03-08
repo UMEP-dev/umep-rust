@@ -1123,11 +1123,11 @@ def _calculate_timeseries_tiled(
     if effective_outputs:
         requested_outputs |= set(effective_outputs)
 
-    need_shadow = requested_outputs is None or "shadow" in requested_outputs
-    need_kdown = requested_outputs is None or "kdown" in requested_outputs
-    need_kup = requested_outputs is None or "kup" in requested_outputs
-    need_ldown = requested_outputs is None or "ldown" in requested_outputs
-    need_lup = requested_outputs is None or "lup" in requested_outputs
+    need_shadow = "shadow" in requested_outputs
+    need_kdown = "kdown" in requested_outputs
+    need_kup = "kup" in requested_outputs
+    need_ldown = "ldown" in requested_outputs
+    need_lup = "lup" in requested_outputs
 
     # Fill NaN in surface layers
     surface.fill_nan()

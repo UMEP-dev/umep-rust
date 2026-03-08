@@ -457,7 +457,51 @@ class SurfaceData:
             tdsm_relative=tdsm_relative,
         )
 
-        # Validate cached SVF against current inputs (if SVF was loaded)
+        # Preprocess layers: convert relative heights to absolute and
+        # enforce DSM >= DEM (terrain is the minimum surface elevation).
+        # This must happen BEFORE cache validation and walls/SVF so they
+        # see absolute heights and hashes match the post-processed arrays.
+        needs_preprocess = (
+            dsm_relative
+            or (cdsm_relative and surface_data.cdsm is not None)
+            or (tdsm_relative and surface_data.tdsm is not None)
+            or surface_data.dem is not None
+        )
+        if needs_preprocess:
+            logger.debug("  Preprocessing heights")
+            surface_data.preprocess()
+            # Sync aligned_rasters so cache helpers see absolute heights
+            aligned_rasters["dsm_arr"] = surface_data.dsm
+            if surface_data.cdsm is not None:
+                aligned_rasters["cdsm_arr"] = surface_data.cdsm
+            if surface_data.tdsm is not None:
+                aligned_rasters["tdsm_arr"] = surface_data.tdsm
+
+        # Validate cached walls against current (post-processed) inputs.
+        # Cache metadata is written by _compute_and_cache_walls using the
+        # post-processed DSM, so we must validate after preprocessing.
+        if (
+            preprocess_data["wall_height_arr"] is not None
+            and not preprocess_data["compute_walls"]
+            and not force_recompute
+        ):
+            walls_cache_dir = working_path / "walls" / pixel_size_tag(pixel_size)
+            if not walls_cache_dir.exists():
+                walls_cache_dir = working_path / "walls"  # legacy fallback
+            dsm_arr = aligned_rasters["dsm_arr"]
+            cdsm_arr = aligned_rasters.get("cdsm_arr")
+            if not validate_cache(walls_cache_dir, dsm_arr, pixel_size, cdsm_arr):
+                logger.info("  → Wall cache stale, clearing and recomputing walls...")
+                clear_stale_cache(walls_cache_dir)
+                preprocess_data["wall_height_arr"] = None
+                preprocess_data["wall_aspect_arr"] = None
+                preprocess_data["compute_walls"] = True
+                surface_data.wall_height = None
+                surface_data.wall_aspect = None
+
+        # Validate cached SVF against current (post-processed) inputs.
+        # Hashing after preprocessing ensures that relative-height runs
+        # don't spuriously invalidate the cache.
         if preprocess_data["svf_data"] is not None and not force_recompute:
             dsm_arr = aligned_rasters["dsm_arr"]
             cdsm_arr = aligned_rasters.get("cdsm_arr")
@@ -497,25 +541,6 @@ class SurfaceData:
                 preprocess_data["svf_data"] = None
                 preprocess_data["compute_svf"] = True
                 surface_data.svf = None
-
-        # Preprocess layers: convert relative heights to absolute and
-        # enforce DSM >= DEM (terrain is the minimum surface elevation).
-        # This must happen BEFORE walls/SVF so they see absolute heights.
-        needs_preprocess = (
-            dsm_relative
-            or (cdsm_relative and surface_data.cdsm is not None)
-            or (tdsm_relative and surface_data.tdsm is not None)
-            or surface_data.dem is not None
-        )
-        if needs_preprocess:
-            logger.debug("  Preprocessing heights")
-            surface_data.preprocess()
-            # Sync aligned_rasters so cache helpers see absolute heights
-            aligned_rasters["dsm_arr"] = surface_data.dsm
-            if surface_data.cdsm is not None:
-                aligned_rasters["cdsm_arr"] = surface_data.cdsm
-            if surface_data.tdsm is not None:
-                aligned_rasters["tdsm_arr"] = surface_data.tdsm
 
         # Compute and cache walls if needed
         if preprocess_data["compute_walls"]:

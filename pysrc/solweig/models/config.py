@@ -32,7 +32,6 @@ class ModelConfig:
         use_anisotropic_sky: Use Perez anisotropic sky model for diffuse
             radiation. Default True. Requires precomputed shadow matrices.
         human: Human body parameters for Tmrt calculations.
-        material_params: Optional material properties from JSON file.
         outputs: Which outputs to save in timeseries calculations.
             Default ``["tmrt"]``.
         physics: Physics parameters (vegetation, posture geometry). Optional.
@@ -73,7 +72,6 @@ class ModelConfig:
 
     use_anisotropic_sky: bool = True
     human: HumanParams | None = None
-    material_params: SimpleNamespace | None = None
     outputs: list[str] = field(default_factory=lambda: ["tmrt"])
     physics: SimpleNamespace | None = None
     materials: SimpleNamespace | None = None
@@ -147,7 +145,6 @@ class ModelConfig:
 
         return cls(
             human=human,
-            material_params=params,
             materials=params,
         )
 

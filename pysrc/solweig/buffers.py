@@ -224,23 +224,12 @@ def as_float32(arr: NDArray) -> NDArray[np.float32]:
     """
     Ensure array is float32, avoiding copy if already correct dtype.
 
-    Shorthand for ensure_float32_inplace() - use this in component code
-    to replace `.astype(np.float32)` calls where the array might already
-    be float32.
+    Shorthand for ensure_float32_inplace().
 
     Args:
         arr: Input array (any dtype)
 
     Returns:
         Float32 array (same object if already float32, copy otherwise)
-
-    Example:
-        # Instead of:
-        svf.astype(np.float32)  # Always copies
-
-        # Use:
-        as_float32(svf)  # Only copies if needed
     """
-    if arr.dtype == np.float32:
-        return arr
-    return arr.astype(np.float32)
+    return ensure_float32_inplace(arr)

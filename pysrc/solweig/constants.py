@@ -12,7 +12,7 @@ with proper references.
 
 # Stefan-Boltzmann constant (W/m²/K⁴)
 # Used for blackbody radiation calculations: E = σ × T⁴
-# Closest f32 to CODATA 2018 (5.670374419e-8). Matches upstream UMEP Solweig pipeline.
+# Legacy UMEP value. CODATA 2018 exact: 5.670374419e-8. Kept for upstream parity.
 SBC = 5.67051e-8
 
 # Kelvin to Celsius conversion offset
@@ -46,8 +46,8 @@ F_CYL_STANDING = 0.28  # Cylindrical projection factor for direct beam radiation
 
 # Sitting posture view factors (cubic model)
 # Human body modeled as a sitting cube with equal area on all 6 sides
-F_UP_SITTING = 0.166666  # View factor to sky/ground (1/6 per side)
-F_SIDE_SITTING = 0.166666  # View factor from each of 4 cardinal directions (1/6 per side)
+F_UP_SITTING = 1.0 / 6.0  # View factor to sky/ground (1/6 per side)
+F_SIDE_SITTING = 1.0 / 6.0  # View factor from each of 4 cardinal directions (1/6 per side)
 F_CYL_SITTING = 0.20  # Cylindric projection factor for sitting posture
 
 

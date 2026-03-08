@@ -141,6 +141,7 @@ def filter1Goodwin_as_aspect_v3(
     y = np.zeros((row, col), dtype=np.float32)  # final direction
     z = np.zeros((row, col), dtype=np.float32)  # temporary direction
     x = np.zeros((row, col), dtype=np.float32)  # building side
+    walls = walls.copy()
     walls[walls > 0.5] = 1
 
     for h in get_progress_iterator(

@@ -71,7 +71,8 @@ def detect_building_mask(
         # Wall pixels mark building edges; dilate to capture interiors
         wall_mask = wall_height > 0
 
-        # Dilate to capture building interiors (typical building width up to 50m)
+        # Dilate building mask by ~25m to capture nearby ground level.
+        # Assumes max building footprint radius ~25m; scale iterations by pixel size.
         struct = generate_binary_structure(2, 2)  # 8-connectivity
         iterations = int(25 / pixel_size) + 1
         dilated = _binary_dilation(wall_mask, struct, iterations=iterations)

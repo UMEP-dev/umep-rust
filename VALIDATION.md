@@ -14,7 +14,7 @@ automatically in CI on every push and PR.
 - **Type:** Enclosed courtyard, central Gothenburg
 - **Period:** 2005-10-07 (1 day, 12 daytime hours)
 - **Resolution:** 1 m
-- **POI:** (51, 118) — shifted +1 column from shapefile position (51, 117) to better match the observed shadow timing profile
+- **POI:** (51, 117) — original measurement location from POI_KR.shp
 - **Reference:** Lindberg, Holmer & Thorsson (2008)
 - **Notes:** The only site that directly validates individual radiation budget
   components (K↓, K↑, L↓, L↑ and directional fluxes), not just Tmrt.
@@ -54,9 +54,9 @@ automatically in CI on every push and PR.
 
 | Metric               | Kronenhuset | Gustav Adolfs |            GVC |
 | -------------------- | ----------: | ------------: | -------------: |
-| Tmrt RMSE range (°C) |         6.1 |      9.3–18.9 |      2.4–8.9 |
-| Tmrt R² range        |        0.59 |     0.56–0.91 |    0.32–0.60 |
-| Tmrt bias range (°C) |       -0.6 | -13.9 to -3.9 | -4.9 to +1.2 |
+| Tmrt RMSE range (°C) |         6.0 |      9.3–18.9 |      2.4–8.9 |
+| Tmrt R² range        |        0.52 |     0.56–0.91 |    0.32–0.60 |
+| Tmrt bias range (°C) |       +1.3 | -13.9 to -3.9 | -4.9 to +1.2 |
 | Days                 |           1 |             3 |            3 |
 | Total obs hours      |          12 |            43 |           30 |
 
@@ -67,7 +67,7 @@ valid observations).
 
 | Site          | Day        | RMSE (°C) | MAE (°C) | Bias (°C) |   R² |   n |
 | ------------- | ---------- | --------: | -------: | --------: | ---: | --: |
-| Kronenhuset   | 2005-10-07 |       6.1 |      4.7 |      -0.6 | 0.59 |  12 |
+| Kronenhuset   | 2005-10-07 |       6.0 |      4.7 |      +1.3 | 0.52 |  12 |
 | Gustav Adolfs | 2005-10-11 |      18.9 |     16.1 |     -13.9 | 0.91 |  12 |
 | Gustav Adolfs | 2006-07-26 |      11.9 |      7.9 |      -4.6 | 0.56 |  16 |
 | Gustav Adolfs | 2006-08-01 |       9.3 |      6.7 |      -3.9 | 0.72 |  15 |
@@ -82,11 +82,11 @@ for anisotropic sky mode (isotropic in parentheses where different).
 
 | Component |        RMSE |           Bias |
 | --------- | ----------: | -------------: |
-| K↓ (W/m²) | 69.1 (68.5) | -48.6 (-47.8) |
-| K↑ (W/m²) |         5.3 |           -0.4 |
-| L↓ (W/m²) | 62.5 (74.0) | +62.4 (+73.9) |
-| L↑ (W/m²) |        12.9 |           +8.7 |
-| Tmrt (°C) |   6.1 (7.3) |   -0.6 (+4.0) |
+| K↓ (W/m²) | 51.0 (47.1) | -22.3 (-10.9) |
+| K↑ (W/m²) |         6.6 |           +3.5 |
+| L↓ (W/m²) | 39.0 (45.4) | +38.5 (+45.2) |
+| L↑ (W/m²) |        13.1 |           +9.0 |
+| Tmrt (°C) |   6.0 (6.4) |   +1.3 (+2.7) |
 
 Negative R² values for K↓ and L↓ reflect the fact that point-level
 comparisons of shadow-dependent quantities are dominated by shadow-timing
@@ -96,7 +96,7 @@ errors (see [Known limitations](#known-limitations)).
 
 | Site          | Day        | RMSE (W/m²) | Bias (W/m²) |
 | ------------- | ---------- | ----------: | ----------: |
-| Kronenhuset   | 2005-10-07 |        62.5 |       +62.4 |
+| Kronenhuset   | 2005-10-07 |        39.0 |       +38.5 |
 | Gustav Adolfs | 2005-10-11 |        83.7 |       +83.1 |
 | Gustav Adolfs | 2006-07-26 |        76.4 |       +68.5 |
 | Gustav Adolfs | 2006-08-01 |        65.2 |       +62.4 |
@@ -149,16 +149,15 @@ authors.
 
 ![POI sweep RMSE — Kronenhuset](tests/validation/kronenhuset/poi_sweep_results/poi_sweep_rmse.png)
 
-|           | Current POI (51, 118) | Best pixel (133, 197) |
+|           | Current POI (51, 117) | Best pixel (133, 197) |
 | --------- | --------------------: | --------------------: |
-| Mean RMSE |               6.11 °C |               4.53 °C |
-| Mean R²   |                 0.590 |                 0.697 |
+| Mean RMSE |               6.02 °C |               4.53 °C |
+| Mean R²   |                 0.519 |                 0.697 |
 | Rank      |                   TBD |             1 / 5,927 |
 
-The POI was shifted +1 column from the shapefile position (51, 117) to
-better match the observed shadow timing profile. The shapefile position is
-reasonable but the adjacent pixel produces a closer match to the measured
-diurnal Tmrt curve.
+The POI matches the original measurement location from POI_KR.shp. The
+sweep best pixel (133, 197) achieves lower RMSE but the original field
+coordinates are preferred for scientific reproducibility.
 
 ### GVC sweep
 

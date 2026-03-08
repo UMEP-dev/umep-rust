@@ -103,7 +103,8 @@ def load_physics(physics_json_path: str | Path | None = None) -> SimpleNamespace
         physics_dict = json.load(f)
 
     result = dict_to_namespace(physics_dict)
-    assert isinstance(result, SimpleNamespace)
+    if not isinstance(result, SimpleNamespace):
+        raise TypeError(f"Expected SimpleNamespace from JSON, got {type(result).__name__}")
     return result
 
 
@@ -167,7 +168,7 @@ def get_lc_properties_from_params(
     """
     Derive surface properties from land cover grid using loaded params.
 
-    This mirrors the logic in configs.py TgMaps class.
+    This mirrors the logic in loaders.py TgMaps class.
 
     Args:
         land_cover: Land cover classification grid (UMEP standard IDs).
@@ -186,40 +187,35 @@ def get_lc_properties_from_params(
     _DEFAULT_TSTART = -3.41  # Ground temperature offset (°C)
     _DEFAULT_TMAXLST = 15.0  # Max land surface temperature amplitude (°C)
 
-    alb_grid = np.full((rows, cols), _DEFAULT_ALBEDO, dtype=np.float32)
-    emis_grid = np.full((rows, cols), _DEFAULT_EMISSIVITY, dtype=np.float32)
-    tgk_grid = np.full((rows, cols), _DEFAULT_TGK, dtype=np.float32)
-    tstart_grid = np.full((rows, cols), _DEFAULT_TSTART, dtype=np.float32)
-    tmaxlst_grid = np.full((rows, cols), _DEFAULT_TMAXLST, dtype=np.float32)
-
-    # Get unique land cover IDs and filter to valid ones (0-7)
+    # Get land cover with wall codes remapped to buildings
     lc = np.copy(land_cover)
     lc[lc >= 100] = 2  # Treat wall codes as buildings
-    unique_ids = np.unique(lc)
-    valid_ids = unique_ids[unique_ids <= 7].astype(int)
 
-    # Build mappings from land cover ID to name to parameter values
-    for lc_id in valid_ids:
-        # Get land cover name from ID (e.g., 0 -> "Cobble_stone_2014a")
+    # Build lookup tables (lc_id → property value) for IDs 0-7
+    max_id = 8
+    alb_lut = np.full(max_id, _DEFAULT_ALBEDO, dtype=np.float32)
+    emis_lut = np.full(max_id, _DEFAULT_EMISSIVITY, dtype=np.float32)
+    tgk_lut = np.full(max_id, _DEFAULT_TGK, dtype=np.float32)
+    tstart_lut = np.full(max_id, _DEFAULT_TSTART, dtype=np.float32)
+    tmaxlst_lut = np.full(max_id, _DEFAULT_TMAXLST, dtype=np.float32)
+
+    for lc_id in range(max_id):
         name = getattr(params.Names.Value, str(lc_id), None)
         if name is None:
             continue
+        alb_lut[lc_id] = getattr(params.Albedo.Effective.Value, name, _DEFAULT_ALBEDO)
+        emis_lut[lc_id] = getattr(params.Emissivity.Value, name, _DEFAULT_EMISSIVITY)
+        tgk_lut[lc_id] = getattr(params.Ts_deg.Value, name, _DEFAULT_TGK)
+        tstart_lut[lc_id] = getattr(params.Tstart.Value, name, _DEFAULT_TSTART)
+        tmaxlst_lut[lc_id] = getattr(params.TmaxLST.Value, name, _DEFAULT_TMAXLST)
 
-        # Get parameter values for this land cover type
-        albedo = getattr(params.Albedo.Effective.Value, name, 0.15)
-        emissivity = getattr(params.Emissivity.Value, name, 0.95)
-        tgk = getattr(params.Ts_deg.Value, name, 0.37)
-        tstart = getattr(params.Tstart.Value, name, -3.41)
-        tmaxlst = getattr(params.TmaxLST.Value, name, 15.0)
-
-        # Apply to grid where land cover matches
-        mask = lc == lc_id
-        if np.any(mask):
-            alb_grid[mask] = albedo
-            emis_grid[mask] = emissivity
-            tgk_grid[mask] = tgk
-            tstart_grid[mask] = tstart
-            tmaxlst_grid[mask] = tmaxlst
+    # Vectorized lookup: clip IDs to valid range and index into LUTs
+    lc_safe = np.clip(lc, 0, max_id - 1)
+    alb_grid = alb_lut[lc_safe]
+    emis_grid = emis_lut[lc_safe]
+    tgk_grid = tgk_lut[lc_safe]
+    tstart_grid = tstart_lut[lc_safe]
+    tmaxlst_grid = tmaxlst_lut[lc_safe]
 
     return alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid
 
@@ -261,7 +257,13 @@ def resolve_wall_params(
     if materials is None:
         materials = load_params()
 
-    tgk = float(getattr(materials.Ts_deg.Value, json_name))
-    tstart = float(getattr(materials.Tstart.Value, json_name))
-    tmaxlst = float(getattr(materials.TmaxLST.Value, json_name))
+    try:
+        tgk = float(getattr(materials.Ts_deg.Value, json_name))
+        tstart = float(getattr(materials.Tstart.Value, json_name))
+        tmaxlst = float(getattr(materials.TmaxLST.Value, json_name))
+    except AttributeError:
+        raise ValueError(
+            f"Materials JSON missing required properties for wall material {json_name!r}. "
+            f"Expected keys: Ts_deg.Value.{json_name}, Tstart.Value.{json_name}, TmaxLST.Value.{json_name}"
+        ) from None
     return tgk, tstart, tmaxlst
