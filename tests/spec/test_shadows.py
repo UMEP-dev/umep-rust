@@ -162,9 +162,9 @@ class TestShadowProperties:
 
         measured_length = 50 - shadow_rows[0] if len(shadow_rows) > 0 else 0
 
-        tolerance = expected_length * 0.15 + 3  # 15% or 3 pixels
+        tolerance = 2  # pixel discretization: ≤1px typical, 2px margin
         assert abs(measured_length - expected_length) <= tolerance, (
-            f"Shadow length {measured_length} should be ~{expected_length:.1f} (±15%)"
+            f"Shadow length {measured_length} should be ~{expected_length:.1f} (±{tolerance}px)"
         )
 
     def test_property_7_building_tops_sunlit(self):
@@ -220,7 +220,7 @@ class TestShadowEquation:
         shadow_rows = np.where(np.any(shadow_north > 0, axis=1))[0]
 
         measured_length = 90 - shadow_rows[0] if len(shadow_rows) > 0 else 0
-        tolerance = theoretical_length * 0.15 + 3
+        tolerance = 2  # pixel discretization: ≤1px typical, 2px margin
 
         assert abs(measured_length - theoretical_length) <= tolerance, (
             f"At {altitude}°: expected ~{theoretical_length:.1f}m, got {measured_length}m"
