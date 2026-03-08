@@ -34,7 +34,7 @@ def _cardinal_components(
     Lwest = np.zeros(shape, dtype=np.float32)
     Lnorth = np.zeros(shape, dtype=np.float32)
 
-    if (patch_azimuth > 360) or (patch_azimuth < 180):
+    if patch_azimuth < 180:
         Least = base_radiation * np.cos((90 - patch_azimuth) * _DEG2RAD)
     if (patch_azimuth > 90) and (patch_azimuth < 270):
         Lsouth = base_radiation * np.cos((180 - patch_azimuth) * _DEG2RAD)
@@ -126,10 +126,6 @@ def longwave_from_buildings(
 def longwave_from_buildings_wallScheme(
     voxelMaps, voxelTable, steradian, angle_of_incidence, angle_of_incidence_h, patch_azimuth
 ):
-    shape = (voxelMaps.shape[0], voxelMaps.shape[1])
-    Lside_sh = np.zeros(shape, dtype=np.float32)
-    Ldown_sh = np.zeros(shape, dtype=np.float32)
-
     unique_ids = list(np.unique(voxelMaps)[1:])
     lw_rad_dict = dict(voxelTable.loc[unique_ids, "LongwaveRadiation"])
     patch_radiation = np.vectorize(lw_rad_dict.get)(voxelMaps).astype(float)
@@ -141,6 +137,8 @@ def longwave_from_buildings_wallScheme(
     base = patch_radiation * steradian * angle_of_incidence
     Least, Lsouth, Lwest, Lnorth = _cardinal_components(base, patch_azimuth)
 
+    Lside_sh = np.zeros_like(Lside)
+    Ldown_sh = np.zeros_like(Ldown)
     return Lside, Lside_sh, Ldown, Ldown_sh, Least, Lsouth, Lwest, Lnorth
 
 

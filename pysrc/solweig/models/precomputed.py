@@ -103,6 +103,55 @@ class SvfArrays:
         )
 
     @classmethod
+    def from_rust_result(
+        cls,
+        svf_result,
+        use_veg: bool = True,
+        ones: NDArray[np.floating] | None = None,
+    ) -> SvfArrays:
+        """
+        Create SvfArrays from a raw Rust SVF computation result.
+
+        Wraps each attribute with ``np.array()`` and substitutes ``ones``
+        arrays for vegetation fields when ``use_veg`` is False.
+
+        Args:
+            svf_result: Rust SvfResult object with per-direction SVF attributes.
+            use_veg: Whether vegetation SVF was computed. When False, vegetation
+                and aveg fields are filled with ``ones``.
+            ones: Array of ones matching the grid shape (used when ``use_veg``
+                is False). If None and ``use_veg`` is False, a ones array is
+                created from the SVF shape.
+
+        Returns:
+            SvfArrays instance.
+        """
+        svf_arr = np.array(svf_result.svf)
+        if not use_veg:
+            if ones is None:
+                ones = np.ones_like(svf_arr, dtype=np.float32)
+        else:
+            # ones not needed when use_veg is True, but satisfy type checker
+            ones = np.ones_like(svf_arr, dtype=np.float32)
+        return cls(
+            svf=svf_arr,
+            svf_north=np.array(svf_result.svf_north),
+            svf_east=np.array(svf_result.svf_east),
+            svf_south=np.array(svf_result.svf_south),
+            svf_west=np.array(svf_result.svf_west),
+            svf_veg=np.array(svf_result.svf_veg) if use_veg else ones.copy(),
+            svf_veg_north=np.array(svf_result.svf_veg_north) if use_veg else ones.copy(),
+            svf_veg_east=np.array(svf_result.svf_veg_east) if use_veg else ones.copy(),
+            svf_veg_south=np.array(svf_result.svf_veg_south) if use_veg else ones.copy(),
+            svf_veg_west=np.array(svf_result.svf_veg_west) if use_veg else ones.copy(),
+            svf_aveg=np.array(svf_result.svf_veg_blocks_bldg_sh) if use_veg else ones.copy(),
+            svf_aveg_north=np.array(svf_result.svf_veg_blocks_bldg_sh_north) if use_veg else ones.copy(),
+            svf_aveg_east=np.array(svf_result.svf_veg_blocks_bldg_sh_east) if use_veg else ones.copy(),
+            svf_aveg_south=np.array(svf_result.svf_veg_blocks_bldg_sh_south) if use_veg else ones.copy(),
+            svf_aveg_west=np.array(svf_result.svf_veg_blocks_bldg_sh_west) if use_veg else ones.copy(),
+        )
+
+    @classmethod
     def from_bundle(cls, bundle) -> SvfArrays:
         """
         Create SvfArrays from a SvfBundle (computation result).

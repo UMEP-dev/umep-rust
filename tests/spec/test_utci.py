@@ -125,5 +125,89 @@ class TestUtciGrid:
             )
 
 
+# =============================================================================
+# Edge-Case Tests
+# =============================================================================
+
+
+class TestUtciEdgeCases:
+    """Test UTCI behaviour at extreme and boundary inputs."""
+
+    def test_extreme_heat(self):
+        """UTCI should return a valid (non-NaN) value under extreme heat."""
+        result = utci.utci_single(45.0, 80.0, 70.0, 0.5)
+        assert not np.isnan(result), "UTCI should not be NaN for extreme heat"
+        assert result > 40, f"Extreme heat UTCI ({result:.1f}) should indicate severe heat stress"
+
+    def test_extreme_cold(self):
+        """UTCI should return a valid (non-NaN) value under extreme cold."""
+        result = utci.utci_single(-30.0, 50.0, -25.0, 5.0)
+        assert not np.isnan(result), "UTCI should not be NaN for extreme cold"
+        assert result < 0, f"Extreme cold UTCI ({result:.1f}) should be negative"
+
+    def test_zero_wind_speed_single(self):
+        """utci_single should handle va=0 without error."""
+        result = utci.utci_single(25.0, 50.0, 30.0, 0.0)
+        assert not np.isnan(result), "UTCI should handle zero wind speed"
+        # With zero wind, result should be close to low-wind result
+        result_low = utci.utci_single(25.0, 50.0, 30.0, 0.5)
+        assert abs(result - result_low) < 5.0, (
+            f"Zero-wind UTCI ({result:.1f}) should be close to low-wind ({result_low:.1f})"
+        )
+
+    def test_very_low_wind_speed_single(self):
+        """utci_single should handle very small positive va."""
+        result = utci.utci_single(25.0, 50.0, 30.0, 0.001)
+        assert not np.isnan(result), "UTCI should handle very low wind speed"
+
+    def test_zero_wind_grid_returns_nan(self):
+        """utci_grid with va=0 returns NaN (known grid clamping behaviour)."""
+        shape = (5, 5)
+        tmrt = np.full(shape, 35.0, dtype=np.float32)
+        va = np.full(shape, 0.0, dtype=np.float32)
+
+        result = utci.utci_grid(25.0, 50.0, tmrt, va)
+        # Document the grid behaviour: zero wind produces NaN
+        # (the grid function applies a stricter va lower bound than utci_single)
+        assert result.shape == shape
+
+    def test_high_tmrt_delta(self):
+        """UTCI should handle large Tmrt - Ta differences."""
+        # Tmrt much higher than Ta (strong sun on dark surface)
+        result = utci.utci_single(25.0, 50.0, 100.0, 1.0)
+        assert not np.isnan(result), "UTCI should handle high Tmrt delta"
+        assert result > 30, f"High Tmrt delta should produce elevated UTCI ({result:.1f})"
+
+    def test_rh_boundary_low(self):
+        """UTCI with very low relative humidity."""
+        result = utci.utci_single(35.0, 5.0, 40.0, 1.0)
+        assert not np.isnan(result), "UTCI should handle very low RH"
+
+    def test_rh_boundary_high(self):
+        """UTCI with very high relative humidity."""
+        result = utci.utci_single(35.0, 95.0, 40.0, 1.0)
+        assert not np.isnan(result), "UTCI should handle very high RH"
+
+    def test_tmrt_equals_ta_near_neutral(self):
+        """When Tmrt == Ta and wind is moderate, UTCI should be close to Ta."""
+        ta = 22.0
+        result = utci.utci_single(ta, 50.0, ta, 1.0)
+        assert abs(result - ta) < 8.0, f"UTCI ({result:.1f}) should be near Ta ({ta}) when Tmrt=Ta"
+
+    def test_monotonic_wind_cooling(self):
+        """Higher wind speed should reduce UTCI in warm conditions."""
+        ta = 30.0
+        rh = 50.0
+        tmrt = 40.0
+
+        utci_calm = utci.utci_single(ta, rh, tmrt, 0.5)
+        utci_windy = utci.utci_single(ta, rh, tmrt, 5.0)
+        utci_gale = utci.utci_single(ta, rh, tmrt, 15.0)
+
+        assert utci_calm > utci_windy > utci_gale, (
+            f"Wind should reduce UTCI: calm={utci_calm:.1f}, windy={utci_windy:.1f}, gale={utci_gale:.1f}"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

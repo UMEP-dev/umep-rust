@@ -71,7 +71,7 @@ def _try_import_gdal() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Backend selection  (runs once at first import)
+# Backend selection  (runs once on first access of GDAL_ENV et al.)
 # ---------------------------------------------------------------------------
 
 
@@ -120,4 +120,34 @@ def _setup_geospatial_backend() -> tuple[bool, bool, bool]:
     )
 
 
-GDAL_ENV, RASTERIO_AVAILABLE, GDAL_AVAILABLE = _setup_geospatial_backend()
+# ---------------------------------------------------------------------------
+# Lazy module-level flags — computed on first access, not at import time.
+# This avoids blocking unrelated imports with heavyweight I/O probes.
+#
+# Uses module-level __getattr__ (PEP 562) so that the values remain plain
+# bools, preserving ``is True`` / ``is False`` identity checks in io.py.
+# ---------------------------------------------------------------------------
+
+_backend_result: tuple[bool, bool, bool] | None = None
+
+
+def _get_backend() -> tuple[bool, bool, bool]:
+    global _backend_result  # noqa: PLW0603
+    if _backend_result is None:
+        _backend_result = _setup_geospatial_backend()
+    return _backend_result
+
+
+_BACKEND_ATTRS = frozenset({"GDAL_ENV", "RASTERIO_AVAILABLE", "GDAL_AVAILABLE"})
+
+
+def __getattr__(name: str):  # noqa: N807
+    if name in _BACKEND_ATTRS:
+        gdal_env, rasterio_available, gdal_available = _get_backend()
+        # Install as plain module globals so __getattr__ is not called again.
+        mod = sys.modules[__name__]
+        mod.GDAL_ENV = gdal_env  # type: ignore[attr-defined]
+        mod.RASTERIO_AVAILABLE = rasterio_available  # type: ignore[attr-defined]
+        mod.GDAL_AVAILABLE = gdal_available  # type: ignore[attr-defined]
+        return getattr(mod, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -20,7 +20,7 @@
 - [x] **Input array mutation** — `physics/wallalgorithms.py:144`: `walls[walls > 0.5] = 1` mutates caller's array in-place; copy first
 - [x] **Non-deterministic default datetime** — `models/weather.py:481`: `from_values()` defaults to `dt.now()`; consider requiring explicit datetime or raising
 - [x] **Unguarded log(RH)** — `physics/clearnessindex_2013b.py:67`: `np.log(RH)` with no guard for RH <= 0; add validation or clamp
-- [ ] **Silent PET non-convergence** — Rust `pet.rs`: iterative solver has 200-iteration limit with no warning on non-convergence
+- [x] **Silent PET non-convergence** — Rust `pet.rs`: iterative solver has 200-iteration limit with no warning on non-convergence
 
 ## Dead Code & Redundancy
 
@@ -30,24 +30,24 @@
 - [x] **Dead `requested_outputs is None` checks** — `tiling.py:1126-1130`: `requested_outputs` is always a set; remove dead branches
 - [x] **Unused variable `zen`** — `components/ground.py:91`: computed but never referenced; remove — *Actually used by clearnessindex call; not dead code*
 - [x] **Legacy `material_params` field** — `models/config.py`: duplicates `materials` field; remove or unify
-- [ ] **SVF array construction duplicated 3x** — `models/surface.py`: extract into a factory method like `SvfArrays.from_rust_result()`
-- [ ] **Orchestration duplication** — `tiling.py` and `timeseries.py`: large blocks of config resolution, weather precomputation, and output logic duplicated; extract shared helpers
+- [x] **SVF array construction duplicated 3x** — `models/surface.py`: extract into a factory method like `SvfArrays.from_rust_result()`
+- [x] **Orchestration duplication** — `tiling.py` and `timeseries.py`: large blocks of config resolution, weather precomputation, and output logic duplicated; extract shared helpers
 
 ## Performance
 
 - [x] **Vectorize land cover properties** — `loaders.py` `get_lc_properties_from_params()`: replace 8 full-array scans with `np.take` lookup table
-- [ ] **Avoid redundant `astype(np.float32)`** — `models/surface.py`: use `np.asarray(arr, dtype=np.float32)` to avoid copying when already float32
-- [ ] **Pre-allocate scratch buffers** — `summary.py` `update()`: allocates temporary arrays every call; pre-allocate in `__init__`
-- [ ] **Cache `altmax` per day** — `models/weather.py:354-383`: 96-iteration sun position loop runs per timestep even for same-day calls
-- [ ] **Fragile `id()`-based caching** — `computation.py`: reused memory addresses could return stale data; consider content-based keys
+- [x] **Avoid redundant `astype(np.float32)`** — `models/surface.py`: use `np.asarray(arr, dtype=np.float32)` to avoid copying when already float32
+- [x] **Pre-allocate scratch buffers** — `summary.py` `update()`: allocates temporary arrays every call; pre-allocate in `__init__`
+- [x] **Cache `altmax` per day** — `models/weather.py:354-383`: 96-iteration sun position loop runs per timestep even for same-day calls
+- [x] **Fragile `id()`-based caching** — `computation.py`: reused memory addresses could return stale data; consider content-based keys
 
 ## Architecture & Design
 
-- [ ] **Inconsistent error handling** — `svf_resolution.py` raises custom errors, `gvf.py` returns defaults silently, `ground.py` crashes with `AttributeError`; unify strategy
+- [x] **Inconsistent error handling** — `svf_resolution.py` raises custom errors, `gvf.py` returns defaults silently, `ground.py` crashes with `AttributeError`; unify strategy
 - [x] **Private attribute access** — `models/results.py`: accesses `surface._geotransform` and `surface._crs_wkt` instead of public properties `.geotransform` and `.crs`
-- [ ] **Overloaded `SurfaceData`** — 17 cache/internal fields on the dataclass; consider separating into a dedicated cache container
-- [ ] **Eager import-time I/O** — `_compat.py:123`: backend detection runs at import, blocking unrelated imports; consider lazy initialization
-- [ ] **Mutex poisoning in GPU contexts** — `aniso_gpu.rs`, `gvf_gpu.rs`: poisoned mutex leaves context permanently unusable; add recovery path
+- [x] **Overloaded `SurfaceData`** — 17 cache/internal fields on the dataclass; consider separating into a dedicated cache container
+- [x] **Eager import-time I/O** — `_compat.py:123`: backend detection runs at import, blocking unrelated imports; consider lazy initialization
+- [x] **Mutex poisoning in GPU contexts** — `aniso_gpu.rs`, `gvf_gpu.rs`: poisoned mutex leaves context permanently unusable; add recovery path
 - [x] **Stale docstring reference** — `loaders.py:172`: references `configs.py` which was renamed to `loaders.py`
 - [x] **Fragile `getattr` without default** — `loaders.py:264`: `resolve_wall_params` crashes with `AttributeError` on custom materials JSON missing expected keys
 - [x] **`check_path` directory heuristic** — `io.py:161`: `not path.suffix` misidentifies extensionless files as directories
@@ -61,20 +61,20 @@
 ## Test Coverage Gaps
 
 - [ ] **GPU vs CPU parity tests** — add tests comparing GPU and CPU outputs for shadows, SVF, and GVF (only anisotropic has one)
-- [ ] **UTCI/PET edge-case tests** — test extreme inputs, clamping boundaries, zero wind speed, non-convergence
-- [ ] **GVF property-based tests** — no physics property tests (e.g., "closer buildings produce higher GVF")
-- [ ] **Ground temperature property tests** — only covered by golden regression tests
+- [x] **UTCI/PET edge-case tests** — test extreme inputs, clamping boundaries, zero wind speed, non-convergence
+- [x] **GVF property-based tests** — no physics property tests (e.g., "closer buildings produce higher GVF")
+- [x] **Ground temperature property tests** — only covered by golden regression tests
 - [ ] **Concurrency tests for GPU dispatch** — exercise `readback_inflight` guards with concurrent access
-- [ ] **Missing SVF property test 5** — numbering jumps from 4 to 6; add or document why skipped
+- [x] **Missing SVF property test 5** — numbering jumps from 4 to 6; add or document why skipped
 - [ ] **Shadow length tolerance** — 15% + 3 pixels (~30% effective) is generous; tighten if possible
 
 ## Minor / Code Quality
 
-- [ ] **`save_raster` COG memory leak** — `io.py:313-335`: `memfile.open()` dataset passed to `copy()` but never explicitly closed
+- [x] **`save_raster` COG memory leak** — `io.py:313-335`: `memfile.open()` dataset passed to `copy()` but never explicitly closed
 - [x] **`as_float32` duplicates `ensure_float32_inplace`** — `buffers.py`: two identical functions; consolidate
-- [ ] **`progress()` swallows unknown kwargs** — `progress.py:234-250`: typos in keyword arguments silently ignored
-- [ ] **`patch_radiation.py` East condition** — `_cardinal_components` line 37: `patch_azimuth > 360` is dead code (azimuths never exceed 360)
-- [ ] **`Lside_sh` always zero** — `physics/patch_radiation.py:130-144`: shaded longwave component initialized to zero and never modified but returned
+- [x] **`progress()` swallows unknown kwargs** — `progress.py:234-250`: typos in keyword arguments silently ignored
+- [x] **`patch_radiation.py` East condition** — `_cardinal_components` line 37: `patch_azimuth > 360` is dead code (azimuths never exceed 360)
+- [x] **`Lside_sh` always zero** — `physics/patch_radiation.py:130-144`: shaded longwave component initialized to zero and never modified but returned
 - [x] **`svfalfa` via log/exp** — `components/svf_resolution.py:112-115`: `arcsin(exp(log(x)/2))` is slower and less stable than equivalent `arcsin(sqrt(x))`
 - [x] **GVF dilation magic number** — `components/gvf.py:76`: `iterations = int(25 / pixel_size) + 1` assumes max ~50m buildings; undocumented
 - [x] **String path concatenation** — `walls.py:56`: uses `+` instead of `Path /` operator

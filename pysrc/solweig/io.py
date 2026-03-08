@@ -330,12 +330,13 @@ def save_raster(
                     # Now copy to COG format
                     from rasterio.shutil import copy
 
-                    copy(
-                        memfile.open(),
-                        out_path,
-                        driver="COG",
-                        overview_resampling="average",
-                    )
+                    with memfile.open() as src:
+                        copy(
+                            src,
+                            out_path,
+                            driver="COG",
+                            overview_resampling="average",
+                        )
                     memfile.close()
                     logger.debug(f"Saved COG: {out_path}")
                 else:

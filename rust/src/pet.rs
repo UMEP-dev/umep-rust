@@ -1,6 +1,7 @@
 use numpy::{PyArray2, PyReadonlyArray2};
 use pyo3::prelude::*;
 use rayon::prelude::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Physical constants for PET calculation
 const PO: f32 = 1013.25; // Reference pressure (hPa)
@@ -38,6 +39,7 @@ fn pet_single(
     work: f32,
     icl: f32,
     sex: i32,
+    warn_flag: Option<&AtomicBool>,
 ) -> f32 {
     // Humidity conversion
     let vps = 6.107 * 10.0_f32.powf(7.5 * ta / (238.0 + ta));
@@ -271,6 +273,7 @@ fn pet_single(
     hc *= (P / PO).powf(0.55);
 
     let mut count3 = 1_i32;
+    let mut hit_limit = false;
     while count1 <= 3 {
         let mut enbal = 0.0_f32;
 
@@ -316,9 +319,31 @@ fn pet_single(
                 tx += xx;
             }
         }
+        if count3 >= 200 {
+            hit_limit = true;
+        }
         count1 += 1;
         count3 = 1;
         enbal2 = 0.0;
+    }
+
+    if hit_limit {
+        if let Some(flag) = warn_flag {
+            // Only emit one warning per grid call to avoid flooding stderr.
+            if !flag.swap(true, Ordering::Relaxed) {
+                eprintln!(
+                    "WARNING: PET solver did not converge within 200 iterations \
+                     (ta={:.1}, tmrt={:.1}, v={:.2}). Results may be inaccurate.",
+                    ta, tmrt, v
+                );
+            }
+        } else {
+            eprintln!(
+                "WARNING: PET solver did not converge within 200 iterations \
+                 (ta={:.1}, tmrt={:.1}, v={:.2}). Results may be inaccurate.",
+                ta, tmrt, v
+            );
+        }
     }
 
     tx
@@ -338,7 +363,7 @@ pub fn pet_calculate(
     clo: f32,
     sex: i32,
 ) -> f32 {
-    pet_single(ta, rh, tmrt, va, mbody, age, height, activity, clo, sex)
+    pet_single(ta, rh, tmrt, va, mbody, age, height, activity, clo, sex, None)
 }
 
 /// Calculate PET for a 2D grid using parallel processing.
@@ -375,6 +400,7 @@ pub fn pet_grid<'py>(
 
     // Create output array
     let mut result = ndarray::Array2::zeros((rows, cols));
+    let warn_flag = AtomicBool::new(false);
 
     // Process in parallel using rayon
     result
@@ -395,6 +421,7 @@ pub fn pet_grid<'py>(
             } else {
                 *out = pet_single(
                     ta, rh, tmrt_val, va_val, mbody, age, height, activity, clo, sex,
+                    Some(&warn_flag),
                 );
             }
         });

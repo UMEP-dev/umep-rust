@@ -25,6 +25,11 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Module-level cache for altmax: keyed by (date, lat, lon, utc_offset) to
+# avoid repeating the expensive 96-iteration sun position loop for every
+# timestep on the same day.
+_altmax_cache: dict[tuple, float] = {}
+
 
 @dataclass
 class Location:
@@ -351,36 +356,43 @@ class Weather:
             if self.precomputed_altmax is not None:
                 self.altmax = self.precomputed_altmax
             else:
-                # Calculate maximum sun altitude for the day (iterate in 15-min intervals)
+                # Calculate maximum sun altitude for the day (iterate in 15-min intervals).
+                # Cache by (date, lat, lon, utc_offset) so the loop runs once per day.
                 from datetime import timedelta
 
                 ymd = self.datetime.replace(hour=0, minute=0, second=0, microsecond=0)
-                sunmaximum = -90.0
-                fifteen_min = 15.0 / 1440.0  # 15 minutes as fraction of day
+                cache_key = (ymd.date(), location.latitude, location.longitude, location.utc_offset)
 
-                for step in range(96):  # 24 hours * 4 (15-min intervals)
-                    step_time = ymd + timedelta(days=step * fifteen_min)
-                    time_dict_step = {
-                        "year": step_time.year,
-                        "month": step_time.month,
-                        "day": step_time.day,
-                        "hour": step_time.hour,
-                        "min": step_time.minute,
-                        "sec": 0,
-                        "UTC": location.utc_offset,
-                    }
-                    sun_step = sp.sun_position(time_dict_step, location_dict)
-                    zenith_step = sun_step["zenith"]
-                    zenith_val = (
-                        float(np.asarray(zenith_step).flat[0])
-                        if hasattr(zenith_step, "__iter__")
-                        else float(zenith_step)
-                    )
-                    alt_step = 90.0 - zenith_val
-                    if alt_step > sunmaximum:
-                        sunmaximum = alt_step
+                if cache_key in _altmax_cache:
+                    self.altmax = _altmax_cache[cache_key]
+                else:
+                    sunmaximum = -90.0
+                    fifteen_min = 15.0 / 1440.0  # 15 minutes as fraction of day
 
-                self.altmax = max(sunmaximum, 0.0)  # Ensure non-negative
+                    for step in range(96):  # 24 hours * 4 (15-min intervals)
+                        step_time = ymd + timedelta(days=step * fifteen_min)
+                        time_dict_step = {
+                            "year": step_time.year,
+                            "month": step_time.month,
+                            "day": step_time.day,
+                            "hour": step_time.hour,
+                            "min": step_time.minute,
+                            "sec": 0,
+                            "UTC": location.utc_offset,
+                        }
+                        sun_step = sp.sun_position(time_dict_step, location_dict)
+                        zenith_step = sun_step["zenith"]
+                        zenith_val = (
+                            float(np.asarray(zenith_step).flat[0])
+                            if hasattr(zenith_step, "__iter__")
+                            else float(zenith_step)
+                        )
+                        alt_step = 90.0 - zenith_val
+                        if alt_step > sunmaximum:
+                            sunmaximum = alt_step
+
+                    self.altmax = max(sunmaximum, 0.0)  # Ensure non-negative
+                    _altmax_cache[cache_key] = self.altmax
 
         # Use measured radiation values if provided, otherwise compute
         if self.measured_direct_rad is not None and self.measured_diffuse_rad is not None:

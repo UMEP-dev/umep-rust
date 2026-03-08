@@ -36,6 +36,43 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+class _ComputationCache:
+    """Per-timestep computation caches for ``calculate_core_fused``.
+
+    Separates transient cache state from the persistent ``SurfaceData``
+    fields, keeping the dataclass focused on surface/terrain data.
+
+    All attributes default to ``None`` and are lazily populated by
+    ``computation.calculate_core_fused()`` on first access.
+    """
+
+    __slots__ = (
+        "valid_mask_u8_cache",
+        "valid_bbox_cache",
+        "land_cover_props_cache",
+        "buildings_mask_cache",
+        "lc_grid_f32_cache",
+        "gvf_geometry_cache",
+        "gvf_geometry_cache_crop",
+        "aniso_shadow_crop_cache",
+    )
+
+    def __init__(self) -> None:
+        self.valid_mask_u8_cache: tuple[Any, Any] | None = None
+        self.valid_bbox_cache: tuple[Any, Any] | None = None
+        self.land_cover_props_cache: tuple[Any, Any] | None = None
+        self.buildings_mask_cache: tuple[Any, Any] | None = None
+        self.lc_grid_f32_cache: tuple[Any, Any] | None = None
+        self.gvf_geometry_cache: tuple[Any, Any] | None = None
+        self.gvf_geometry_cache_crop: tuple[Any, Any] | None = None
+        self.aniso_shadow_crop_cache: tuple[Any, Any] | None = None
+
+    def clear(self) -> None:
+        """Reset all cached values."""
+        for attr in self.__slots__:
+            setattr(self, attr, None)
+
+
 def _should_compress_svf_exports(n_pixels: int) -> bool:
     """
     Return True when SVF/shadow exports should use compression.
@@ -286,14 +323,8 @@ class SurfaceData:
     _buffer_pool: BufferPool | None = field(default=None, init=False, repr=False)  # Reusable array pool
     _gvf_geometry_cache: object = field(default=None, init=False, repr=False)  # Rust GVF geometry cache
     _valid_mask: NDArray[np.bool_] | None = field(default=None, init=False, repr=False)  # Combined valid mask
-    # Per-timestep computation caches (set by computation.calculate_core_fused)
-    _valid_mask_u8_cache: object = field(default=None, init=False, repr=False)
-    _valid_bbox_cache: object = field(default=None, init=False, repr=False)
-    _land_cover_props_cache: object = field(default=None, init=False, repr=False)
-    _buildings_mask_cache: object = field(default=None, init=False, repr=False)
-    _lc_grid_f32_cache: object = field(default=None, init=False, repr=False)
-    _gvf_geometry_cache_crop: object = field(default=None, init=False, repr=False)
-    _aniso_shadow_crop_cache: object = field(default=None, init=False, repr=False)
+    # Per-timestep computation caches (grouped in _ComputationCache)
+    _cache: _ComputationCache = field(default_factory=_ComputationCache, init=False, repr=False)
 
     def __post_init__(self):
         # Ensure dsm is float32 for memory efficiency
@@ -1313,10 +1344,10 @@ class SurfaceData:
 
         # Prepare vegetation arrays (Rust requires all three or none)
         if use_veg:
-            cdsm_for_svf = cdsm_arr.astype(np.float32)
+            cdsm_for_svf = np.asarray(cdsm_arr, dtype=np.float32)
             # Auto-generate TDSM if not provided
             if tdsm_arr is not None:
-                tdsm_for_svf = tdsm_arr.astype(np.float32)
+                tdsm_for_svf = np.asarray(tdsm_arr, dtype=np.float32)
             else:
                 tdsm_for_svf = (cdsm_arr * trunk_ratio).astype(np.float32)
         else:
@@ -1351,7 +1382,7 @@ class SurfaceData:
 
         if needs_tiling:
             svf_data, (shmat_mm, vegshmat_mm, vbshmat_mm) = SurfaceData._compute_svf_tiled(
-                dsm_arr.astype(np.float32),
+                np.asarray(dsm_arr, dtype=np.float32),
                 cdsm_for_svf,
                 tdsm_for_svf,
                 pixel_size,
@@ -1421,7 +1452,7 @@ class SurfaceData:
             def _run_svf():
                 try:
                     result_box[0] = runner.calculate_svf(
-                        dsm_arr.astype(np.float32),
+                        np.asarray(dsm_arr, dtype=np.float32),
                         cdsm_for_svf,
                         tdsm_for_svf,
                         pixel_size,
@@ -1467,25 +1498,7 @@ class SurfaceData:
             if svf_result is None:
                 raise RuntimeError("SVF computation returned None (skyview.calculate_svf produced no result)")
 
-            ones = np.ones_like(dsm_arr, dtype=np.float32)
-
-            svf_data = SvfArrays(
-                svf=np.array(svf_result.svf),
-                svf_north=np.array(svf_result.svf_north),
-                svf_east=np.array(svf_result.svf_east),
-                svf_south=np.array(svf_result.svf_south),
-                svf_west=np.array(svf_result.svf_west),
-                svf_veg=np.array(svf_result.svf_veg) if use_veg else ones.copy(),
-                svf_veg_north=np.array(svf_result.svf_veg_north) if use_veg else ones.copy(),
-                svf_veg_east=np.array(svf_result.svf_veg_east) if use_veg else ones.copy(),
-                svf_veg_south=np.array(svf_result.svf_veg_south) if use_veg else ones.copy(),
-                svf_veg_west=np.array(svf_result.svf_veg_west) if use_veg else ones.copy(),
-                svf_aveg=np.array(svf_result.svf_veg_blocks_bldg_sh) if use_veg else ones.copy(),
-                svf_aveg_north=np.array(svf_result.svf_veg_blocks_bldg_sh_north) if use_veg else ones.copy(),
-                svf_aveg_east=np.array(svf_result.svf_veg_blocks_bldg_sh_east) if use_veg else ones.copy(),
-                svf_aveg_south=np.array(svf_result.svf_veg_blocks_bldg_sh_south) if use_veg else ones.copy(),
-                svf_aveg_west=np.array(svf_result.svf_veg_blocks_bldg_sh_west) if use_veg else ones.copy(),
-            )
+            svf_data = SvfArrays.from_rust_result(svf_result, use_veg=use_veg)
 
             # Cache SVF arrays
             memmap_dir = svf_cache_dir / "memmap"
@@ -1878,7 +1891,7 @@ class SurfaceData:
                     "(height above ground) to absolute elevations."
                 )
             logger.info("Converting relative DSM to absolute: DSM = DEM + nDSM")
-            self.dsm = (self.dem + self.dsm).astype(np.float32)
+            self.dsm = np.asarray(self.dem + self.dsm, dtype=np.float32)
             self.dsm_relative = False
 
         # Step 1b: Ensure DSM is never below DEM (terrain is the minimum surface)
@@ -1891,12 +1904,12 @@ class SurfaceData:
             if np.any(below):
                 n = int(below.sum())
                 logger.info(f"Raising {n} DSM pixels to DEM (DSM was below terrain)")
-                self.dsm = np.maximum(self.dsm, self.dem).astype(np.float32)
+                self.dsm = np.asarray(np.maximum(self.dsm, self.dem), dtype=np.float32)
 
         # Step 2: Auto-generate TDSM from trunk ratio if CDSM provided but not TDSM
         if self.cdsm is not None and self.tdsm is None:
             logger.info(f"Auto-generating TDSM from CDSM using trunk_ratio={self.trunk_ratio}")
-            self.tdsm = (self.cdsm * self.trunk_ratio).astype(np.float32)
+            self.tdsm = np.asarray(self.cdsm * self.trunk_ratio, dtype=np.float32)
             self.tdsm_relative = self.cdsm_relative
 
         # Use DEM as base if available, otherwise DSM (now absolute after step 1)
@@ -1907,7 +1920,7 @@ class SurfaceData:
             cdsm_rel = np.where(np.isnan(self.cdsm), zero32, self.cdsm)
             cdsm_abs = np.where(~np.isnan(base), base + cdsm_rel, nan32)
             cdsm_abs = np.where(cdsm_abs - base < threshold, base, cdsm_abs)
-            self.cdsm = cdsm_abs.astype(np.float32)
+            self.cdsm = np.asarray(cdsm_abs, dtype=np.float32)
             self.cdsm_relative = False
             logger.info(f"Converted relative CDSM to absolute (base: {'DEM' if self.dem is not None else 'DSM'})")
 
@@ -1916,7 +1929,7 @@ class SurfaceData:
             tdsm_rel = np.where(np.isnan(self.tdsm), zero32, self.tdsm)
             tdsm_abs = np.where(~np.isnan(base), base + tdsm_rel, nan32)
             tdsm_abs = np.where(tdsm_abs - base < threshold, base, tdsm_abs)
-            self.tdsm = tdsm_abs.astype(np.float32)
+            self.tdsm = np.asarray(tdsm_abs, dtype=np.float32)
             self.tdsm_relative = False
             logger.info(f"Converted relative TDSM to absolute (base: {'DEM' if self.dem is not None else 'DSM'})")
 
@@ -1940,15 +1953,15 @@ class SurfaceData:
             return  # Already computed
 
         use_veg = self.cdsm is not None
-        dsm_f32 = self.dsm.astype(np.float32)
+        dsm_f32 = np.asarray(self.dsm, dtype=np.float32)
 
         if use_veg:
             assert self.cdsm is not None  # Type narrowing for type checker
-            cdsm_f32 = self.cdsm.astype(np.float32)
+            cdsm_f32 = np.asarray(self.cdsm, dtype=np.float32)
             if self.tdsm is not None:
-                tdsm_f32 = self.tdsm.astype(np.float32)
+                tdsm_f32 = np.asarray(self.tdsm, dtype=np.float32)
             else:
-                tdsm_f32 = (self.cdsm * self.trunk_ratio).astype(np.float32)
+                tdsm_f32 = np.asarray(self.cdsm * self.trunk_ratio, dtype=np.float32)
         else:
             cdsm_f32 = np.zeros_like(dsm_f32)
             tdsm_f32 = np.zeros_like(dsm_f32)
@@ -1971,24 +1984,7 @@ class SurfaceData:
             None,  # progress callback
         )
 
-        ones = np.ones_like(dsm_f32)
-        self.svf = SvfArrays(
-            svf=np.array(svf_result.svf),
-            svf_north=np.array(svf_result.svf_north),
-            svf_east=np.array(svf_result.svf_east),
-            svf_south=np.array(svf_result.svf_south),
-            svf_west=np.array(svf_result.svf_west),
-            svf_veg=np.array(svf_result.svf_veg) if use_veg else ones.copy(),
-            svf_veg_north=np.array(svf_result.svf_veg_north) if use_veg else ones.copy(),
-            svf_veg_east=np.array(svf_result.svf_veg_east) if use_veg else ones.copy(),
-            svf_veg_south=np.array(svf_result.svf_veg_south) if use_veg else ones.copy(),
-            svf_veg_west=np.array(svf_result.svf_veg_west) if use_veg else ones.copy(),
-            svf_aveg=np.array(svf_result.svf_veg_blocks_bldg_sh) if use_veg else ones.copy(),
-            svf_aveg_north=np.array(svf_result.svf_veg_blocks_bldg_sh_north) if use_veg else ones.copy(),
-            svf_aveg_east=np.array(svf_result.svf_veg_blocks_bldg_sh_east) if use_veg else ones.copy(),
-            svf_aveg_south=np.array(svf_result.svf_veg_blocks_bldg_sh_south) if use_veg else ones.copy(),
-            svf_aveg_west=np.array(svf_result.svf_veg_blocks_bldg_sh_west) if use_veg else ones.copy(),
-        )
+        self.svf = SvfArrays.from_rust_result(svf_result, use_veg=use_veg)
 
         # Store shadow matrices for anisotropic sky model
         # Shadow matrices are bitpacked uint8 from Rust
@@ -2083,7 +2079,7 @@ class SurfaceData:
             dsm_nan = np.isnan(self.dsm)
             if np.any(dsm_nan):
                 n = int(dsm_nan.sum())
-                self.dsm = np.where(dsm_nan, self.dem, self.dsm).astype(np.float32)
+                self.dsm = np.asarray(np.where(dsm_nan, self.dem, self.dsm), dtype=np.float32)
                 logger.info(f"  Filled {n} NaN DSM pixels with DEM")
 
         base = self.dem if self.dem is not None else self.dsm
@@ -2094,22 +2090,22 @@ class SurfaceData:
             cdsm_nan = np.isnan(self.cdsm)
             if np.any(cdsm_nan):
                 n = int(cdsm_nan.sum())
-                self.cdsm = np.where(cdsm_nan, base, self.cdsm).astype(np.float32)
+                self.cdsm = np.asarray(np.where(cdsm_nan, base, self.cdsm), dtype=np.float32)
                 logger.info(f"  Filled {n} NaN CDSM pixels with {base_label}")
             near_ground = np.abs(self.cdsm - base) < tol
             if np.any(near_ground):
-                self.cdsm = np.where(near_ground, base, self.cdsm).astype(np.float32)
+                self.cdsm = np.asarray(np.where(near_ground, base, self.cdsm), dtype=np.float32)
 
         # TDSM: same treatment as CDSM
         if self.tdsm is not None:
             tdsm_nan = np.isnan(self.tdsm)
             if np.any(tdsm_nan):
                 n = int(tdsm_nan.sum())
-                self.tdsm = np.where(tdsm_nan, base, self.tdsm).astype(np.float32)
+                self.tdsm = np.asarray(np.where(tdsm_nan, base, self.tdsm), dtype=np.float32)
                 logger.info(f"  Filled {n} NaN TDSM pixels with {base_label}")
             near_ground = np.abs(self.tdsm - base) < tol
             if np.any(near_ground):
-                self.tdsm = np.where(near_ground, base, self.tdsm).astype(np.float32)
+                self.tdsm = np.asarray(np.where(near_ground, base, self.tdsm), dtype=np.float32)
 
         self._nan_filled = True
 
@@ -2274,18 +2270,8 @@ class SurfaceData:
             self._buffer_pool = None
         # Clear runtime compute caches tied to this surface.
         # These are lazily rebuilt on demand in computation.calculate_core_fused().
-        for attr in (
-            "_valid_mask_u8_cache",
-            "_valid_bbox_cache",
-            "_land_cover_props_cache",
-            "_buildings_mask_cache",
-            "_lc_grid_f32_cache",
-            "_gvf_geometry_cache",
-            "_gvf_geometry_cache_crop",
-            "_aniso_shadow_crop_cache",
-        ):
-            if hasattr(self, attr):
-                setattr(self, attr, None)
+        self._cache.clear()
+        self._gvf_geometry_cache = None
 
     def _looks_like_relative_heights(self) -> bool:
         """

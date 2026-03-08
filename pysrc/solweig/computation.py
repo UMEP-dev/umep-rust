@@ -24,6 +24,13 @@ _OUT_LDOWN = 1 << 3
 _OUT_LUP = 1 << 4
 _OUT_ALL = _OUT_SHADOW | _OUT_KDOWN | _OUT_KUP | _OUT_LDOWN | _OUT_LUP
 
+
+def _arr_key(arr):
+    if arr is None:
+        return None
+    return (arr.ctypes.data, arr.shape)
+
+
 if TYPE_CHECKING:
     from .api import HumanParams, Location, PrecomputedData, SolweigResult, SurfaceData, ThermalState, Weather
 
@@ -97,19 +104,20 @@ def calculate_core_fused(
     # Computed once by SurfaceData.prepare(), or derived from DSM if missing
     valid_mask = surface.valid_mask
     valid_source = valid_mask if valid_mask is not None else surface.dsm
-    valid_mask_key = (id(valid_source), valid_source.shape)
-    valid_mask_cache = getattr(surface, "_valid_mask_u8_cache", None)
+    valid_mask_key = _arr_key(valid_source)
+    cache = surface._cache
+    valid_mask_cache = cache.valid_mask_u8_cache
     if valid_mask_cache is not None and valid_mask_cache[0] == valid_mask_key:
         valid_mask_u8 = valid_mask_cache[1]
     else:
         if valid_mask is None:
             valid_mask = np.isfinite(surface.dsm)
         valid_mask_u8 = np.ascontiguousarray(valid_mask, dtype=np.uint8)
-        surface._valid_mask_u8_cache = valid_mask_key, valid_mask_u8
+        cache.valid_mask_u8_cache = valid_mask_key, valid_mask_u8
 
     # Valid-bounds crop (ported from old main implementation):
     # trim heavy per-timestep compute to the minimal bounding rectangle of valid pixels.
-    bbox_cache = getattr(surface, "_valid_bbox_cache", None)
+    bbox_cache = cache.valid_bbox_cache
     if bbox_cache is not None and bbox_cache[0] == valid_mask_key:
         r0, r1, c0, c1 = bbox_cache[1]
     else:
@@ -122,7 +130,7 @@ def calculate_core_fused(
             c_idx = np.flatnonzero(cols_any)
             r0, r1 = int(r_idx[0]), int(r_idx[-1]) + 1
             c0, c1 = int(c_idx[0]), int(c_idx[-1]) + 1
-        surface._valid_bbox_cache = valid_mask_key, (r0, r1, c0, c1)
+        cache.valid_bbox_cache = valid_mask_key, (r0, r1, c0, c1)
 
     full_area = rows * cols
     crop_area = (r1 - r0) * (c1 - c0)
@@ -146,13 +154,13 @@ def calculate_core_fused(
             output_mask |= _OUT_LUP
 
     # Land cover properties
-    lc_props_key = (id(surface.land_cover), id(surface.albedo), id(surface.emissivity), id(materials))
-    lc_props_cache = getattr(surface, "_land_cover_props_cache", None)
+    lc_props_key = (_arr_key(surface.land_cover), _arr_key(surface.albedo), _arr_key(surface.emissivity), id(materials))
+    lc_props_cache = cache.land_cover_props_cache
     if lc_props_cache is not None and lc_props_cache[0] == lc_props_key:
         alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid = lc_props_cache[1]
     else:
         alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid = surface.get_land_cover_properties(materials)
-        surface._land_cover_props_cache = lc_props_key, (alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid)
+        cache.land_cover_props_cache = lc_props_key, (alb_grid, emis_grid, tgk_grid, tstart_grid, tmaxlst_grid)
 
     # Vegetation inputs
     use_veg = surface.cdsm is not None
@@ -289,8 +297,8 @@ def calculate_core_fused(
     )
 
     # Buildings mask for GVF (computed from DSM/land_cover/walls)
-    buildings_key = (id(surface.dsm), id(surface.land_cover), id(wall_ht), float(pixel_size))
-    buildings_cache = getattr(surface, "_buildings_mask_cache", None)
+    buildings_key = (_arr_key(surface.dsm), _arr_key(surface.land_cover), _arr_key(wall_ht), float(pixel_size))
+    buildings_cache = cache.buildings_mask_cache
     if buildings_cache is not None and buildings_cache[0] == buildings_key:
         buildings = buildings_cache[1]
     else:
@@ -300,16 +308,16 @@ def calculate_core_fused(
             wall_ht,
             pixel_size,
         )
-        surface._buildings_mask_cache = buildings_key, buildings
+        cache.buildings_mask_cache = buildings_key, buildings
 
     if surface.land_cover is not None:
-        lc_grid_key = id(surface.land_cover)
-        lc_grid_cache = getattr(surface, "_lc_grid_f32_cache", None)
+        lc_grid_key = _arr_key(surface.land_cover)
+        lc_grid_cache = cache.lc_grid_f32_cache
         if lc_grid_cache is not None and lc_grid_cache[0] == lc_grid_key:
             lc_grid = lc_grid_cache[1]
         else:
             lc_grid = surface.land_cover.astype(np.float32)
-            surface._lc_grid_f32_cache = lc_grid_key, lc_grid
+            cache.lc_grid_f32_cache = lc_grid_key, lc_grid
     else:
         lc_grid = None
 
@@ -321,10 +329,10 @@ def calculate_core_fused(
         assert wall_ht is not None
         if use_crop:
             gvf_crop_key = (
-                id(buildings),
-                id(wall_asp),
-                id(wall_ht),
-                id(alb_grid),
+                _arr_key(buildings),
+                _arr_key(wall_asp),
+                _arr_key(wall_ht),
+                _arr_key(alb_grid),
                 r0,
                 r1,
                 c0,
@@ -333,7 +341,7 @@ def calculate_core_fused(
                 float(human.height),
                 float(albedo_wall),
             )
-            gvf_crop_cache = getattr(surface, "_gvf_geometry_cache_crop", None)
+            gvf_crop_cache = cache.gvf_geometry_cache_crop
             if gvf_crop_cache is not None and gvf_crop_cache[0] == gvf_crop_key:
                 gvf_cache = gvf_crop_cache[1]
             else:
@@ -346,9 +354,9 @@ def calculate_core_fused(
                     float(human.height),
                     float(albedo_wall),
                 )
-                surface._gvf_geometry_cache_crop = gvf_crop_key, gvf_cache
+                cache.gvf_geometry_cache_crop = gvf_crop_key, gvf_cache
         else:
-            gvf_cache = getattr(surface, "_gvf_geometry_cache", None)
+            gvf_cache = cache.gvf_geometry_cache
             if gvf_cache is None:
                 gvf_cache = pipeline.precompute_gvf_cache(
                     as_float32(buildings),
@@ -359,7 +367,7 @@ def calculate_core_fused(
                     float(human.height),
                     float(albedo_wall),
                 )
-                surface._gvf_geometry_cache = gvf_cache
+                cache.gvf_geometry_cache = gvf_cache
 
     # Anisotropic sky: Perez luminance, steradians, ASVF, and esky are now
     # computed inside the Rust pipeline (no Python round-trip). We only need
@@ -379,22 +387,22 @@ def calculate_core_fused(
             ws.patch_option = shadow_mats.patch_option
             if use_crop:
                 aniso_crop_key = (
-                    id(shadow_mats._shmat_u8),
-                    id(shadow_mats._vegshmat_u8),
-                    id(shadow_mats._vbshmat_u8),
+                    _arr_key(shadow_mats._shmat_u8),
+                    _arr_key(shadow_mats._vegshmat_u8),
+                    _arr_key(shadow_mats._vbshmat_u8),
                     r0,
                     r1,
                     c0,
                     c1,
                 )
-                aniso_crop_cache = getattr(surface, "_aniso_shadow_crop_cache", None)
+                aniso_crop_cache = cache.aniso_shadow_crop_cache
                 if aniso_crop_cache is not None and aniso_crop_cache[0] == aniso_crop_key:
                     aniso_shmat, aniso_vegshmat, aniso_vbshmat = aniso_crop_cache[1]
                 else:
                     aniso_shmat = np.ascontiguousarray(shadow_mats._shmat_u8[crop_slice])
                     aniso_vegshmat = np.ascontiguousarray(shadow_mats._vegshmat_u8[crop_slice])
                     aniso_vbshmat = np.ascontiguousarray(shadow_mats._vbshmat_u8[crop_slice])
-                    surface._aniso_shadow_crop_cache = aniso_crop_key, (aniso_shmat, aniso_vegshmat, aniso_vbshmat)
+                    cache.aniso_shadow_crop_cache = aniso_crop_key, (aniso_shmat, aniso_vegshmat, aniso_vbshmat)
             else:
                 # Keep original arrays to preserve stable pointers across timesteps.
                 aniso_shmat = shadow_mats._shmat_u8

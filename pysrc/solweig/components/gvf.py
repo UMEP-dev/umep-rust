@@ -10,11 +10,15 @@ Reference:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ..errors import InvalidSurfaceData
 from ..physics.morphology import generate_binary_structure
+
+logger = logging.getLogger(__name__)
 
 try:
     from ..rustalgos import morphology as _rust_morph
@@ -60,13 +64,41 @@ def detect_building_mask(
            10th-percentile ground level (catches rooftops).
         3. Else: Assume all ground (no buildings).
     """
+    if dsm is None or dsm.size == 0:
+        raise InvalidSurfaceData(
+            "DSM is required for building mask detection but is missing or empty.",
+            field="dsm",
+        )
+
+    if pixel_size <= 0:
+        raise InvalidSurfaceData(
+            f"pixel_size must be positive, got {pixel_size}.",
+            field="pixel_size",
+            expected="> 0",
+            got=str(pixel_size),
+        )
+
     if land_cover is not None:
+        if land_cover.shape != dsm.shape:
+            raise InvalidSurfaceData(
+                f"land_cover shape {land_cover.shape} does not match DSM shape {dsm.shape}.",
+                field="land_cover",
+                expected=str(dsm.shape),
+                got=str(land_cover.shape),
+            )
         # Use land cover directly: ID 2 = buildings
         buildings = np.ones_like(dsm, dtype=np.float32)
         buildings[land_cover == 2] = 0.0
         return buildings
 
     if wall_height is not None:
+        if wall_height.shape != dsm.shape:
+            raise InvalidSurfaceData(
+                f"wall_height shape {wall_height.shape} does not match DSM shape {dsm.shape}.",
+                field="wall_height",
+                expected=str(dsm.shape),
+                got=str(wall_height.shape),
+            )
         # Approximate building footprints from wall heights
         # Wall pixels mark building edges; dilate to capture interiors
         wall_mask = wall_height > 0
@@ -88,4 +120,5 @@ def detect_building_mask(
         return (~is_building).astype(np.float32)
 
     # No building info available - assume all ground
+    logger.debug("No land_cover or wall_height provided; assuming all-ground building mask.")
     return np.ones_like(dsm, dtype=np.float32)

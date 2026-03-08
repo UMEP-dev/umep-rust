@@ -185,10 +185,12 @@ impl GvfGpuContext {
         );
         let max_steps = cache.second as usize;
 
-        let mut buf_cache = self
-            .cached
-            .lock()
-            .map_err(|e| format!("Failed to lock GVF GPU cache: {}", e))?;
+        let mut buf_cache = self.cached.lock().unwrap_or_else(|e| {
+            eprintln!("WARNING: GVF GPU cache mutex was poisoned, recovering");
+            let mut guard = e.into_inner();
+            *guard = None;
+            guard
+        });
 
         self.ensure_buffers_locked(&mut buf_cache, rows, cols, num_azimuths, max_steps);
         let buffers = buf_cache
@@ -297,10 +299,12 @@ impl GvfGpuContext {
         let cols = lup.ncols();
         let total_pixels = rows * cols;
 
-        let mut cache = self
-            .cached
-            .lock()
-            .map_err(|e| format!("Failed to lock GVF GPU cache: {}", e))?;
+        let mut cache = self.cached.lock().unwrap_or_else(|e| {
+            eprintln!("WARNING: GVF GPU cache mutex was poisoned, recovering");
+            let mut guard = e.into_inner();
+            *guard = None;
+            guard
+        });
 
         let buffers = cache
             .as_mut()
@@ -405,10 +409,12 @@ impl GvfGpuContext {
                 .map_err(|e| format!("Channel recv failed: {}", e))?
                 .map_err(|e| format!("Failed to map staging buffer: {:?}", e))?;
 
-            let cache = self
-                .cached
-                .lock()
-                .map_err(|e| format!("Failed to lock GVF buffer cache: {}", e))?;
+            let cache = self.cached.lock().unwrap_or_else(|e| {
+                eprintln!("WARNING: GVF GPU buffer cache mutex was poisoned, recovering");
+                let mut guard = e.into_inner();
+                *guard = None;
+                guard
+            });
             let buffers = cache
                 .as_ref()
                 .ok_or_else(|| "GVF GPU buffers missing".to_string())?;
@@ -440,9 +446,16 @@ impl GvfGpuContext {
             })
         })();
 
-        if let Ok(mut cache) = self.cached.lock() {
-            if let Some(buffers) = cache.as_mut() {
-                buffers.readback_inflight = false;
+        match self.cached.lock() {
+            Ok(mut cache) => {
+                if let Some(buffers) = cache.as_mut() {
+                    buffers.readback_inflight = false;
+                }
+            }
+            Err(e) => {
+                eprintln!("WARNING: GVF GPU buffer cache mutex was poisoned, recovering");
+                let mut cache = e.into_inner();
+                *cache = None;
             }
         }
 

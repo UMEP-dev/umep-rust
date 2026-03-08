@@ -232,5 +232,80 @@ class TestPetGrid:
             )
 
 
+# =============================================================================
+# Edge-Case Tests
+# =============================================================================
+
+
+class TestPetEdgeCases:
+    """Test PET behaviour at extreme and boundary inputs."""
+
+    def test_extreme_heat(self):
+        """PET should return a valid value under extreme heat."""
+        result = calculate_pet(45.0, 80.0, 70.0, 0.5)
+        assert not np.isnan(result), "PET should not be NaN for extreme heat"
+        assert result > 35, f"Extreme heat PET ({result:.1f}) should indicate severe stress"
+
+    def test_extreme_cold(self):
+        """PET should return a valid value under extreme cold."""
+        result = calculate_pet(-30.0, 50.0, -25.0, 5.0)
+        assert not np.isnan(result), "PET should not be NaN for extreme cold"
+        assert result < 0, f"Extreme cold PET ({result:.1f}) should be negative"
+
+    def test_zero_wind_speed(self):
+        """PET should handle va=0 without error."""
+        result = calculate_pet(25.0, 50.0, 30.0, 0.0)
+        assert not np.isnan(result), "PET should handle zero wind speed"
+
+    def test_very_low_wind_speed(self):
+        """PET should handle very small positive va."""
+        result = calculate_pet(25.0, 50.0, 30.0, 0.01)
+        assert not np.isnan(result), "PET should handle very low wind speed"
+        # Should be close to zero-wind result
+        result_zero = calculate_pet(25.0, 50.0, 30.0, 0.0)
+        assert abs(result - result_zero) < 2.0, (
+            f"Very low wind PET ({result:.1f}) should be close to zero-wind ({result_zero:.1f})"
+        )
+
+    def test_high_tmrt_delta(self):
+        """PET should handle large Tmrt - Ta differences."""
+        result = calculate_pet(20.0, 50.0, 80.0, 1.0)
+        assert not np.isnan(result), "PET should handle high Tmrt delta"
+
+    def test_tmrt_below_ta(self):
+        """PET should handle Tmrt significantly below Ta (cold radiation)."""
+        result = calculate_pet(25.0, 50.0, 5.0, 1.0)
+        assert not np.isnan(result), "PET should handle Tmrt below Ta"
+        # Cold radiation environment should feel cooler
+        result_neutral = calculate_pet(25.0, 50.0, 25.0, 1.0)
+        assert result < result_neutral, f"Cold Tmrt PET ({result:.1f}) should be < neutral ({result_neutral:.1f})"
+
+    def test_high_clothing_insulation(self):
+        """PET should handle high clo values (heavy winter clothing)."""
+        heavy_person = {**DEFAULT_PERSON, "clo": 2.5}
+        result = calculate_pet(10.0, 50.0, 10.0, 1.0, heavy_person)
+        assert not np.isnan(result), "PET should handle high clothing insulation"
+
+    def test_minimal_clothing(self):
+        """PET should handle minimal clo values (light summer clothing)."""
+        light_person = {**DEFAULT_PERSON, "clo": 0.3}
+        result = calculate_pet(30.0, 50.0, 35.0, 1.0, light_person)
+        assert not np.isnan(result), "PET should handle minimal clothing"
+
+    def test_monotonic_wind_cooling(self):
+        """Higher wind speed should reduce PET in warm conditions."""
+        ta = 30.0
+        rh = 50.0
+        tmrt = 40.0
+
+        pet_calm = calculate_pet(ta, rh, tmrt, va=0.5)
+        pet_moderate = calculate_pet(ta, rh, tmrt, va=3.0)
+        pet_windy = calculate_pet(ta, rh, tmrt, va=8.0)
+
+        assert pet_calm > pet_moderate > pet_windy, (
+            f"Wind should reduce PET: calm={pet_calm:.1f}, moderate={pet_moderate:.1f}, windy={pet_windy:.1f}"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

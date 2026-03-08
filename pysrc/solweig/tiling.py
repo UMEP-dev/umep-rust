@@ -25,8 +25,8 @@ import numpy as np
 
 from .errors import MissingPrecomputedData
 from .models import HumanParams, PrecomputedData, SolweigResult, SurfaceData, ThermalState, TileSpec
-from .output_async import AsyncGeoTiffWriter, async_output_enabled, collect_output_arrays
-from .postprocess import compute_pet_grid, compute_utci_grid
+from .output_async import AsyncGeoTiffWriter, async_output_enabled
+from .postprocess import compute_utci_grid
 from .solweig_logging import get_logger
 from .summary import GridAccumulator, TimeseriesSummary
 
@@ -1072,51 +1072,31 @@ def _calculate_timeseries_tiled(
     anisotropic_requested_explicitly = use_anisotropic_sky is True
 
     # Resolve effective parameters from config
-    effective_aniso = use_anisotropic_sky
-    effective_human = human
-    effective_physics = physics
-    effective_materials = materials
-    effective_outputs = outputs
-    effective_max_shadow = max_shadow_distance_m
-    effective_tile_workers = tile_workers
-    effective_tile_queue_depth = tile_queue_depth
-    effective_prefetch_tiles = prefetch_tiles
+    from ._orchestration import resolve_config_params
 
-    if config is not None:
-        if effective_aniso is None:
-            effective_aniso = config.use_anisotropic_sky
-        if effective_human is None:
-            effective_human = config.human
-        if effective_physics is None:
-            effective_physics = config.physics
-        if effective_materials is None:
-            effective_materials = config.materials
-        if effective_outputs is None and config.outputs:
-            effective_outputs = config.outputs
-        if effective_max_shadow is None:
-            effective_max_shadow = config.max_shadow_distance_m
-        if effective_tile_workers is None:
-            effective_tile_workers = config.tile_workers
-        if effective_tile_queue_depth is None:
-            effective_tile_queue_depth = config.tile_queue_depth
-        if effective_prefetch_tiles is None:
-            effective_prefetch_tiles = config.prefetch_tiles
-
-    if effective_aniso is None:
-        # Keep behavior aligned with calculate() and ModelConfig defaults.
-        effective_aniso = True
-    if effective_human is None:
-        effective_human = HumanParams()
-    if effective_max_shadow is None:
-        effective_max_shadow = MAX_BUFFER_M
-    if effective_materials is None:
-        from .loaders import load_params
-
-        effective_materials = load_params()
-    if effective_physics is None:
-        from .loaders import load_physics
-
-        effective_physics = load_physics()
+    _resolved = resolve_config_params(
+        config=config,
+        use_anisotropic_sky=use_anisotropic_sky,
+        human=human,
+        physics=physics,
+        materials=materials,
+        outputs=outputs,
+        max_shadow_distance_m=max_shadow_distance_m,
+        tile_workers=tile_workers,
+        tile_queue_depth=tile_queue_depth,
+        prefetch_tiles=prefetch_tiles,
+    )
+    effective_aniso = _resolved["use_anisotropic_sky"]
+    effective_human = _resolved["human"] if _resolved["human"] is not None else HumanParams()
+    effective_physics = _resolved["physics"]
+    effective_materials = _resolved["materials"]
+    effective_outputs = _resolved["outputs"]
+    effective_max_shadow = (
+        _resolved["max_shadow_distance_m"] if _resolved["max_shadow_distance_m"] is not None else MAX_BUFFER_M
+    )
+    effective_tile_workers = _resolved["tile_workers"]
+    effective_tile_queue_depth = _resolved["tile_queue_depth"]
+    effective_prefetch_tiles = _resolved["prefetch_tiles"]
     anisotropic_arg = effective_aniso if (anisotropic_requested_explicitly or effective_aniso is False) else None
 
     requested_outputs: set[str] = {"tmrt", "shadow"}
@@ -1393,35 +1373,17 @@ def _calculate_timeseries_tiled(
                 # Update grid accumulator (before potential array release)
                 _accumulator.update(result, weather, compute_utci_fn=compute_utci_grid)
 
-                # Compute per-timestep UTCI/PET if requested for file output
-                if effective_outputs is not None and "utci" in effective_outputs and result.utci is None:
-                    result.utci = compute_utci_grid(result.tmrt, weather.ta, weather.rh, weather.ws)
-                if effective_outputs is not None and "pet" in effective_outputs and result.pet is None:
-                    result.pet = compute_pet_grid(result.tmrt, weather.ta, weather.rh, weather.ws, effective_human)
+                from ._orchestration import process_timestep_result
 
-                # Save per-timestep outputs to disk
-                if _writer is not None and effective_outputs:
-                    _writer.submit(
-                        timestamp=weather.datetime,
-                        arrays=collect_output_arrays(result, effective_outputs),
-                    )
-                elif effective_outputs:
-                    result.to_geotiff(
-                        output_dir=output_dir,
-                        timestamp=weather.datetime,
-                        outputs=effective_outputs,
-                        surface=surface,
-                    )
-
-                # Free all large arrays after accumulation + disk write
-                result.tmrt = None  # type: ignore[assignment]
-                result.shadow = None
-                result.kdown = None
-                result.kup = None
-                result.ldown = None
-                result.lup = None
-                result.utci = None
-                result.pet = None
+                process_timestep_result(
+                    result,
+                    weather,
+                    effective_outputs,
+                    effective_human,
+                    _writer,
+                    output_dir,
+                    surface=surface,
+                )
                 processed_steps += 1
     finally:
         if _progress is not None:
@@ -1430,34 +1392,13 @@ def _calculate_timeseries_tiled(
             _writer.close()
 
     # Finalize summary
-    summary = _accumulator.finalize()
-    summary._surface = surface
+    from ._orchestration import finalize_summary
 
-    # Log summary
-    total_time = time.time() - start_time
-    overall_rate = processed_steps / total_time if total_time > 0 else 0
-
-    logger.info("=" * 60)
-    logger.info(f"Calculation complete: {processed_steps} timesteps processed (tiled)")
-    logger.info(f"  Total time: {total_time:.1f}s ({overall_rate:.2f} steps/s)")
-    if summary.n_timesteps > 0:
-        _valid_mean = np.nanmean(summary.tmrt_mean)
-        _valid_min = np.nanmin(summary.tmrt_min)
-        _valid_max = np.nanmax(summary.tmrt_max)
-        logger.info(f"  Tmrt range: {_valid_min:.1f}C - {_valid_max:.1f}C (mean: {_valid_mean:.1f}C)")
-
-    if effective_outputs is not None:
-        file_count = processed_steps * len(effective_outputs)
-        logger.info(f"  Files saved: {file_count} GeoTIFFs in {output_dir}")
-    logger.info("=" * 60)
-
-    # Save summary grids and run metadata
-    summary.to_geotiff(output_dir, surface=surface)
-    summary._output_dir = Path(output_dir)
-    from .metadata import create_run_metadata, save_run_metadata
-
-    metadata = create_run_metadata(
-        surface=surface,
+    return finalize_summary(
+        _accumulator,
+        surface,
+        processed_steps=processed_steps,
+        start_time=start_time,
         location=location,
         weather_series=weather_series,
         human=effective_human,
@@ -1467,7 +1408,5 @@ def _calculate_timeseries_tiled(
         conifer=conifer,
         output_dir=output_dir,
         outputs=effective_outputs,
+        label="(tiled)",
     )
-    save_run_metadata(metadata, output_dir)
-
-    return summary

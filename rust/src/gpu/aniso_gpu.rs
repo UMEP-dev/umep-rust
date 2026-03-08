@@ -269,10 +269,12 @@ impl AnisoGpuContext {
         let n_patches = patch_alt.len();
         let total_pixels = rows * cols;
 
-        let mut cache = self
-            .cached
-            .lock()
-            .map_err(|e| format!("Failed to lock anisotropic buffer cache: {}", e))?;
+        let mut cache = self.cached.lock().unwrap_or_else(|e| {
+            eprintln!("WARNING: anisotropic GPU buffer cache mutex was poisoned, recovering");
+            let mut guard = e.into_inner();
+            *guard = None; // discard stale state so buffers are recreated
+            guard
+        });
         if cache.as_ref().map(|b| b.readback_inflight).unwrap_or(false) {
             return Err("anisotropic GPU readback already in flight".to_string());
         }
@@ -485,10 +487,12 @@ impl AnisoGpuContext {
                 .map_err(|e| format!("Channel recv failed: {}", e))?
                 .map_err(|e| format!("Failed to map staging buffer: {:?}", e))?;
 
-            let cache = self
-                .cached
-                .lock()
-                .map_err(|e| format!("Failed to lock anisotropic buffer cache: {}", e))?;
+            let cache = self.cached.lock().unwrap_or_else(|e| {
+                eprintln!("WARNING: anisotropic GPU buffer cache mutex was poisoned, recovering");
+                let mut guard = e.into_inner();
+                *guard = None;
+                guard
+            });
             let buffers = cache
                 .as_ref()
                 .ok_or_else(|| "anisotropic GPU buffers missing".to_string())?;
@@ -528,9 +532,16 @@ impl AnisoGpuContext {
             })
         })();
 
-        if let Ok(mut cache) = self.cached.lock() {
-            if let Some(buffers) = cache.as_mut() {
-                buffers.readback_inflight = false;
+        match self.cached.lock() {
+            Ok(mut cache) => {
+                if let Some(buffers) = cache.as_mut() {
+                    buffers.readback_inflight = false;
+                }
+            }
+            Err(e) => {
+                eprintln!("WARNING: anisotropic GPU buffer cache mutex was poisoned, recovering");
+                let mut cache = e.into_inner();
+                *cache = None;
             }
         }
 

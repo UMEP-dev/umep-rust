@@ -535,6 +535,10 @@ class GridAccumulator:
         self._day_thresholds_set = set(heat_thresholds_day)
         self._night_thresholds_set = set(heat_thresholds_night)
 
+        # Pre-allocated scratch buffers (avoids per-call allocation in update)
+        self._scratch_valid = np.empty(shape, dtype=np.bool_)
+        self._scratch_utci_valid = np.empty(shape, dtype=np.bool_)
+
         # Counters
         self._n_timesteps = 0
         self._n_daytime = 0
@@ -564,37 +568,40 @@ class GridAccumulator:
     ) -> None:
         """Ingest one timestep. Must be called BEFORE arrays are freed."""
         tmrt = result.tmrt
-        valid = np.isfinite(tmrt)
+        np.isfinite(tmrt, out=self._scratch_valid)
+        valid = self._scratch_valid
         is_day = weather.is_daytime
 
         # --- Tmrt stats ---
         self._tmrt_sum += np.where(valid, tmrt, 0.0)
-        self._tmrt_count += valid.astype(np.int32)
+        self._tmrt_count += valid
         np.fmax(self._tmrt_max, np.where(valid, tmrt, -np.inf), out=self._tmrt_max)
         np.fmin(self._tmrt_min, np.where(valid, tmrt, np.inf), out=self._tmrt_min)
 
         if is_day:
             self._tmrt_day_sum += np.where(valid, tmrt, 0.0)
-            self._tmrt_day_count += valid.astype(np.int32)
+            self._tmrt_day_count += valid
         else:
             self._tmrt_night_sum += np.where(valid, tmrt, 0.0)
-            self._tmrt_night_count += valid.astype(np.int32)
+            self._tmrt_night_count += valid
 
         # --- UTCI ---
         utci = compute_utci_fn(tmrt, weather.ta, weather.rh, weather.ws)
-        utci_valid = valid & np.isfinite(utci)
+        np.isfinite(utci, out=self._scratch_utci_valid)
+        self._scratch_utci_valid &= valid
+        utci_valid = self._scratch_utci_valid
 
         self._utci_sum += np.where(utci_valid, utci, 0.0)
-        self._utci_count += utci_valid.astype(np.int32)
+        self._utci_count += utci_valid
         np.fmax(self._utci_max, np.where(utci_valid, utci, -np.inf), out=self._utci_max)
         np.fmin(self._utci_min, np.where(utci_valid, utci, np.inf), out=self._utci_min)
 
         if is_day:
             self._utci_day_sum += np.where(utci_valid, utci, 0.0)
-            self._utci_day_count += utci_valid.astype(np.int32)
+            self._utci_day_count += utci_valid
         else:
             self._utci_night_sum += np.where(utci_valid, utci, 0.0)
-            self._utci_night_count += utci_valid.astype(np.int32)
+            self._utci_night_count += utci_valid
 
         # --- Sun/shade hours ---
         sun_fraction = np.nan

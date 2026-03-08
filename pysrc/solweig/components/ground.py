@@ -73,7 +73,24 @@ def compute_ground_temperature(
         Formula: Tgamp = TgK * altmax + Tstart
                  Tg = Tgamp * sin(phase * pi/2) * CI_TgG
     """
+    from ..errors import InvalidSurfaceData, WeatherDataError
     from ..rustalgos import ground as ground_rust
+
+    # Validate inputs to prevent raw AttributeErrors
+    for attr in ("datetime", "ta", "rh", "global_rad", "sun_altitude", "altmax"):
+        if not hasattr(weather, attr):
+            raise WeatherDataError(
+                attr,
+                "<missing>",
+                f"Weather object is missing required attribute '{attr}'. Ensure compute_derived() has been called.",
+            )
+
+    for attr in ("latitude", "longitude", "altitude"):
+        if not hasattr(location, attr):
+            raise InvalidSurfaceData(
+                f"Location object is missing required attribute '{attr}'.",
+                field=attr,
+            )
 
     # Day of year and sunrise time
     jday = weather.datetime.timetuple().tm_yday

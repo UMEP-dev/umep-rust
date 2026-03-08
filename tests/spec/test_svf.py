@@ -133,6 +133,30 @@ class TestSvfProperties:
             f"Taller building should reduce SVF: low={ground_svf_low:.3f}, tall={ground_svf_tall:.3f}"
         )
 
+    def test_property_5_svf_monotonic_with_height(self):
+        """Property 5: SVF decreases monotonically with obstacle height.
+
+        Spec: "SVF decreases monotonically with obstacle height."
+        Tests three heights to confirm strict ordering, not just two-point
+        comparison (which property 4 already covers).
+        """
+        heights = [10.0, 25.0, 50.0]
+        ground_svfs = []
+
+        for h in heights:
+            dsm = create_building_dsm(size=(50, 50), building_height=h)
+            result = calculate_svf(dsm)
+            svf = np.array(result.svf)
+            # Sample ground pixels south of building (row 30-35, col 20-30)
+            ground_svfs.append(svf[30:35, 20:30].mean())
+
+        assert ground_svfs[0] > ground_svfs[1] > ground_svfs[2], (
+            f"SVF should decrease monotonically with height: "
+            f"{heights[0]}m={ground_svfs[0]:.3f}, "
+            f"{heights[1]}m={ground_svfs[1]:.3f}, "
+            f"{heights[2]}m={ground_svfs[2]:.3f}"
+        )
+
     def test_property_6_rooftops_high_svf(self):
         """Property 6: Building rooftops have SVF close to 1."""
         dsm = create_building_dsm(size=(50, 50), building_height=30.0)

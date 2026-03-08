@@ -241,10 +241,34 @@ def progress(
     Drop-in replacement for tqdm that auto-detects environment.
 
     This function has a similar signature to tqdm for easy migration.
-    Additional kwargs are ignored for compatibility.
+    Only tqdm-compatible keyword arguments are accepted.
 
     Example:
         # Replace: for item in tqdm(items, desc="Processing"):
         # With:    for item in progress(items, desc="Processing"):
     """
+    _KNOWN_KWARGS = {
+        "disable",
+        "file",
+        "leave",
+        "mininterval",
+        "maxinterval",
+        "miniters",
+        "ncols",
+        "position",
+        "bar_format",
+        "unit",
+        "unit_scale",
+        "unit_divisor",
+        "dynamic_ncols",
+        "smoothing",
+        "initial",
+        "ascii",
+        "postfix",
+        "colour",
+        "delay",
+    }
+    unknown = set(kwargs) - _KNOWN_KWARGS
+    if unknown:
+        raise TypeError(f"progress() got unexpected keyword argument(s): {', '.join(sorted(unknown))}")
     return get_progress_iterator(iterable, desc=desc, total=total)
