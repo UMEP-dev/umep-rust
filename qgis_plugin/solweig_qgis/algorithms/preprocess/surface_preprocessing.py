@@ -302,6 +302,7 @@ Run "SOLWEIG Calculation" with the prepared surface directory.
         dsm_relative = self.parameterAsEnum(parameters, "DSM_HEIGHT_MODE", context) == 0
         cdsm_relative = self.parameterAsEnum(parameters, "CDSM_HEIGHT_MODE", context) == 0
         tdsm_relative = self.parameterAsEnum(parameters, "TDSM_HEIGHT_MODE", context) == 0
+        min_object_height = self.parameterAsDouble(parameters, "MIN_OBJECT_HEIGHT", context)
 
         surface = solweig.SurfaceData(
             dsm=dsm,
@@ -313,12 +314,18 @@ Run "SOLWEIG Calculation" with the prepared surface directory.
             dsm_relative=dsm_relative,
             cdsm_relative=cdsm_relative,
             tdsm_relative=tdsm_relative,
+            min_object_height=min_object_height,
         )
         surface._geotransform = aligned_gt
         surface._crs_wkt = crs_wkt
 
-        # Convert relative heights to absolute where needed
-        needs_preprocess = dsm_relative or (cdsm_relative and cdsm is not None) or (tdsm_relative and tdsm is not None)
+        # Convert relative heights to absolute and flatten sub-threshold features
+        needs_preprocess = (
+            dsm_relative
+            or (cdsm_relative and cdsm is not None)
+            or (tdsm_relative and tdsm is not None)
+            or dem is not None
+        )
         if needs_preprocess:
             feedback.pushInfo("Converting relative heights to absolute...")
             surface.preprocess()

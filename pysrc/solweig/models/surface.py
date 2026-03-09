@@ -315,6 +315,7 @@ class SurfaceData:
     dsm_relative: bool = False  # Whether DSM contains relative heights (requires DEM)
     cdsm_relative: bool = True  # Whether CDSM contains relative heights
     tdsm_relative: bool = True  # Whether TDSM contains relative heights
+    min_object_height: float = 1.5  # Min nDSM height (m) to cast shadows; below this, DSM is flattened to DEM
 
     # Internal state
     _nan_filled: bool = field(default=False, init=False, repr=False)
@@ -369,6 +370,7 @@ class SurfaceData:
         dsm_relative: bool = False,
         cdsm_relative: bool = True,
         tdsm_relative: bool = True,
+        min_object_height: float = 1.5,
         force_recompute: bool = False,
         feedback: Any = None,
     ) -> SurfaceData:
@@ -406,6 +408,10 @@ class SurfaceData:
             dsm_relative: DSM values are height above ground (not elevation). Default False.
             cdsm_relative: CDSM values are height above ground. Default True.
             tdsm_relative: TDSM values are height above ground. Default True.
+            min_object_height: Minimum nDSM height (m) for shadow casting.
+                DSM pixels below this height above DEM are flattened to remove
+                kerbs, street furniture, and LiDAR noise. Default 1.5. Set to
+                0 to disable. Requires DEM.
             force_recompute: Recompute walls/SVF even if cached (file mode only).
             feedback: QGIS QgsProcessingFeedback for progress/cancellation.
 
@@ -436,6 +442,7 @@ class SurfaceData:
                 dsm_relative=dsm_relative,
                 cdsm_relative=cdsm_relative,
                 tdsm_relative=tdsm_relative,
+                min_object_height=min_object_height,
             )
 
         # File mode: working_dir is required
@@ -487,6 +494,7 @@ class SurfaceData:
             dsm_relative=dsm_relative,
             cdsm_relative=cdsm_relative,
             tdsm_relative=tdsm_relative,
+            min_object_height=min_object_height,
         )
 
         # Preprocess layers: convert relative heights to absolute and
@@ -607,6 +615,7 @@ class SurfaceData:
         dsm_relative: bool = False,
         cdsm_relative: bool = True,
         tdsm_relative: bool = True,
+        min_object_height: float = 1.5,
     ) -> SurfaceData:
         """Prepare surface data from in-memory numpy arrays."""
         from ..physics import wallalgorithms as wa
@@ -649,6 +658,7 @@ class SurfaceData:
             dsm_relative=dsm_relative,
             cdsm_relative=cdsm_relative,
             tdsm_relative=tdsm_relative,
+            min_object_height=min_object_height,
         )
 
         # Preprocess: convert relative heights to absolute and
@@ -1195,6 +1205,7 @@ class SurfaceData:
         dsm_relative: bool = False,
         cdsm_relative: bool = True,
         tdsm_relative: bool = True,
+        min_object_height: float = 1.5,
     ) -> SurfaceData:
         """
         Create SurfaceData instance from aligned rasters.
@@ -1226,6 +1237,7 @@ class SurfaceData:
             dsm_relative=dsm_relative,
             cdsm_relative=cdsm_relative,
             tdsm_relative=tdsm_relative,
+            min_object_height=min_object_height,
         )
 
         # Store geotransform and CRS for later export
@@ -1919,6 +1931,21 @@ class SurfaceData:
                 n = int(below.sum())
                 logger.info(f"Raising {n} DSM pixels to DEM (DSM was below terrain)")
                 self.dsm = np.asarray(np.maximum(self.dsm, self.dem), dtype=np.float32)
+
+        # Step 1c: Flatten sub-threshold DSM features to DEM
+        # Small nDSM residuals (kerbs, street furniture, LiDAR noise) cast
+        # spurious shadows at low sun angles.  Flatten to DEM where the DSM
+        # protrudes less than min_object_height above the terrain.
+        if self.dem is not None and self.min_object_height > 0:
+            ndsm = self.dsm - self.dem
+            small = (ndsm > 0) & (ndsm < self.min_object_height)
+            n_flat = int(small.sum())
+            if n_flat:
+                self.dsm[small] = self.dem[small]
+                logger.info(
+                    f"Flattened {n_flat} DSM pixels below {self.min_object_height}m "
+                    f"nDSM to DEM (removing sub-threshold features)"
+                )
 
         # Step 2: Auto-generate TDSM from trunk ratio if CDSM provided but not TDSM
         if self.cdsm is not None and self.tdsm is None:

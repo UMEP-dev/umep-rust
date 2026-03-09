@@ -132,6 +132,22 @@ def add_surface_parameters(algorithm: QgsProcessingAlgorithm) -> None:
         )
     )
 
+    min_obj_ht = QgsProcessingParameterNumber(
+        "MIN_OBJECT_HEIGHT",
+        algorithm.tr(
+            "Minimum object height (m) — DSM features shorter than this "
+            "above the DEM are flattened to remove kerbs, street furniture, "
+            "and LiDAR noise from shadow casting. Requires DEM. Set to 0 to disable."
+        ),
+        type=QgsProcessingParameterNumber.Type.Double,
+        defaultValue=1.5,
+        minValue=0.0,
+        maxValue=10.0,
+        optional=True,
+    )
+    min_obj_ht.setFlags(min_obj_ht.flags() | QgsProcessingParameterDefinition.Flag.FlagAdvanced)
+    algorithm.addParameter(min_obj_ht)
+
 
 def add_location_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     """

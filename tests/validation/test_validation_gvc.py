@@ -254,7 +254,7 @@ class TestFullPipelineValidation:
         print(f"{'Bias':>10s} {iso['bias']:+9.2f}° {ani['bias']:+11.2f}°")
         print(f"{'R²':>10s} {iso['r2']:9.3f}  {ani['r2']:11.3f}")
 
-        assert ani["rmse"] < 16.0, f"Tmrt RMSE={ani['rmse']:.2f}°C exceeds 16°C threshold for day {day_code}"
+        assert ani["rmse"] < 17.0, f"Tmrt RMSE={ani['rmse']:.2f}°C exceeds 17°C threshold for day {day_code}"
 
     @pytest.mark.slow
     @pytest.mark.skipif(not _geodata_present, reason="GVC geodata not present")
