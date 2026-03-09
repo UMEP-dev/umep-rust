@@ -140,7 +140,7 @@ def add_surface_parameters(algorithm: QgsProcessingAlgorithm) -> None:
             "and LiDAR noise from shadow casting. Requires DEM. Set to 0 to disable."
         ),
         type=QgsProcessingParameterNumber.Type.Double,
-        defaultValue=1.5,
+        defaultValue=1.0,
         minValue=0.0,
         maxValue=10.0,
         optional=True,

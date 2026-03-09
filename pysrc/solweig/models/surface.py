@@ -315,7 +315,7 @@ class SurfaceData:
     dsm_relative: bool = False  # Whether DSM contains relative heights (requires DEM)
     cdsm_relative: bool = True  # Whether CDSM contains relative heights
     tdsm_relative: bool = True  # Whether TDSM contains relative heights
-    min_object_height: float = 1.5  # Min nDSM height (m) to cast shadows; below this, DSM is flattened to DEM
+    min_object_height: float = 1.0  # Min nDSM height (m) to cast shadows; below this, DSM is flattened to DEM
 
     # Internal state
     _nan_filled: bool = field(default=False, init=False, repr=False)
@@ -370,7 +370,7 @@ class SurfaceData:
         dsm_relative: bool = False,
         cdsm_relative: bool = True,
         tdsm_relative: bool = True,
-        min_object_height: float = 1.5,
+        min_object_height: float = 1.0,
         force_recompute: bool = False,
         feedback: Any = None,
     ) -> SurfaceData:
@@ -615,7 +615,7 @@ class SurfaceData:
         dsm_relative: bool = False,
         cdsm_relative: bool = True,
         tdsm_relative: bool = True,
-        min_object_height: float = 1.5,
+        min_object_height: float = 1.0,
     ) -> SurfaceData:
         """Prepare surface data from in-memory numpy arrays."""
         from ..physics import wallalgorithms as wa
@@ -1205,7 +1205,7 @@ class SurfaceData:
         dsm_relative: bool = False,
         cdsm_relative: bool = True,
         tdsm_relative: bool = True,
-        min_object_height: float = 1.5,
+        min_object_height: float = 1.0,
     ) -> SurfaceData:
         """
         Create SurfaceData instance from aligned rasters.

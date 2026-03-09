@@ -242,8 +242,8 @@ def create_surface_from_parameters(
     cdsm_relative = _read_height_mode(parameters, "CDSM_HEIGHT_MODE", default_absolute=False)
     tdsm_relative = _read_height_mode(parameters, "TDSM_HEIGHT_MODE", default_absolute=False)
 
-    # Read min_object_height (advanced parameter, defaults to 1.5)
-    min_object_height = 1.5
+    # Read min_object_height (advanced parameter, defaults to 1.0)
+    min_object_height = 1.0
     if hasattr(param_handler, "parameterAsDouble"):
         import contextlib
 
