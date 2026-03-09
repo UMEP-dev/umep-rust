@@ -128,7 +128,15 @@ def _setup_geospatial_backend() -> tuple[bool, bool, bool]:
 # bools, preserving ``is True`` / ``is False`` identity checks in io.py.
 # ---------------------------------------------------------------------------
 
+# Reset cached backend state.  On first import this is a no-op, but on
+# importlib.reload() it clears the module-level GDAL_ENV / RASTERIO_AVAILABLE /
+# GDAL_AVAILABLE attributes stamped by __getattr__, so they will be re-computed
+# from the (now possibly changed) environment.
 _backend_result: tuple[bool, bool, bool] | None = None
+_self = sys.modules[__name__]
+for _attr in ("GDAL_ENV", "RASTERIO_AVAILABLE", "GDAL_AVAILABLE"):
+    _self.__dict__.pop(_attr, None)
+del _self, _attr
 
 
 def _get_backend() -> tuple[bool, bool, bool]:
