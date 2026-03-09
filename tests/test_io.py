@@ -196,22 +196,29 @@ class TestRasterIO:
         saved = {k: sys.modules.pop(k) for k in qgis_keys}
         try:
             importlib.reload(_compat)
+            # Access attrs NOW, while qgis is still removed from sys.modules.
+            # _compat uses lazy __getattr__ (PEP 562): backend detection only
+            # runs on first attribute access, not during reload.  If we wait
+            # until after the finally block restores the qgis mocks,
+            # in_osgeo_environment() would see them and pick GDAL.
+            rasterio_available = _compat.RASTERIO_AVAILABLE
+            gdal_env = _compat.GDAL_ENV
         finally:
             sys.modules.update(saved)
 
         # Exactly one backend must be selected
-        assert _compat.RASTERIO_AVAILABLE is not _compat.GDAL_ENV, (
-            "Exactly one of RASTERIO_AVAILABLE / GDAL_ENV must be True"
+        assert rasterio_available is not gdal_env, (
+            f"Exactly one backend must be active: RASTERIO_AVAILABLE={rasterio_available}, GDAL_ENV={gdal_env}"
         )
 
         # If the full rasterio stack is present it must be preferred
         if _compat._try_import_rasterio():
-            assert _compat.RASTERIO_AVAILABLE is True
-            assert _compat.GDAL_ENV is False
+            assert rasterio_available is True
+            assert gdal_env is False
         else:
             # Fallback to GDAL — must not raise
-            assert _compat.GDAL_ENV is True
-            assert _compat.RASTERIO_AVAILABLE is False
+            assert gdal_env is True
+            assert rasterio_available is False
 
 
 class TestGeoTIFFLoading:
