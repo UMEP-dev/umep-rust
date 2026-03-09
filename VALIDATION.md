@@ -140,11 +140,13 @@ different). Units: W/m² for radiation, °C for Tmrt.
 
 ## POI sweep analysis
 
-The POI sweep runs the full SOLWEIG pipeline and evaluates Tmrt at every
-ground-level pixel, producing georeferenced RMSE/R²/bias heatmaps. Now that
-all three POIs come from the original measurement station shapefiles, the
-sweep serves as a diagnostic to confirm the measurement location is physically
-reasonable and to visualise spatial error patterns.
+The POI sweep runs the full SOLWEIG pipeline once per site, then evaluates
+the modelled Tmrt time series at every ground-level pixel against the same
+single set of field observations. The resulting RMSE/R²/bias heatmaps show
+how sensitive the validation statistics are to the assumed measurement
+location — they do not represent spatial maps of model error. A pixel with
+low RMSE means that, had the instrument been placed there, the modelled and
+observed Tmrt would have agreed more closely.
 
 Run with: `pytest tests/validation/test_poi_sweep_all_sites.py -v -s`
 
@@ -153,8 +155,8 @@ Run with: `pytest tests/validation/test_poi_sweep_all_sites.py -v -s`
 ![POI sweep RMSE — Gustav Adolfs](tests/validation/gustav_adolfs/poi_sweep_results/poi_sweep_rmse.png)
 
 The measurement station POI (33, 77) sits in the open square. Pixels near
-the western buildings achieve lower RMSE (~8 °C vs ~13 °C) due to more
-predictable shadow patterns, but the open-square location is the documented
+the western buildings show lower RMSE (~8 °C vs ~13 °C), where shadow
+patterns are more uniform. The open-square location is the documented
 measurement position.
 
 ### Kronenhuset sweep
@@ -162,17 +164,17 @@ measurement position.
 ![POI sweep RMSE — Kronenhuset](tests/validation/kronenhuset/poi_sweep_results/poi_sweep_rmse.png)
 
 The measurement station POI (51, 117) is in the courtyard, consistent with
-the described field setup. The sweep confirms this is a reasonable location
-with Tmrt RMSE ~6 °C.
+the described field setup (Tmrt RMSE ~6 °C).
 
 ### GVC sweep
 
 ![POI sweep RMSE — GVC](tests/validation/gvc/poi_sweep_results/poi_sweep_rmse.png)
 
 The measurement station POI (51, 122) corresponds to Site 1 from
-Lindberg & Grimmond (2011). The higher Tmrt RMSE at this location
-(~12–16 °C) compared to some surrounding pixels likely reflects the
-sensitivity of shadow timing at this vegetated campus site.
+Lindberg & Grimmond (2011). This pixel sits at the edge of a dense tree
+canopy in the CDSM (heights of 7–18 m immediately to the west and south),
+making the modelled shadow state sensitive to sub-pixel canopy position.
+Nearby pixels in more open areas show lower RMSE (~4–5 °C).
 
 ---
 
@@ -180,36 +182,35 @@ sensitivity of shadow timing at this vegetated campus site.
 
 ### Kdown at open sites
 
-Point-level downwelling shortwave (Kdown) has high RMSE (175–344 W/m²)
-because a single pixel's shadow state is binary — a slight timing or geometry
-error in the shadow boundary causes ~800 W/m² swings. This is inherent to
-point validation of a spatially gridded model and does not indicate a model
-deficiency. Spatially averaged Kdown would show much lower error.
+Point-level downwelling shortwave (Kdown) has high RMSE (175–344 W/m²).
+At any single pixel the shadow state is binary, so a small shift in the
+modelled shadow boundary produces ~800 W/m² differences between timesteps.
+Spatially averaged Kdown would show considerably lower error.
 
 ### Ldown overestimation
 
-The model overestimates Ldown at all sites (bias +39 to +83 W/m²). This is a
-known limitation of the SOLWEIG Ldown formulation (Jonsson et al. 2006), not a
-bug in this implementation. The 4-term formula fills the non-sky hemisphere with
-wall emissions at emissivity 0.90 and air temperature, but real shaded walls
-are cooler than air temperature.
+The model overestimates Ldown at all sites (bias +39 to +83 W/m²). The
+SOLWEIG Ldown formulation (Jonsson et al. 2006) fills the non-sky hemisphere
+with wall emissions at emissivity 0.90 and air temperature. In practice,
+shaded walls are cooler than air temperature, which introduces a positive bias.
 
 - At SVF = 1.0 (open sky), clear-sky Ldown matches observations well.
-- The bias arises from wall-filling in enclosed geometries and is amplified
-  at sites with lower SVF.
-- This is consistent across all UMEP versions (2021a, 2022a, 2025a). The
-  Jonsson et al. (2006) -25 W/m² empirical correction is commented out in all
-  UMEP releases and is not applied here.
+- The bias increases at sites with lower SVF, where more of the hemisphere
+  is filled with wall emissions.
+- The Jonsson et al. (2006) empirical correction of −25 W/m² is present but
+  commented out in all UMEP releases (2021a, 2022a, 2025a) and is not applied
+  here.
 
 ### GVC Tmrt accuracy
 
 The GVC site shows higher Tmrt RMSE (11–16 °C) and near-zero R² compared to
-the other sites. This likely reflects:
+the other two sites. Contributing factors include:
 
-- More vegetation at GVC, increasing shadow-timing sensitivity.
-- The measurement station (Site 1) is in a courtyard with complex surrounding
-  geometry, making exact shadow reproduction difficult at 2 m resolution.
-- Only 7–12 matched hours per day, reducing statistical power.
+- The measurement station (Site 1) is adjacent to dense tree canopy in the
+  CDSM, making the modelled shadow state sensitive to sub-pixel canopy
+  position at 2 m resolution.
+- Only 7–12 matched hours per day are available, which limits the statistical
+  power of per-day metrics such as R².
 
 ---
 
@@ -224,10 +225,10 @@ Gothenburg sites (~189 hours):
 | L↓        | 0.73 | 17.5 W/m² |
 | L↑        | 0.94 | 15.6 W/m² |
 
-Our Kronenhuset Tmrt RMSE of 6.0 °C is comparable to the paper's 4.8 K. The
-paper's lower aggregate RMSE reflects aggregation across more hours and sites
-which smooths individual shadow-timing errors. The paper also validates against
-1-minute averaged measurements; the met data used here are hourly.
+The Kronenhuset Tmrt RMSE of 6.0 °C from this implementation is in a similar
+range to the paper's 4.8 K. The paper's statistics are aggregated across more
+hours and sites, and the paper validates against 1-minute averaged measurements,
+whereas the met data used here are hourly.
 
 ---
 
