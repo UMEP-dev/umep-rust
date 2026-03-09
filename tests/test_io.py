@@ -175,13 +175,15 @@ class TestRasterIO:
         # Should use GDAL backend
         assert _compat.GDAL_ENV
 
-    def test_rasterio_backend_default(self, monkeypatch):
-        """Test that rasterio is the default backend in a standard environment."""
+    def test_backend_auto_detection(self, monkeypatch):
+        """Test that backend auto-detection works without QGIS or env-var override.
+
+        In a standard (non-QGIS) environment, auto-detection must not raise and
+        must select exactly one backend: rasterio (if the full stack — rasterio,
+        pyproj, shapely — is available) or GDAL as fallback.
+        """
         import importlib
         import sys
-
-        # Skip if rasterio is not available
-        pytest.importorskip("rasterio", reason="rasterio not available")
 
         from solweig import _compat
 
@@ -197,9 +199,19 @@ class TestRasterIO:
         finally:
             sys.modules.update(saved)
 
-        # In a standard environment with rasterio, GDAL_ENV should be False
-        assert _compat.RASTERIO_AVAILABLE is True
-        assert _compat.GDAL_ENV is False
+        # Exactly one backend must be selected
+        assert _compat.RASTERIO_AVAILABLE is not _compat.GDAL_ENV, (
+            "Exactly one of RASTERIO_AVAILABLE / GDAL_ENV must be True"
+        )
+
+        # If the full rasterio stack is present it must be preferred
+        if _compat._try_import_rasterio():
+            assert _compat.RASTERIO_AVAILABLE is True
+            assert _compat.GDAL_ENV is False
+        else:
+            # Fallback to GDAL — must not raise
+            assert _compat.GDAL_ENV is True
+            assert _compat.RASTERIO_AVAILABLE is False
 
 
 class TestGeoTIFFLoading:

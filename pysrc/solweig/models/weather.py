@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from .._compat import GDAL_ENV
 from ..physics import sun_position as sp
 from ..physics.clearnessindex_2013b import clearnessindex_2013b
 from ..physics.diffusefraction import diffusefraction
@@ -24,6 +25,34 @@ if TYPE_CHECKING:
     from .surface import SurfaceData
 
 logger = get_logger(__name__)
+
+
+def _transform_to_wgs84(crs_wkt: str, x: float, y: float) -> tuple[float, float]:
+    """Convert projected coordinates to WGS84 (lon, lat).
+
+    Uses the same backend (pyproj or GDAL osr) that the rest of the
+    package uses for raster I/O, so QGIS environments never touch pyproj.
+    """
+    if GDAL_ENV:
+        from osgeo import osr
+
+        src = osr.SpatialReference()
+        src.ImportFromWkt(crs_wkt)
+        dst = osr.SpatialReference()
+        dst.ImportFromEPSG(4326)
+        # osr may return (lat, lon) depending on axis order —
+        # force traditional GIS (lon, lat) order.
+        src.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        dst.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        ct = osr.CoordinateTransformation(src, dst)
+        lon, lat, _ = ct.TransformPoint(x, y)
+    else:
+        from pyproj import Transformer
+
+        transformer = Transformer.from_crs(crs_wkt, "EPSG:4326", always_xy=True)
+        lon, lat = transformer.transform(x, y)
+    return lon, lat
+
 
 # Module-level cache for altmax: keyed by (date, lat, lon, utc_offset) to
 # avoid repeating the expensive 96-iteration sun position loop for every
@@ -75,11 +104,6 @@ class Location:
         """
         from .. import io
 
-        try:
-            from pyproj import Transformer
-        except ImportError as err:
-            raise ImportError("pyproj is required for CRS extraction. Install with: pip install pyproj") from err
-
         # Load DSM to get CRS and bounds
         _, transform, crs_wkt, _ = io.load_raster(str(dsm_path))
 
@@ -101,8 +125,7 @@ class Location:
         center_y = transform[3] + (rows / 2) * transform[5]
 
         # Convert to WGS84
-        transformer = Transformer.from_crs(crs_wkt, "EPSG:4326", always_xy=True)
-        lon, lat = transformer.transform(center_x, center_y)
+        lon, lat = _transform_to_wgs84(crs_wkt, center_x, center_y)
 
         logger.info(f"Extracted location from DSM CRS: {lat:.4f}°N, {lon:.4f}°E (UTC{utc_offset:+g})")
         return cls(latitude=lat, longitude=lon, altitude=altitude, utc_offset=utc_offset)
@@ -133,11 +156,6 @@ class Location:
         """
         import warnings
 
-        try:
-            from pyproj import Transformer
-        except ImportError as err:
-            raise ImportError("pyproj is required for CRS extraction. Install with: pip install pyproj") from err
-
         # Check if geotransform and CRS are available
         if surface.geotransform is None:
             raise ValueError(
@@ -160,8 +178,7 @@ class Location:
         center_y = transform[3] + (rows / 2) * transform[5]
 
         # Convert to WGS84
-        transformer = Transformer.from_crs(crs_wkt, "EPSG:4326", always_xy=True)
-        lon, lat = transformer.transform(center_x, center_y)
+        lon, lat = _transform_to_wgs84(crs_wkt, center_x, center_y)
 
         # Warn if utc_offset not explicitly provided
         if utc_offset is None:

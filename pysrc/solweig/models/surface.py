@@ -22,6 +22,7 @@ import numpy as np
 
 from .. import io
 from .. import walls as walls_module
+from .._compat import GDAL_ENV
 from ..buffers import BufferPool
 from ..cache import CacheMetadata, clear_stale_cache, pixel_size_tag, validate_cache
 from ..loaders import get_lc_properties_from_params
@@ -730,16 +731,29 @@ class SurfaceData:
             raise ValueError("DSM file has no CRS information. SOLWEIG requires a projected coordinate system.")
 
         try:
-            from pyproj import CRS as pyproj_CRS
+            if GDAL_ENV:
+                from osgeo import osr
 
-            crs_obj = pyproj_CRS.from_wkt(dsm_crs)
-            if not crs_obj.is_projected:
+                srs = osr.SpatialReference()
+                srs.ImportFromWkt(dsm_crs)
+                is_projected = srs.IsProjected()
+                crs_name = srs.GetName() or "unknown"
+                epsg = srs.GetAuthorityCode(None) or "custom"
+            else:
+                from pyproj import CRS as pyproj_CRS
+
+                crs_obj = pyproj_CRS.from_wkt(dsm_crs)
+                is_projected = crs_obj.is_projected
+                crs_name = crs_obj.name
+                epsg = crs_obj.to_epsg() or "custom"
+
+            if not is_projected:
                 raise ValueError(
-                    f"DSM CRS is geographic (lat/lon): {crs_obj.name}. "
+                    f"DSM CRS is geographic (lat/lon): {crs_name}. "
                     f"SOLWEIG requires a projected coordinate system (e.g., UTM, State Plane) "
                     f"for accurate distance and area calculations. Please reproject your data."
                 )
-            logger.info(f"  CRS validated: {crs_obj.name} (EPSG:{crs_obj.to_epsg() or 'custom'})")
+            logger.info(f"  CRS validated: {crs_name} (EPSG:{epsg})")
         except Exception as e:
             logger.warning(f"  ⚠ Could not validate CRS: {e}")
 
