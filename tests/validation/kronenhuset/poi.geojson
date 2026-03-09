@@ -1,0 +1,12 @@
+{
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [147837.67318124877, 6398728.29605625]
+  },
+  "properties": {
+    "name": "Kronenhuset courtyard measurement station",
+    "source": "Lindberg et al. (2008)",
+    "crs": "EPSG:3007"
+  }
+}

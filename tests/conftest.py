@@ -46,6 +46,23 @@ def read_timestep_geotiff(output_dir, field_name: str, index: int = 0):
     return arr
 
 
+def poi_from_geojson(geojson_path, dsm_path) -> tuple[int, int]:
+    """Read a POI GeoJSON point and return (row, col) in the DSM grid."""
+    import json
+
+    from solweig.io import load_raster
+
+    with open(geojson_path) as f:
+        feature = json.load(f)
+    x, y = feature["geometry"]["coordinates"]
+
+    _, transform, _, _ = load_raster(str(dsm_path))
+    # transform is an affine: (x_origin, pixel_width, 0, y_origin, 0, -pixel_height)
+    col = int((x - transform[0]) / transform[1])
+    row = int((y - transform[3]) / transform[5])
+    return row, col
+
+
 def make_mock_svf(shape: tuple[int, ...]):
     """Create a mock SvfArrays for tests (fully open sky)."""
     from solweig.models.precomputed import SvfArrays

@@ -35,9 +35,7 @@ import pytest
 GA_DIR = Path(__file__).parent / "gustav_adolfs"
 MEASUREMENTS_CSV = GA_DIR / "measurements_ga.csv"
 GA_PARAMS_JSON = GA_DIR / "parametersforsolweig_GA.json"
-
-# POI pixel in the DSM grid (row, col) — Gustav Adolfs torg measurement point
-POI_ROW, POI_COL = 33, 77
+POI_GEOJSON = GA_DIR / "poi.geojson"
 
 # Site location
 LAT, LON, UTC_OFFSET = 57.7, 12.0, 1
@@ -139,6 +137,13 @@ class TestFullPipelineValidation:
     """
 
     @pytest.fixture
+    def poi(self):
+        """POI (row, col) from the measurement station GeoJSON."""
+        from conftest import poi_from_geojson
+
+        return poi_from_geojson(POI_GEOJSON, GA_DIR / "DSM_GA.tif")
+
+    @pytest.fixture
     def surface(self, tmp_path):
         """Load SurfaceData from the GA rasters."""
         import solweig
@@ -181,7 +186,7 @@ class TestFullPipelineValidation:
     @pytest.mark.slow
     @pytest.mark.skipif(not _geodata_present, reason="GA geodata not present")
     @pytest.mark.parametrize("day_code", ["20051011", "20060726", "20060801"])
-    def test_tmrt_vs_observations(self, surface, location, ga_materials, ga_human, tmp_path, day_code):
+    def test_tmrt_vs_observations(self, poi, surface, location, ga_materials, ga_human, tmp_path, day_code):
         """Compare SOLWEIG Tmrt at POI against measured Tmrt for a single day.
 
         Reports RMSE, MAE, Bias, R² for both isotropic and anisotropic sky modes.
@@ -211,7 +216,7 @@ class TestFullPipelineValidation:
             model_tmrt = {}
             for i, w in enumerate(weather):
                 tmrt = read_timestep_geotiff(output_dir, "tmrt", i)
-                model_tmrt[w.datetime.hour] = tmrt[POI_ROW, POI_COL]
+                model_tmrt[w.datetime.hour] = tmrt[poi[0], poi[1]]
 
             matched = []
             for o in obs:
@@ -271,7 +276,7 @@ class TestFullPipelineValidation:
     @pytest.mark.slow
     @pytest.mark.skipif(not _geodata_present, reason="GA geodata not present")
     @pytest.mark.parametrize("day_code", ["20051011", "20060726", "20060801"])
-    def test_radiation_budget_vs_observations(self, surface, location, ga_materials, ga_human, tmp_path, day_code):
+    def test_radiation_budget_vs_observations(self, poi, surface, location, ga_materials, ga_human, tmp_path, day_code):
         """Compare SOLWEIG radiation outputs at POI against measured fluxes.
 
         Validates K↓, K↑, L↓, L↑ for each day.
@@ -304,7 +309,7 @@ class TestFullPipelineValidation:
             model_rad = {}
             for i, w in enumerate(weather):
                 model_rad[w.datetime.hour] = {
-                    mk: read_timestep_geotiff(output_dir, mk, i)[POI_ROW, POI_COL] for mk in model_keys
+                    mk: read_timestep_geotiff(output_dir, mk, i)[poi[0], poi[1]] for mk in model_keys
                 }
 
             errors = {c: [] for c in components}

@@ -41,13 +41,7 @@ import pytest
 KR_DIR = Path(__file__).parent / "kronenhuset"
 MEASUREMENTS_CSV = KR_DIR / "measurements_kr.csv"
 KR_PARAMS_JSON = KR_DIR / "parametersforsolweig_KR.json"
-
-# Shared rasters live in the demos directory (checked into git).
-DEMO_DIR = Path(__file__).parent.parent.parent / "demos" / "data" / "Goteborg_SWEREF99_1200"
-
-# POI pixel in the DSM grid (row, col) — Kronenhuset courtyard
-# Matches the original measurement location from POI_KR.shp.
-POI_ROW, POI_COL = 51, 117
+POI_GEOJSON = KR_DIR / "poi.geojson"
 
 # Site location
 LAT, LON, UTC_OFFSET = 57.7, 12.0, 1
@@ -138,30 +132,31 @@ class TestDataLoading:
 # ---------------------------------------------------------------------------
 
 
-_geodata_present = DEMO_DIR.exists() and (DEMO_DIR / "DSM_KRbig.tif").exists()
+_geodata_present = KR_DIR.exists() and (KR_DIR / "DSM_KR.tif").exists()
 
 
 class TestFullPipelineValidation:
     """Run the full SOLWEIG pipeline on the Kronenhuset site and validate
     radiation outputs and Tmrt against the 2005 field measurements.
-
-    Uses shared demo rasters from demos/data/Goteborg_SWEREF99_1200/.
-    Met data and parameters from tests/validation/kronenhuset/.
     """
 
     @pytest.fixture
-    def surface(self, tmp_path):
-        """Load SurfaceData from the Gothenburg demo rasters.
+    def poi(self):
+        """POI (row, col) from the measurement station GeoJSON."""
+        from conftest import poi_from_geojson
 
-        Walls and SVFs are computed by prepare() and cached in working_dir.
-        """
+        return poi_from_geojson(POI_GEOJSON, KR_DIR / "DSM_KR.tif")
+
+    @pytest.fixture
+    def surface(self, tmp_path):
+        """Load SurfaceData from the Kronenhuset rasters."""
         import solweig
 
         surface = solweig.SurfaceData.prepare(
-            dsm=str(DEMO_DIR / "DSM_KRbig.tif"),
-            dem=str(DEMO_DIR / "DEM_KRbig.tif"),
-            cdsm=str(DEMO_DIR / "CDSM_KRbig.asc"),
-            land_cover=str(DEMO_DIR / "landcover.tif"),
+            dsm=str(KR_DIR / "DSM_KR.tif"),
+            dem=str(KR_DIR / "DEM_KR.tif"),
+            cdsm=str(KR_DIR / "CDSM_KR.asc"),
+            land_cover=str(KR_DIR / "landcover_KR.tif"),
             working_dir=str(tmp_path / "kr_work"),
         )
         return surface
@@ -202,7 +197,7 @@ class TestFullPipelineValidation:
 
     @pytest.mark.slow
     @pytest.mark.skipif(not _geodata_present, reason="Kronenhuset geodata not present")
-    def test_single_timestep_noon(self, surface, location, weather, kr_materials, kr_human, tmp_path):
+    def test_single_timestep_noon(self, poi, surface, location, weather, kr_materials, kr_human, tmp_path):
         """Run SOLWEIG for noon and check Tmrt at POI is physical."""
         import solweig
         from conftest import read_timestep_geotiff
@@ -221,7 +216,7 @@ class TestFullPipelineValidation:
         )
 
         tmrt = read_timestep_geotiff(output_dir, "tmrt", 0)
-        poi_tmrt = tmrt[POI_ROW, POI_COL]
+        poi_tmrt = tmrt[poi[0], poi[1]]
 
         print("\n--- Kronenhuset single timestep (2005-10-07 12:00) ---")
         print(f"POI Tmrt:   {poi_tmrt:.1f}°C")
@@ -234,7 +229,7 @@ class TestFullPipelineValidation:
 
     @pytest.mark.slow
     @pytest.mark.skipif(not _geodata_present, reason="Kronenhuset geodata not present")
-    def test_timeseries_full_day(self, surface, location, weather, kr_materials, kr_human, tmp_path):
+    def test_timeseries_full_day(self, poi, surface, location, weather, kr_materials, kr_human, tmp_path):
         """Run full 24h timeseries and verify diurnal Tmrt pattern."""
         import solweig
         from conftest import read_timestep_geotiff
@@ -253,7 +248,7 @@ class TestFullPipelineValidation:
 
         assert summary.n_timesteps == len(weather)
 
-        poi_tmrt = [read_timestep_geotiff(output_dir, "tmrt", i)[POI_ROW, POI_COL] for i in range(len(weather))]
+        poi_tmrt = [read_timestep_geotiff(output_dir, "tmrt", i)[poi[0], poi[1]] for i in range(len(weather))]
         hours = [w.datetime.hour for w in weather]
         ta_series = [w.ta for w in weather]
 
@@ -273,7 +268,7 @@ class TestFullPipelineValidation:
 
     @pytest.mark.slow
     @pytest.mark.skipif(not _geodata_present, reason="Kronenhuset geodata not present")
-    def test_tmrt_vs_observations(self, surface, location, weather, kr_materials, kr_human, tmp_path):
+    def test_tmrt_vs_observations(self, poi, surface, location, weather, kr_materials, kr_human, tmp_path):
         """Compare SOLWEIG Tmrt at the POI against measured Tmrt.
 
         This is a primary validation test. The 12 matched daytime hours
@@ -306,7 +301,7 @@ class TestFullPipelineValidation:
             model_tmrt = {}
             for i, w in enumerate(weather):
                 tmrt = read_timestep_geotiff(output_dir, "tmrt", i)
-                model_tmrt[w.datetime.hour] = tmrt[POI_ROW, POI_COL]
+                model_tmrt[w.datetime.hour] = tmrt[poi[0], poi[1]]
 
             matched = []
             for o in obs:
@@ -412,7 +407,7 @@ class TestFullPipelineValidation:
 
     @pytest.mark.slow
     @pytest.mark.skipif(not _geodata_present, reason="Kronenhuset geodata not present")
-    def test_radiation_budget_vs_observations(self, surface, location, weather, kr_materials, kr_human, tmp_path):
+    def test_radiation_budget_vs_observations(self, poi, surface, location, weather, kr_materials, kr_human, tmp_path):
         """Compare SOLWEIG radiation outputs at the POI against measured fluxes.
 
         Validates the core radiation budget:
@@ -451,7 +446,7 @@ class TestFullPipelineValidation:
             model_rad = {}
             for i, w in enumerate(weather):
                 model_rad[w.datetime.hour] = {
-                    mk: read_timestep_geotiff(output_dir, mk, i)[POI_ROW, POI_COL] for mk in model_keys
+                    mk: read_timestep_geotiff(output_dir, mk, i)[poi[0], poi[1]] for mk in model_keys
                 }
 
             errors = {c: [] for c in components}

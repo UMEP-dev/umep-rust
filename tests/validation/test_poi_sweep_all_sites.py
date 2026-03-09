@@ -27,14 +27,13 @@ import rasterio
 # ---------------------------------------------------------------------------
 
 VALIDATION_DIR = Path(__file__).parent
-DEMO_DIR = VALIDATION_DIR.parent.parent / "demos" / "data" / "Goteborg_SWEREF99_1200"
 
 SITES: dict[str, dict[str, Any]] = {
     "kronenhuset": {
-        "dsm": str(DEMO_DIR / "DSM_KRbig.tif"),
-        "dem": str(DEMO_DIR / "DEM_KRbig.tif"),
-        "cdsm": str(DEMO_DIR / "CDSM_KRbig.tif"),
-        "land_cover": str(DEMO_DIR / "landcover.tif"),
+        "dsm": str(VALIDATION_DIR / "kronenhuset" / "DSM_KR.tif"),
+        "dem": str(VALIDATION_DIR / "kronenhuset" / "DEM_KR.tif"),
+        "cdsm": str(VALIDATION_DIR / "kronenhuset" / "CDSM_KR.asc"),
+        "land_cover": str(VALIDATION_DIR / "kronenhuset" / "landcover_KR.tif"),
         "measurements_csv": VALIDATION_DIR / "kronenhuset" / "measurements_kr.csv",
         "params_json": VALIDATION_DIR / "kronenhuset" / "parametersforsolweig_KR.json",
         "met_files": {
@@ -84,7 +83,7 @@ SITES: dict[str, dict[str, Any]] = {
         },
         "day_key": "date",
         "hour_key": "hour",
-        "current_poi": (70, 126),
+        "current_poi": (51, 122),
         "lat": 57.7,
         "lon": 12.0,
         "utc_offset": 1,

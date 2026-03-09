@@ -1,0 +1,12 @@
+{
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [319289.3393, 6400139.3737]
+  },
+  "properties": {
+    "name": "Gustav Adolfs torg measurement station",
+    "source": "Lindberg et al. (2008)",
+    "crs": "EPSG:3006"
+  }
+}

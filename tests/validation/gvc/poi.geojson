@@ -1,0 +1,12 @@
+{
+  "type": "Feature",
+  "geometry": {
+    "type": "Point",
+    "coordinates": [319190.8845813423, 6398177.062447303]
+  },
+  "properties": {
+    "name": "GVC Site 1 measurement station",
+    "source": "Lindberg & Grimmond (2011)",
+    "crs": "EPSG:3006"
+  }
+}

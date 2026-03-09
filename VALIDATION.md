@@ -1,9 +1,13 @@
 # Validation Report
 
 SOLWEIG is validated against field radiation measurements from three sites in
-Gothenburg, Sweden. All validation data, test scripts, and POI sweep
-diagnostics are checked into the repository under `tests/validation/` and run
-automatically in CI on every push and PR.
+Gothenburg, Sweden. All validation data — geodata, met files, measurement CSVs,
+and POI coordinates (as GeoJSON) — are self-contained under `tests/validation/`
+and run automatically in CI on every push and PR.
+
+Each site's POI (point of interest) is loaded at runtime from a `poi.geojson`
+file and projected onto the DSM grid. The GeoJSON coordinates were extracted
+from the original shapefiles provided with each validation dataset.
 
 ---
 
@@ -13,9 +17,10 @@ automatically in CI on every push and PR.
 
 - **Type:** Enclosed courtyard, central Gothenburg
 - **Period:** 2005-10-07 (1 day, 12 daytime hours)
-- **Resolution:** 1 m
-- **POI:** (51, 117) — original measurement location from POI_KR.shp
+- **Resolution:** 1 m, EPSG:3007
+- **POI:** (51, 117) — from `POI_KR.shp` measurement station coordinates
 - **Reference:** Lindberg, Holmer & Thorsson (2008)
+- **Data:** `tests/validation/kronenhuset/` (DSM, DEM, CDSM, landcover, met, poi.geojson)
 - **Notes:** The only site that directly validates individual radiation budget
   components (K↓, K↑, L↓, L↑ and directional fluxes), not just Tmrt.
   Enclosed geometry with ~25% sky obstruction.
@@ -24,41 +29,36 @@ automatically in CI on every push and PR.
 
 - **Type:** Open square, central Gothenburg
 - **Period:** 2005-10-11, 2006-07-26, 2006-08-01 (3 days, 43 daytime hours)
-- **Resolution:** 2 m
-- **POI:** (33, 77) — no shapefile exists; location uncertain
+- **Resolution:** 2 m, EPSG:3006
+- **POI:** (33, 77) — from `test_POI.shp` measurement station coordinates
 - **Reference:** Lindberg, Holmer & Thorsson (2008)
-- **Notes:** One autumn day (heavily overcast) and two summer days. The
-  measurement station location is not precisely documented. A POI sensitivity
-  sweep identified significantly better-fitting pixels on the western side of
-  the square near buildings (see [POI sweep analysis](#poi-sweep-analysis)).
+- **Data:** `tests/validation/gustav_adolfs/` (DSM, DEM, CDSM, landcover, met, poi.geojson)
+- **Notes:** One autumn day (heavily overcast) and two summer days.
 
 ### GVC (Gothenburg Geoscience Centre)
 
-- **Type:** University campus, Gothenburg
+- **Type:** University campus courtyard, Gothenburg
 - **Period:** 2010-07-07, 07-10, 07-12 (3 days, 30 daytime hours)
-- **Resolution:** 2 m (rasters labelled `_1m` but actually 2 m)
-- **POI:** (70, 126) — chosen from low-RMSE cluster in the courtyard
+- **Resolution:** 2 m, EPSG:3006
+- **POI:** (51, 122) — from `POI_GVC.shp` Site 1 measurement station coordinates
 - **Reference:** Lindberg & Grimmond (2011)
-- **Notes:** Three clear summer days. No POI shapefile or GPS coordinates
-  were bundled with the validation dataset for this site. An initial POI
-  estimate of (51, 122) produced R² = 0.01–0.14, suggesting it did not
-  correspond to the measurement location. A POI sensitivity sweep identified
-  a cluster of low-RMSE pixels in the courtyard around row 70, col 125;
-  (70, 126) was selected as a representative point away from building edges.
+- **Data:** `tests/validation/gvc/` (DSM, DEM, CDSM, landcover, met, poi.geojson)
+- **Notes:** Three clear summer days. The POI corresponds to Site 1 from the
+  paper. Rasters are labelled `_1m` but are actually 2 m resolution.
 
 ---
 
-## Results — v0.1.0b62 (2026-03-08)
+## Results — v0.1.0b66 (2026-03-09)
 
 ### Summary
 
-| Metric               | Kronenhuset | Gustav Adolfs |            GVC |
-| -------------------- | ----------: | ------------: | -------------: |
-| Tmrt RMSE range (°C) |         6.0 |      9.3–18.9 |      2.4–8.9 |
-| Tmrt R² range        |        0.52 |     0.56–0.91 |    0.32–0.60 |
-| Tmrt bias range (°C) |       +1.3 | -13.9 to -3.9 | -4.9 to +1.2 |
-| Days                 |           1 |             3 |            3 |
-| Total obs hours      |          12 |            43 |           30 |
+| Metric               | Kronenhuset |  Gustav Adolfs |             GVC |
+| -------------------- | ----------: | -------------: | --------------: |
+| Tmrt RMSE range (°C) |         6.0 |      9.3–18.9  |    11.5–15.6    |
+| Tmrt R² range        |        0.52 |     0.72–0.91  |   0.00–0.20     |
+| Tmrt bias range (°C) |       +1.3  | -13.9 to -3.9  | -6.4 to +6.9    |
+| Days                 |           1 |              3 |               3 |
+| Total obs hours      |          12 |             43 |              30 |
 
 ### Tmrt — per-day detail
 
@@ -71,26 +71,58 @@ valid observations).
 | Gustav Adolfs | 2005-10-11 |      18.9 |     16.1 |     -13.9 | 0.91 |  12 |
 | Gustav Adolfs | 2006-07-26 |      11.9 |      7.9 |      -4.6 | 0.56 |  16 |
 | Gustav Adolfs | 2006-08-01 |       9.3 |      6.7 |      -3.9 | 0.72 |  15 |
-| GVC           | 2010-07-07 |       8.9 |      5.4 |      -4.9 | 0.60 |  11 |
-| GVC           | 2010-07-10 |       2.4 |      2.2 |      +1.2 | 0.42 |   7 |
-| GVC           | 2010-07-12 |       8.1 |      5.0 |      -2.2 | 0.32 |  12 |
+| GVC           | 2010-07-07 |      15.6 |     11.4 |      -6.4 | 0.06 |  11 |
+| GVC           | 2010-07-10 |      11.5 |      7.2 |      +6.9 | 0.00 |   7 |
+| GVC           | 2010-07-12 |      13.2 |     10.3 |      -3.1 | 0.20 |  12 |
 
-### Radiation components — Kronenhuset
+### Radiation components — all sites
 
-Kronenhuset is the only site with component-level validation. Values shown
-for anisotropic sky mode (isotropic in parentheses where different).
+All values anisotropic sky mode (isotropic in parentheses where notably
+different). Units: W/m² for radiation, °C for Tmrt.
+
+#### Kronenhuset (2005-10-07)
 
 | Component |        RMSE |           Bias |
 | --------- | ----------: | -------------: |
-| K↓ (W/m²) | 51.0 (47.1) | -22.3 (-10.9) |
-| K↑ (W/m²) |         6.6 |           +3.5 |
-| L↓ (W/m²) | 39.0 (45.4) | +38.5 (+45.2) |
-| L↑ (W/m²) |        13.1 |           +9.0 |
-| Tmrt (°C) |   6.0 (6.4) |   +1.3 (+2.7) |
+| K↓        | 51.0 (47.1) | -22.3 (-10.9)  |
+| K↑        |         6.6 |           +3.5 |
+| L↓        | 39.0 (45.4) | +38.5 (+45.2)  |
+| L↑        |        13.1 |           +9.0 |
+| Tmrt      |   6.0 (6.4) |   +1.3 (+2.7)  |
 
-Negative R² values for K↓ and L↓ reflect the fact that point-level
-comparisons of shadow-dependent quantities are dominated by shadow-timing
-errors (see [Known limitations](#known-limitations)).
+#### Gustav Adolfs torg
+
+| Day        | Component |    RMSE |    Bias |
+| ---------- | --------- | ------: | ------: |
+| 2005-10-11 | K↓        |   221.7 |  -173.6 |
+| 2005-10-11 | K↑        |    30.0 |   -23.4 |
+| 2005-10-11 | L↓        |    83.7 |   +83.1 |
+| 2005-10-11 | L↑        |    13.5 |    -6.7 |
+| 2006-07-26 | K↓        |   182.4 |   -85.8 |
+| 2006-07-26 | K↑        |    30.1 |   -18.3 |
+| 2006-07-26 | L↓        |    76.4 |   +68.5 |
+| 2006-07-26 | L↑        |    43.3 |   -29.2 |
+| 2006-08-01 | K↓        |   178.2 |   -96.5 |
+| 2006-08-01 | K↑        |    26.2 |   -14.1 |
+| 2006-08-01 | L↓        |    65.2 |   +62.4 |
+| 2006-08-01 | L↑        |    30.4 |   -13.7 |
+
+#### GVC (2010-07-07, 07-10, 07-12)
+
+| Day        | Component |    RMSE |    Bias |
+| ---------- | --------- | ------: | ------: |
+| 2010-07-07 | K↓        |   343.5 |  -146.6 |
+| 2010-07-07 | K↑        |    32.6 |   -10.8 |
+| 2010-07-07 | L↓        |    48.3 |   +46.6 |
+| 2010-07-07 | L↑        |    36.3 |   -26.6 |
+| 2010-07-10 | K↓        |   238.0 |   +97.8 |
+| 2010-07-10 | K↑        |    18.2 |   +14.1 |
+| 2010-07-10 | L↓        |    66.9 |   +66.7 |
+| 2010-07-10 | L↑        |    21.8 |   +19.1 |
+| 2010-07-12 | K↓        |   274.0 |  -101.9 |
+| 2010-07-12 | K↑        |    22.9 |    -4.6 |
+| 2010-07-12 | L↓        |    52.7 |   +52.1 |
+| 2010-07-12 | L↑        |    20.6 |    -2.2 |
 
 ### Ldown — all sites
 
@@ -100,31 +132,19 @@ errors (see [Known limitations](#known-limitations)).
 | Gustav Adolfs | 2005-10-11 |        83.7 |       +83.1 |
 | Gustav Adolfs | 2006-07-26 |        76.4 |       +68.5 |
 | Gustav Adolfs | 2006-08-01 |        65.2 |       +62.4 |
-| GVC           | 2010-07-07 |        52.5 |       +50.9 |
-| GVC           | 2010-07-10 |        70.6 |       +70.5 |
-| GVC           | 2010-07-12 |        56.0 |       +55.5 |
+| GVC           | 2010-07-07 |        48.3 |       +46.6 |
+| GVC           | 2010-07-10 |        66.9 |       +66.7 |
+| GVC           | 2010-07-12 |        52.7 |       +52.1 |
 
 ---
 
 ## POI sweep analysis
 
-When the precise location of the field measurement station is uncertain, we
-run a sensitivity sweep to find which pixel best reproduces the observations.
-
-**How it works.** The full SOLWEIG pipeline runs once per day, producing a
-Tmrt grid for every timestep. We then extract the modelled Tmrt timeseries at
-each candidate pixel (ground-level pixels sampled every 2–3 pixels) and
-compare it against the single set of field-measured Tmrt observations. Each
-pixel receives an RMSE, R², and bias score — these are averaged across all
-days for that site.
-
-**How to read the plots.** Each coloured dot is one candidate pixel. Its
-colour shows what the validation RMSE (or R², or bias) _would be_ if we
-assumed the measurement station was at that pixel. Grey areas are buildings
-(DSM − DEM > 1 m). Blue circles mark the top 5% of pixels by RMSE (lowest
-error). The black square marks the current POI used in the main validation
-tests. Low RMSE (green) means the model's Tmrt timeseries at that pixel
-closely matches the field observations; high RMSE (red) means poor agreement.
+The POI sweep runs the full SOLWEIG pipeline and evaluates Tmrt at every
+ground-level pixel, producing georeferenced RMSE/R²/bias heatmaps. Now that
+all three POIs come from the original measurement station shapefiles, the
+sweep serves as a diagnostic to confirm the measurement location is physically
+reasonable and to visualise spatial error patterns.
 
 Run with: `pytest tests/validation/test_poi_sweep_all_sites.py -v -s`
 
@@ -132,47 +152,27 @@ Run with: `pytest tests/validation/test_poi_sweep_all_sites.py -v -s`
 
 ![POI sweep RMSE — Gustav Adolfs](tests/validation/gustav_adolfs/poi_sweep_results/poi_sweep_rmse.png)
 
-|           | Current POI (33, 77) | Best pixel (63, 5) |
-| --------- | -------------------: | -----------------: |
-| Mean RMSE |             13.35 °C |            8.32 °C |
-| Mean R²   |                0.730 |              0.738 |
-| Rank      |          137 / 1,638 |          1 / 1,638 |
-
-The top 5% pixels (81 candidates) cluster on the western side of the square,
-adjacent to a ~15 m tall building. The current POI is in an open area ~40 m
-from the nearest building. The best-fit pixel reduces RMSE by 36%. Without
-the original station coordinates, it is not possible to determine which pixel
-is correct; the sweep provides candidate locations for discussion with the
-authors.
+The measurement station POI (33, 77) sits in the open square. Pixels near
+the western buildings achieve lower RMSE (~8 °C vs ~13 °C) due to more
+predictable shadow patterns, but the open-square location is the documented
+measurement position.
 
 ### Kronenhuset sweep
 
 ![POI sweep RMSE — Kronenhuset](tests/validation/kronenhuset/poi_sweep_results/poi_sweep_rmse.png)
 
-|           | Current POI (51, 117) | Best pixel (133, 197) |
-| --------- | --------------------: | --------------------: |
-| Mean RMSE |               6.02 °C |               4.53 °C |
-| Mean R²   |                 0.519 |                 0.697 |
-| Rank      |                   TBD |             1 / 5,927 |
-
-The POI matches the original measurement location from POI_KR.shp. The
-sweep best pixel (133, 197) achieves lower RMSE but the original field
-coordinates are preferred for scientific reproducibility.
+The measurement station POI (51, 117) is in the courtyard, consistent with
+the described field setup. The sweep confirms this is a reasonable location
+with Tmrt RMSE ~6 °C.
 
 ### GVC sweep
 
 ![POI sweep RMSE — GVC](tests/validation/gvc/poi_sweep_results/poi_sweep_rmse.png)
 
-|           | Current POI (70, 126) | Best pixel (41, 173) |
-| --------- | --------------------: | -------------------: |
-| Mean RMSE |               6.46 °C |              3.54 °C |
-| Mean R²   |                 0.446 |                0.847 |
-| Rank      |                   TBD |            1 / 2,564 |
-
-The current POI (70, 126) is selected from a low-RMSE cluster in the
-courtyard, away from building edges. The edge pixels score better in
-the sweep but are unrealistic measurement station locations. The POI
-can be updated if the original measurement location is confirmed.
+The measurement station POI (51, 122) corresponds to Site 1 from
+Lindberg & Grimmond (2011). The higher Tmrt RMSE at this location
+(~12–16 °C) compared to some surrounding pixels likely reflects the
+sensitivity of shadow timing at this vegetated campus site.
 
 ---
 
@@ -180,37 +180,36 @@ can be updated if the original measurement location is confirmed.
 
 ### Kdown at open sites
 
-Point-level downwelling shortwave (Kdown) has high RMSE (175–333 W/m²)
+Point-level downwelling shortwave (Kdown) has high RMSE (175–344 W/m²)
 because a single pixel's shadow state is binary — a slight timing or geometry
 error in the shadow boundary causes ~800 W/m² swings. This is inherent to
 point validation of a spatially gridded model and does not indicate a model
 deficiency. Spatially averaged Kdown would show much lower error.
 
-### Ldown overestimation at enclosed sites
+### Ldown overestimation
 
-The model overestimates Ldown at Kronenhuset by +62 W/m². This is a known
-limitation of the SOLWEIG Ldown formulation (Jonsson et al. 2006), not a bug
-in this implementation. The 4-term formula fills the non-sky hemisphere with
+The model overestimates Ldown at all sites (bias +39 to +83 W/m²). This is a
+known limitation of the SOLWEIG Ldown formulation (Jonsson et al. 2006), not a
+bug in this implementation. The 4-term formula fills the non-sky hemisphere with
 wall emissions at emissivity 0.90 and air temperature, but real shaded walls
 are cooler than air temperature.
 
-- At SVF = 1.0 (open sky), clear-sky Ldown matches observations well
-  (328.9 vs 329.7 W/m²).
-- The bias arises entirely from wall-filling in enclosed geometries.
-- At Kronenhuset (~25% sky obstruction), each 1 W/m² of Ldown bias propagates
-  to ~0.12 °C Tmrt bias via the side view factors.
+- At SVF = 1.0 (open sky), clear-sky Ldown matches observations well.
+- The bias arises from wall-filling in enclosed geometries and is amplified
+  at sites with lower SVF.
 - This is consistent across all UMEP versions (2021a, 2022a, 2025a). The
   Jonsson et al. (2006) -25 W/m² empirical correction is commented out in all
   UMEP releases and is not applied here.
 
-### POI uncertainty at Gustav Adolfs torg and GVC
+### GVC Tmrt accuracy
 
-The precise measurement station coordinates are not available for Gustav
-Adolfs torg or GVC. For Gustav Adolfs, a POI sensitivity sweep across 1,638
-ground-level pixels found that locations near the western buildings achieve
-RMSE 8.2–8.9 °C with R² 0.73–0.76, compared to 12.7 °C at the current POI.
-For GVC, the initial POI estimate produced near-zero correlation; the current
-POI (70, 126) is in the low-RMSE courtyard cluster identified by the sweep.
+The GVC site shows higher Tmrt RMSE (11–16 °C) and near-zero R² compared to
+the other sites. This likely reflects:
+
+- More vegetation at GVC, increasing shadow-timing sensitivity.
+- The measurement station (Site 1) is in a courtyard with complex surrounding
+  geometry, making exact shadow reproduction difficult at 2 m resolution.
+- Only 7–12 matched hours per day, reducing statistical power.
 
 ---
 
@@ -225,15 +224,10 @@ Gothenburg sites (~189 hours):
 | L↓        | 0.73 | 17.5 W/m² |
 | L↑        | 0.94 | 15.6 W/m² |
 
-The best-performing site here (GVC) achieves comparable accuracy (Tmrt RMSE
-3.4–9.6 °C, R² 0.77–0.99). The paper's lower aggregate RMSE likely reflects:
-
-- Aggregation across more hours and sites, which smooths individual
-  shadow-timing errors.
-- Possible differences in POI placement (the original study used field GPS
-  coordinates that are not available for all sites in this dataset).
-- The paper validates against 1-minute averaged measurements; the met data
-  used here are hourly.
+Our Kronenhuset Tmrt RMSE of 6.0 °C is comparable to the paper's 4.8 K. The
+paper's lower aggregate RMSE reflects aggregation across more hours and sites
+which smooths individual shadow-timing errors. The paper also validates against
+1-minute averaged measurements; the met data used here are hourly.
 
 ---
 
@@ -264,7 +258,8 @@ pytest tests/validation/test_poi_sweep_all_sites.py -v -s
 | 0.1.0b59 | 2026-03-06 | 3 | 4.0–17.7 °C | Move GVC POI to courtyard cluster (70, 126). Shift Kronenhuset POI +1 col to match shadow profile. Move validation report to repo root. |
 | 0.1.0b60 | 2026-03-06 | 3 | 4.0–17.7 °C | GPU GVF compute shader (wgpu). Cached thermal accumulation offloaded to GPU with automatic CPU fallback. |
 | 0.1.0b61 | 2026-03-08 | 3 | 2.4–18.9 °C | Fix file-mode prepare() order (preprocess before walls/SVF), fix tiled wall propagation, fix single-Weather API, fix ModelConfig.from_json() materials, fix QGIS LC override inheritance, fix EPW cross-year timestamps. Ldown RMSE increased due to corrected SVF geometry (absolute heights). |
-| 0.1.0b62 | 2026-03-08 | 3 | 2.4–18.9 °C | 35 code review fixes: clearness index, UTC offsets, cache validation, input mutation, dead code, orchestration dedup, lazy imports, PET convergence warning, GPU mutex recovery. No metric changes. |
+| 0.1.0b62 | 2026-03-08 | 3 | 2.4–18.9 °C | 35 code review fixes: clearness index, UTC offsets, cache validation, input mutation, dead code, orchestration dedup, lazy imports, PET convergence warning, GPU mutex recovery. |
+| 0.1.0b66 | 2026-03-09 | 3 | 6.0–18.9 °C | Use original measurement station POIs from shapefiles (saved as GeoJSON). GVC POI corrected from (70,126) to (51,122) per POI_GVC.shp. KR rasters moved to self-contained validation folder. All POIs loaded at runtime from poi.geojson via conftest helper. |
 
 ---
 
