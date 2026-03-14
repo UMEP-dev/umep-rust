@@ -46,8 +46,8 @@ Complete reference for the SOLWEIG public API.
 import solweig
 
 # All public API is available at the top level
-surface = solweig.SurfaceData(dsm=my_dsm, pixel_size=1.0)
-result = solweig.calculate(surface, location, weather, output_dir="output/")
+surface = solweig.SurfaceData.prepare(dsm=my_dsm, pixel_size=1.0)
+summary = solweig.calculate(surface, weather=[weather], location=location, output_dir="output/")
 ```
 
 ## Type Annotations
@@ -55,11 +55,11 @@ result = solweig.calculate(surface, location, weather, output_dir="output/")
 SOLWEIG is fully typed. Type checking can be enabled in any IDE:
 
 ```python
-from solweig import SurfaceData, Location, Weather, SolweigResult
+from solweig import SurfaceData, Location, Weather, TimeseriesSummary
 
-def process_area(dsm: np.ndarray) -> SolweigResult:
-    surface: SurfaceData = SurfaceData(dsm=dsm, pixel_size=1.0)
+def process_area(dsm: np.ndarray) -> TimeseriesSummary:
+    surface: SurfaceData = SurfaceData.prepare(dsm=dsm, pixel_size=1.0)
     location: Location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
     weather: Weather = Weather(...)
-    return solweig.calculate(surface, location, weather, output_dir="output/")
+    return solweig.calculate(surface, weather=[weather], location=location, output_dir="output/")
 ```

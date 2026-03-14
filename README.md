@@ -71,8 +71,7 @@ from datetime import datetime
 dsm = np.full((200, 200), 2.0, dtype=np.float32)
 dsm[80:120, 80:120] = 15.0
 
-surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)
-surface.compute_svf()  # Required before calculate()
+surface = solweig.SurfaceData.prepare(dsm=dsm, pixel_size=1.0)
 
 location = solweig.Location(latitude=48.8, longitude=2.3, utc_offset=1)  # Paris
 weather = solweig.Weather(
@@ -82,10 +81,10 @@ weather = solweig.Weather(
     global_rad=850.0, # Solar radiation (W/m²)
 )
 
-result = solweig.calculate(surface, location, weather, output_dir="output/")
+summary = solweig.calculate(surface, weather=[weather], location=location, output_dir="output/")
 
-print(f"Sunlit Tmrt: {result.tmrt[result.shadow > 0.5].mean():.0f}°C")
-print(f"Shaded Tmrt: {result.tmrt[result.shadow < 0.5].mean():.0f}°C")
+print(f"Mean Tmrt: {summary.tmrt_mean.mean():.0f}°C")
+print(f"Max UTCI:  {np.nanmax(summary.utci_max):.0f}°C")
 ```
 
 ### Real-world workflow (GeoTIFFs + EPW weather)
@@ -234,7 +233,7 @@ human = solweig.HumanParams(
     # PET-specific:
     age=35, weight=75, height=1.75, sex=1, activity=80, clothing=0.9,
 )
-result = solweig.calculate(surface, location, weather, human=human, output_dir="output/")
+summary = solweig.calculate(surface, weather=[weather], location=location, human=human, output_dir="output/")
 ```
 
 ### Model options
@@ -359,9 +358,9 @@ SOLWEIG is validated against field radiation measurements from three sites in Go
 
 | Site | Season | Days | Tmrt RMSE | Tmrt R² |
 |------|--------|-----:|----------:|--------:|
-| Kronenhuset (courtyard, 1 m) | Autumn | 1 | 6.4 °C | 0.41 |
-| Gustav Adolfs torg (open square, 2 m) | Autumn + Summer | 3 | 11.7–17.7 °C | 0.56–0.90 |
-| GVC (university campus, 2 m) | Summer | 3 | 4.0–7.8 °C | 0.38–0.68 |
+| Kronenhuset (courtyard, 1 m) | Autumn | 1 | 6.0 °C | 0.52 |
+| Gustav Adolfs torg (open square, 2 m) | Autumn + Summer | 3 | 9.3–18.9 °C | 0.72–0.91 |
+| GVC (university campus, 2 m) | Summer | 3 | 11.5–15.6 °C | 0.00–0.20 |
 
 Anisotropic sky mode, matched daytime observation hours. Full details, radiation budget comparisons, and version history: **[Validation Report](VALIDATION.md)**.
 
@@ -387,4 +386,4 @@ The Athens demo dataset (`demos/data/athens/`) uses the following sources:
 
 ## License
 
-GNU Affero General Public License v3.0 — see [LICENSE](LICENSE).
+GNU General Public License v3.0 — see [LICENSE](LICENSE).

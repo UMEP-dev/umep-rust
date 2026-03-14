@@ -183,9 +183,12 @@ calculate(..., physics=physics, materials=materials)
 ### Level 3: Manual preprocessing
 
 ```python
-solweig.walls.generate_wall_hts(dsm_path="dsm.tif", out_dir="walls/")
-solweig.svf.generate_svf(dsm_path="dsm.tif", out_dir="svf/")
-surface = solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="manual/")
+# SurfaceData.prepare() handles wall and SVF computation automatically.
+# For fine-grained control, construct SurfaceData manually and call
+# preprocess() and compute_svf() separately:
+surface = solweig.SurfaceData(dsm=dsm, pixel_size=1.0)
+surface.preprocess()
+surface.compute_svf()
 ```
 
 ---
@@ -205,7 +208,7 @@ results = solweig.calculate(surface, weather, params=params, output_dir="output/
 
 | Parameter | Purpose | Default | Customisation |
 | --------- | ------- | ------- | ------------- |
-| `human` | Person characteristics | Standing, 75 kg, 180 cm | `HumanParams(...)` object |
+| `human` | Person characteristics | Standing, 75 kg, 175 cm | `HumanParams(...)` object |
 | `physics` | Site-independent constants | Bundled in package | `load_physics("custom.json")` |
 | `materials` | Landcover properties | Not required if no landcover grid | `load_materials("site.json")` |
 | `use_anisotropic_sky` | Sky model selection | `True` | Set to `False` for isotropic |

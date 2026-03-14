@@ -40,12 +40,12 @@ weather = solweig.Weather(
 )
 
 # --- 3. Calculate ---
-result = solweig.calculate(surface, location, weather, output_dir="output/")
+summary = solweig.calculate(surface, weather=[weather], location=location, output_dir="output/")
 
 # --- 4. Inspect results ---
-print(f"Mean Tmrt:   {result.tmrt.mean():.1f} deg C")
-print(f"Sunlit Tmrt: {result.tmrt[result.shadow > 0.5].mean():.1f} deg C")
-print(f"Shaded Tmrt: {result.tmrt[result.shadow < 0.5].mean():.1f} deg C")
+print(f"Mean Tmrt:   {summary.tmrt_mean.mean():.1f} deg C")
+print(f"Max Tmrt:    {summary.tmrt_max.max():.1f} deg C")
+print(f"Sun hours:   {summary.sun_hours.max():.1f}")
 ```
 
 ## Option B: From GeoTIFF files (real-world data)
@@ -87,7 +87,7 @@ results = solweig.calculate(
     outputs=["tmrt", "shadow"],
 )
 
-print(f"Completed — {len(results)} timesteps saved to output/")
+print(f"Completed — {results.n_timesteps} timesteps")
 ```
 
 The returned `TimeseriesSummary` contains aggregated grids (mean/max/min Tmrt,

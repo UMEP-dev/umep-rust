@@ -410,7 +410,7 @@ class SurfaceData:
             tdsm_relative: TDSM values are height above ground. Default True.
             min_object_height: Minimum nDSM height (m) for shadow casting.
                 DSM pixels below this height above DEM are flattened to remove
-                kerbs, street furniture, and LiDAR noise. Default 1.5. Set to
+                kerbs, street furniture, and LiDAR noise. Default 1.0. Set to
                 0 to disable. Requires DEM.
             force_recompute: Recompute walls/SVF even if cached (file mode only).
             feedback: QGIS QgsProcessingFeedback for progress/cancellation.

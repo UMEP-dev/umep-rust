@@ -26,8 +26,8 @@ def create_patches(
 ]:
     # patch_option = 1 = 145 patches (Robinson & Stone, 2004)
     # patch_option = 2 = 153 patches (Wallenberg et al., 2022)
-    # patch_option = 3 = 306 patches -> test
-    # patch_option = 4 = 612 patches -> test
+    # patch_option = 3 = 305 patches -> test
+    # patch_option = 4 = 609 patches -> test
 
     skyvaultalt = np.atleast_2d([])
     skyvaultazi = np.atleast_2d([])
@@ -45,13 +45,13 @@ def create_patches(
         skyvaultaltint = np.array([6, 18, 30, 42, 54, 66, 78, 90])  # Robinson & Stone (2004)
         azistart = np.array([0, 4, 2, 5, 8, 0, 10, 0])  # Fredrik/Nils
         patches_in_band = np.array([31, 30, 28, 24, 19, 13, 7, 1])  # Nils
-    # Patch option 3, 306 patches, test
+    # Patch option 3, 305 patches, test
     elif patch_option == 3:
         annulino = np.array([0, 12, 24, 36, 48, 60, 72, 84, 90])
         skyvaultaltint = np.array([6, 18, 30, 42, 54, 66, 78, 90])  # Robinson & Stone (2004)
         azistart = np.array([0, 4, 2, 5, 8, 0, 10, 0])  # Fredrik/Nils
         patches_in_band = np.array([31 * 2, 30 * 2, 28 * 2, 24 * 2, 19 * 2, 13 * 2, 7 * 2, 1])  # Nils
-    # Patch option 4, 612 patches, test
+    # Patch option 4, 609 patches, test
     elif patch_option == 4:
         annulino = np.array([0, 4.5, 9, 15, 21, 27, 33, 39, 45, 51, 57, 63, 69, 75, 81, 90])  # Nils
         skyvaultaltint = np.array([3, 9, 15, 21, 27, 33, 39, 45, 51, 57, 63, 69, 75, 81, 90])  # Nils

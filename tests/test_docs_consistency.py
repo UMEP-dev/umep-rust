@@ -44,5 +44,5 @@ def test_index_and_readme_state_svf_and_aniso_preconditions():
 
     assert "SVF Rule" in index_text
     assert "Anisotropic Rule" in index_text
-    assert "compute_svf()" in readme_text
+    assert "compute_svf()" in readme_text or "prepare(" in readme_text
     assert "use_anisotropic_sky" in readme_text

@@ -2588,16 +2588,20 @@ wheels = [
 
 [[package]]
 name = "solweig"
-version = "0.1.0b68"
+version = "0.1.0b69"
 source = { editable = "." }
 dependencies = [
-    { name = "geopandas" },
     { name = "numpy" },
     { name = "pillow" },
     { name = "pyproj" },
     { name = "rasterio" },
     { name = "shapely" },
     { name = "tqdm" },
+]
+
+[package.optional-dependencies]
+geo = [
+    { name = "geopandas" },
 ]
 
 [package.dev-dependencies]
@@ -2631,7 +2635,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "geopandas", specifier = ">=1.0.1" },
+    { name = "geopandas", marker = "extra == 'geo'", specifier = ">=1.0.1" },
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "pillow", specifier = ">=9.0.0" },
     { name = "pyproj", specifier = ">=3.7.0" },
@@ -2639,6 +2643,7 @@ requires-dist = [
     { name = "shapely", specifier = ">=2.0.4" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
+provides-extras = ["geo"]
 
 [package.metadata.requires-dev]
 dev = [

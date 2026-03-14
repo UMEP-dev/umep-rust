@@ -229,7 +229,7 @@ The default person is standing, 75 kg, 1.75 m tall, 35 years old. These values c
 
 ```python
 result = solweig.calculate(
-    surface, location, weather,
+    surface, weather=[weather], location=location,
     human=solweig.HumanParams(
         posture="sitting",   # or "standing" (default)
         abs_k=0.7,           # Shortwave absorption (0–1)
@@ -267,7 +267,7 @@ try:
     warnings = solweig.validate_inputs(surface, location, weather)
     for w in warnings:
         print(f"Warning: {w}")
-    result = solweig.calculate(surface, location, weather, output_dir="output/")
+    result = solweig.calculate(surface, weather=[weather], location=location, output_dir="output/")
 except solweig.GridShapeMismatch as e:
     print(f"Grid size mismatch: {e.field} expected {e.expected}, got {e.got}")
 except solweig.MissingPrecomputedData as e:

@@ -160,7 +160,7 @@ The `work` parameter (in Watts total, not W/m²) is added directly to the whole-
 
 PET requires solving the energy balance iteratively to find the equivalent temperature. The algorithm:
 
-1. Compute skin and core temperatures for actual outdoor conditions using a 7-mode thermoregulation loop (j = 1..7), each mode representing different physiological states (sweating, vasoconstriction, etc.)
+1. Compute skin and core temperatures for actual outdoor conditions using a 6-mode thermoregulation loop (j = 1..6), each mode representing different physiological states (sweating, vasoconstriction, etc.). Note: 7 core temperature formulas exist (`tcore[1]`..`tcore[7]`), but only 6 modes are tried as convergence candidates (the loop guard `j < 7` prevents mode 7 from executing).
 2. Within each mode, a 4-pass bracketing scheme finds the clothing temperature (tcl) with decreasing step sizes: 1.0 → 0.1 → 0.01 → 0.001°C. Each pass runs up to 200 iterations, searching for a sign change in the energy balance.
 3. Once outdoor skin/core temperatures converge, repeat the same 4-pass bracketing for the PET reference indoor conditions (Tmrt = Ta, v = 0.1 m/s, vapor pressure = 12 hPa) to find the equivalent temperature.
 4. Effective precision: 0.001°C.

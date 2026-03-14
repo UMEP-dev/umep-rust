@@ -20,7 +20,7 @@ import solweig
 from solweig.errors import GridShapeMismatch, MissingPrecomputedData, SolweigError
 
 try:
-    result = solweig.calculate(surface, location, weather, output_dir="output/")
+    result = solweig.calculate(surface, weather=[weather], location=location, output_dir="output/")
 except GridShapeMismatch as e:
     print(f"Grid mismatch: {e.field}")
     print(f"  Expected: {e.expected}")
@@ -100,7 +100,7 @@ try:
     for w in warnings:
         print(f"Warning: {w}")
 
-    result = solweig.calculate(surface, location, weather, output_dir="output/")
+    result = solweig.calculate(surface, weather=[weather], location=location, output_dir="output/")
 
 except GridShapeMismatch as e:
     print(f"Grid shape mismatch: {e.field}")

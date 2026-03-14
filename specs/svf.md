@@ -26,8 +26,8 @@ The sky is divided into concentric annuli (altitude bands) from 0° to 90° elev
 
 - **Option 1** (145 patches): Coarse for fast computation
 - **Option 2** (153 patches - default): Balance of accuracy and speed
-- **Option 3** (306 patches): Fine for high accuracy
-- **Option 4** (930 patches): Research-grade resolution
+- **Option 3** (305 patches): Fine for high accuracy
+- **Option 4** (609 patches): Research-grade resolution
 
 For option 2 (153 patches):
 
@@ -71,7 +71,9 @@ Where:
 
 ### Last Annulus Correction
 
-A correction factor `LAST_ANNULUS_CORRECTION = 3.0459e-4` is added during finalization. This compensates for the zenith patch (90°) being represented as a single point rather than a solid angle. Without this correction, a completely unobstructed view would sum to slightly less than 1.0.
+A correction factor `LAST_ANNULUS_CORRECTION = 3.0459e-4` is added during finalization to `svf_south` and `svf_west` only (and their vegetation variants, conditioned on `vegdem2 == 0`). It is **not** applied to the isotropic `svf`, `svf_north`, or `svf_east`.
+
+The reason for this asymmetry: the zenith patch has a single azimuthal subdivision at azimuth = 0°. The directional bucketing rules place azimuth 0° in the north (270°–90°) and east (0°–180°) half-hemispheres, but not in south (90°–270°) or west (180°–360°). The correction adds back the missing zenith contribution to the south and west directional SVFs. The isotropic SVF accumulates the zenith patch regardless of azimuth, so no correction is needed there.
 
 ### Directional SVF
 

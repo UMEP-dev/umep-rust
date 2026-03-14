@@ -6,7 +6,7 @@ Contributions to SOLWEIG are welcome.
 
 ### Prerequisites
 
-- Python 3.10+
+- Python 3.11+
 - Rust toolchain (for building extensions)
 - uv (package manager)
 
@@ -128,4 +128,4 @@ If you use SOLWEIG in research, please cite:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the GNU General Public License v3.0.
+By contributing, you agree that your contributions will be licensed under the GNU General Public License v3.0 (GPL-3.0).

@@ -163,7 +163,7 @@ class TestSteradiansCaching:
         """Cached steradians on ShadowArrays match direct computation."""
         from solweig.models.precomputed import ShadowArrays
 
-        patch_map = {1: 145, 2: 153, 3: 306}
+        patch_map = {1: 145, 2: 153, 3: 305}
         n_patches = patch_map[patch_option]
 
         # Create a minimal ShadowArrays with the right patch count

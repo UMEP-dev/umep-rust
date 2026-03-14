@@ -32,9 +32,10 @@ The public interface:
 ```python
 import solweig
 
+surface = solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="cache/")
 summary = solweig.calculate(
-    surface=solweig.SurfaceData.prepare(dsm="dsm.tif", working_dir="output"),
-    weather=solweig.Weather.from_umep_met("weather.txt"),
+    surface=surface,
+    weather=solweig.Weather.from_epw("weather.epw"),
     location=solweig.Location.from_surface(surface, utc_offset=1),
     output_dir="output/",
 )

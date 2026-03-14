@@ -128,4 +128,4 @@ If you use SOLWEIG in your research, please cite the original model paper and th
 
 ## License
 
-GNU Affero General Public License v3.0. See [LICENSE](https://github.com/UMEP-dev/solweig/blob/main/LICENSE) for details.
+GNU General Public License v3.0. See [LICENSE](https://github.com/UMEP-dev/solweig/blob/main/LICENSE) for details.

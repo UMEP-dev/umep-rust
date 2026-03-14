@@ -488,8 +488,8 @@ class ShadowArrays:
 
     @property
     def patch_option(self) -> int:
-        """Patch option code (1=145, 2=153, 3=306, 4=612 patches)."""
-        patch_map = {145: 1, 153: 2, 306: 3, 612: 4}
+        """Patch option code (1=145, 2=153, 3=305, 4=609 patches)."""
+        patch_map = {145: 1, 153: 2, 305: 3, 609: 4}
         return patch_map.get(self.patch_count, 2)
 
     @property
@@ -547,7 +547,7 @@ class ShadowArrays:
         Load shadow matrices from SOLWEIG shadowmats.npz format.
 
         Handles both legacy u8-per-patch format and new bitpacked format.
-        Legacy files have shape[2] matching patch count (145/153/306/612).
+        Legacy files have shape[2] matching patch count (145/153/305/609).
         New files include a 'patch_count' metadata key.
         """
         npz_path = Path(npz_path)

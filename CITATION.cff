@@ -13,7 +13,7 @@ authors:
     affiliation: University of Reading
   - name: UMEP Developers
 repository-code: https://github.com/UMEP-dev/solweig
-license: AGPL-3.0
+license: GPL-3.0
 keywords:
   - urban-microclimate
   - mean-radiant-temperature

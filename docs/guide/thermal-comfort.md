@@ -31,12 +31,11 @@ summary = solweig.calculate(
 )
 ```
 
-### From a single result
+### From a single-timestep run
 
 ```python
-result = solweig.calculate(surface, location, weather, output_dir="output/")
-utci = result.compute_utci(weather)
-print(f"Mean UTCI: {utci.mean():.1f} deg C")
+summary = solweig.calculate(surface, weather=[weather], location=location, output_dir="output/")
+print(f"Mean UTCI: {summary.utci_mean.mean():.1f} deg C")
 ```
 
 ### UTCI stress categories
@@ -92,19 +91,15 @@ summary = solweig.calculate(
 )
 ```
 
-### Single-result PET
+### PET with custom human parameters
+
+PET per-timestep GeoTIFFs are saved when `"pet"` is included in `outputs`:
 
 ```python
-result = solweig.calculate(surface, location, weather, output_dir="output/")
-pet = result.compute_pet(weather)
-print(f"Mean PET: {pet.mean():.1f} deg C")
-```
-
-### With custom human parameters
-
-```python
-pet = result.compute_pet(
-    weather,
+summary = solweig.calculate(
+    surface, weather=[weather], location=location,
+    output_dir="output/",
+    outputs=["tmrt", "pet"],
     human=solweig.HumanParams(
         weight=60,           # kg
         height=1.65,         # m
