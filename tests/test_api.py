@@ -759,9 +759,22 @@ class TestCalculateIntegration:
             output_dir=tmp_path / "run2",
         )
 
-        # Results should exist and be valid
+        # Results should exist and be physically reasonable
         assert summary_standing.tmrt_mean is not None
         assert summary_sitting.tmrt_mean is not None
+
+        # Sitting Tmrt must be positive and in a reasonable range for
+        # summer midday (not negative as it was before the anisotropic
+        # sky fix for sitting posture — see GitHub issue #9)
+        standing_mean = np.nanmean(summary_standing.tmrt_mean)
+        sitting_mean = np.nanmean(summary_sitting.tmrt_mean)
+        assert standing_mean > 0, f"Standing Tmrt should be positive, got {standing_mean}"
+        assert sitting_mean > 0, f"Sitting Tmrt should be positive, got {sitting_mean}"
+        # Sitting Tmrt is typically lower than standing due to different
+        # view factors, but should be in the same ballpark (not 50+ K lower)
+        assert abs(standing_mean - sitting_mean) < 20, (
+            f"Standing ({standing_mean:.1f}) and sitting ({sitting_mean:.1f}) Tmrt should be within 20 K of each other"
+        )
 
 
 @pytest.mark.slow

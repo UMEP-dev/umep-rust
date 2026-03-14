@@ -333,7 +333,7 @@ pub(crate) fn anisotropic_sky_pure(
                 let temp_vegsh = !vsh || !vbsh;
                 let temp_sh = !sh && vbsh;
 
-                if cyl {
+                {
                     let angle_of_incidence = (p_alt * deg2rad).cos();
                     let angle_of_incidence_h = (p_alt * deg2rad).sin();
 
@@ -550,21 +550,45 @@ pub(crate) fn anisotropic_sky_pure(
     let ldown = &ldown_sky + &ldown_veg + &ldown_sh + &ldown_sun + &ldown_ref;
 
     let mut kside_i = Array2::<f32>::zeros((rows, cols));
-    if cyl {
-        kside_i = &shadow * rad_i * (solar_altitude * deg2rad).cos();
-    }
-    let mut kside = Array2::<f32>::zeros((rows, cols));
     let mut keast = Array2::<f32>::zeros((rows, cols));
     let mut kwest = Array2::<f32>::zeros((rows, cols));
     let mut knorth = Array2::<f32>::zeros((rows, cols));
     let mut ksouth = Array2::<f32>::zeros((rows, cols));
 
+    if cyl {
+        // Cylinder: direct beam goes into aggregate kside_i
+        kside_i = &shadow * rad_i * (solar_altitude * deg2rad).cos();
+    } else if solar_altitude > 0.0 {
+        // Box: direct beam split into directional components
+        let cos_alt = (solar_altitude * deg2rad).cos();
+        let azi = solar_azimuth;
+        // East face (azimuth 0..180)
+        if azi > 360.0 || azi <= 180.0 {
+            keast = &shadow * rad_i * cos_alt * (azi * deg2rad).sin();
+        }
+        // South face (azimuth 90..270)
+        if azi > 90.0 && azi <= 270.0 {
+            ksouth = &shadow * rad_i * cos_alt * ((azi - 90.0) * deg2rad).sin();
+        }
+        // West face (azimuth 180..360)
+        if azi > 180.0 && azi <= 360.0 {
+            kwest = &shadow * rad_i * cos_alt * ((azi - 180.0) * deg2rad).sin();
+        }
+        // North face (azimuth 270..360 or 0..90)
+        if azi <= 90.0 || azi > 270.0 {
+            knorth = &shadow * rad_i * cos_alt * ((azi - 270.0) * deg2rad).sin();
+        }
+    }
+
+    let mut kside = Array2::<f32>::zeros((rows, cols));
+
     if solar_altitude > 0.0 {
         kside = &kside_i + &kside_d + &kref_sun + &kref_sh + &kref_veg;
-        keast = &kup_e * 0.5;
-        kwest = &kup_w * 0.5;
-        knorth = &kup_n * 0.5;
-        ksouth = &kup_s * 0.5;
+        // Add ground-reflected shortwave to directional components
+        keast = keast + &kup_e * 0.5;
+        kwest = kwest + &kup_w * 0.5;
+        knorth = knorth + &kup_n * 0.5;
+        ksouth = ksouth + &kup_s * 0.5;
     }
 
     SkyResultPure {

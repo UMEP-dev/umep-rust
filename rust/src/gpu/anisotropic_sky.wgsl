@@ -142,15 +142,6 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    // ── Short-circuit when not cylindric (cyl == 0) ─────────────────────
-    if (params.cyl == 0u) {
-        out_ldown[idx]         = 0.0;
-        out_lside[idx]         = 0.0;
-        out_kside_partial[idx] = 0.0;
-        out_drad[idx]          = 0.0;
-        return;
-    }
-
     // ── Pre-compute scalars ─────────────────────────────────────────────
     let ta_k: f32     = params.ta + 273.15;
     let pixel_asvf: f32 = asvf[idx];

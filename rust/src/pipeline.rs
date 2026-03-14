@@ -1424,42 +1424,40 @@ pub fn compute_timestep(
                     let mut gpu_pending = None;
 
                     #[cfg(feature = "gpu")]
-                    if cyl {
-                        if let Some(ctx) = get_aniso_gpu_context() {
-                            match ctx.dispatch_begin(
-                                shmat_a,
-                                vegshmat_a,
-                                vbshmat_a,
-                                asvf_arr,
-                                delay.lup.view(),
-                                valid_v,
-                                patch_altitude_arr,
-                                patch_azimuth_arr,
-                                steradians_arr,
-                                esky_band.view(),
-                                lum_chi.view(),
-                                weather.sun_altitude,
-                                weather.sun_azimuth,
-                                weather.ta,
-                                cyl,
-                                config.albedo_wall,
-                                ground.tg_wall,
-                                config.emis_wall,
-                                rad_i,
-                                rad_d,
-                                psi,
-                                rad_tot,
-                            ) {
-                                Ok(pending) => {
-                                    gpu_ctx = Some(ctx);
-                                    gpu_pending = Some(pending);
-                                }
-                                Err(e) => {
-                                    eprintln!(
+                    if let Some(ctx) = get_aniso_gpu_context() {
+                        match ctx.dispatch_begin(
+                            shmat_a,
+                            vegshmat_a,
+                            vbshmat_a,
+                            asvf_arr,
+                            delay.lup.view(),
+                            valid_v,
+                            patch_altitude_arr,
+                            patch_azimuth_arr,
+                            steradians_arr,
+                            esky_band.view(),
+                            lum_chi.view(),
+                            weather.sun_altitude,
+                            weather.sun_azimuth,
+                            weather.ta,
+                            cyl,
+                            config.albedo_wall,
+                            ground.tg_wall,
+                            config.emis_wall,
+                            rad_i,
+                            rad_d,
+                            psi,
+                            rad_tot,
+                        ) {
+                            Ok(pending) => {
+                                gpu_ctx = Some(ctx);
+                                gpu_pending = Some(pending);
+                            }
+                            Err(e) => {
+                                eprintln!(
                                     "[GPU] Anisotropic dispatch begin failed: {}. CPU fallback.",
                                     e
                                 );
-                                }
                             }
                         }
                     }
