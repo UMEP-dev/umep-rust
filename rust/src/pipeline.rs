@@ -1512,6 +1512,7 @@ pub fn compute_timestep(
                         };
                         if weather.sun_altitude > 0.0 {
                             ani_kside = kside_i + &gpu.kside_partial;
+                            // Ground-reflected shortwave to directional (both postures)
                             ani_kside_dirs_sum = kside_dirs_sum_aniso_from_kup(
                                 kup_e.view(),
                                 kup_s.view(),
@@ -1519,6 +1520,42 @@ pub fn compute_timestep(
                                 kup_n.view(),
                                 valid_v,
                             );
+                            // Box posture: add direct beam to directional faces
+                            if !cyl {
+                                let cos_alt =
+                                    (weather.sun_altitude * deg2rad).cos();
+                                let azi = weather.sun_azimuth;
+                                let mut kdir_box = Array2::<f32>::zeros(shape);
+                                // East face
+                                if azi > 360.0 || azi <= 180.0 {
+                                    kdir_box += &(&shadow_f32
+                                        * rad_i
+                                        * cos_alt
+                                        * (azi * deg2rad).sin());
+                                }
+                                // South face
+                                if azi > 90.0 && azi <= 270.0 {
+                                    kdir_box += &(&shadow_f32
+                                        * rad_i
+                                        * cos_alt
+                                        * ((azi - 90.0) * deg2rad).sin());
+                                }
+                                // West face
+                                if azi > 180.0 && azi <= 360.0 {
+                                    kdir_box += &(&shadow_f32
+                                        * rad_i
+                                        * cos_alt
+                                        * ((azi - 180.0) * deg2rad).sin());
+                                }
+                                // North face
+                                if azi <= 90.0 || azi > 270.0 {
+                                    kdir_box += &(&shadow_f32
+                                        * rad_i
+                                        * cos_alt
+                                        * ((azi - 270.0) * deg2rad).sin());
+                                }
+                                ani_kside_dirs_sum += &kdir_box;
+                            }
                         }
                         ani_ldown = gpu.ldown;
                         ani_lside = gpu.lside;

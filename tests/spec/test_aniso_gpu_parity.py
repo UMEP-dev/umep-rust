@@ -303,7 +303,7 @@ class TestAnisoGpuCpuParity:
             assert np.nanmax(kdown_gpu) < 1.0, "kdown should be ~0 at night"
 
     def test_sitting_posture_parity(self, location, noon_weather, gpu_available, tmp_path):
-        """Sitting posture (cyl=False): GPU short-circuits to zero, CPU should match."""
+        """Sitting posture (cyl=False): GPU and CPU should produce matching Tmrt."""
         from conftest import read_timestep_geotiff
 
         if not gpu_available:
@@ -316,16 +316,13 @@ class TestAnisoGpuCpuParity:
 
         sitting = HumanParams(posture="sitting")
 
-        for gpu_on, _surface in [(True, surface_gpu), (False, surface_cpu)]:
-            try:
-                if gpu_on:
-                    pipeline.enable_aniso_gpu()
-                else:
-                    pipeline.disable_aniso_gpu()
-            except AttributeError:
-                if gpu_on:
-                    pytest.skip("GPU feature not compiled")
+        # Verify GPU feature is compiled
+        try:
+            pipeline.enable_aniso_gpu()
+        except AttributeError:
+            pytest.skip("GPU feature not compiled")
 
+        # GPU run
         out_gpu = tmp_path / "gpu"
         calculate(
             surface_gpu,
@@ -336,6 +333,8 @@ class TestAnisoGpuCpuParity:
             output_dir=out_gpu,
             outputs=["tmrt", "kdown"],
         )
+
+        # CPU run
         pipeline.disable_aniso_gpu()
         out_cpu = tmp_path / "cpu"
         calculate(
