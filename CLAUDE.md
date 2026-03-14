@@ -233,6 +233,8 @@ This is a **scientific library**. All code decisions must be driven by scientifi
 
    The `calculate()` API signature is `calculate(surface, weather, location, *, output_dir, ...)` and returns `TimeseriesSummary`. Many docs historically had the argument order wrong (location before weather) and assumed it returned `SolweigResult`. Always verify examples match the actual signature.
 
+7. **Update the validation report on every commit.** When committing changes — especially any that touch physics, algorithms, shadow casting, SVF, radiation, or model defaults — re-run the validation suite (`pytest tests/validation/ -v`) and add an entry to the version history table in `VALIDATION.md`. Even if numbers are unchanged, record this to maintain a complete audit trail. Update the `README.md` validation table if the summary numbers change.
+
 ---
 
 ## Documentation Health (audited 2026-03-14)
