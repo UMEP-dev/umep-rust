@@ -83,7 +83,7 @@ weather_list = solweig.Weather.from_epw(
 
 ### Downloading weather data
 
-If no EPW file is available, one can be downloaded from PVGIS (no API key required):
+If no EPW file is available, a Typical Meteorological Year (TMY) file can be downloaded from PVGIS (no API key required):
 
 ```python
 epw_path = solweig.download_epw(
@@ -94,6 +94,9 @@ epw_path = solweig.download_epw(
 weather_list = solweig.Weather.from_epw(epw_path)
 location = solweig.Location.from_epw(epw_path)
 ```
+
+!!! note "TMY files represent typical climate, not a specific year"
+    A TMY is a statistical composite — each calendar month is selected from the most "typical" month across a multi-year reference period (2005–2020 for PVGIS v5.3). The result represents long-term average conditions, not observations from any single year. Data freshness depends on the upstream [PVGIS release](https://joint-research-centre.ec.europa.eu/photovoltaic-geographical-information-system-pvgis/pvgis-tools/pvgis-typical-meteorological-year-tmy-generator_en), not on SOLWEIG.
 
 ## Running a Calculation
 

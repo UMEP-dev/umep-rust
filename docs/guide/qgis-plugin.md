@@ -43,7 +43,7 @@ Download a Typical Meteorological Year (TMY) weather file from the EU PVGIS serv
 | **Output EPW** | Save location for the downloaded file |
 | **EPW File** | Path to an existing file (preview mode) |
 
-**Download mode** fetches ERA5 reanalysis data from the [PVGIS API](https://re.jrc.ec.europa.eu/pvg_tools/en/) — global coverage, no API key required. **Preview mode** generates an HTML report with location, date range, and variable statistics.
+**Download mode** fetches a Typical Meteorological Year (TMY) file from the [PVGIS API](https://re.jrc.ec.europa.eu/pvg_tools/en/) — global coverage, no API key required. A TMY is a statistical composite of typical months selected from the ERA5 reanalysis reference period (2005–2020 for PVGIS v5.3); it represents long-term average climate, not observations from a specific year. See the [PVGIS TMY documentation](https://joint-research-centre.ec.europa.eu/photovoltaic-geographical-information-system-pvgis/pvgis-tools/pvgis-typical-meteorological-year-tmy-generator_en) for methodology. **Preview mode** generates an HTML report with location, date range, and variable statistics.
 
 ### 2. Prepare Surface Data (align, walls, SVF)
 

@@ -263,8 +263,8 @@ A raster grid where each pixel contains the height in metres (including building
 
 Hourly weather data in a standard format. Sources:
 
-- [Climate.OneBuilding.Org](https://climate.onebuilding.org/) — global coverage
-- [PVGIS](https://re.jrc.ec.europa.eu/pvg_tools/en/) — European Commission tool
+- [Climate.OneBuilding.Org](https://climate.onebuilding.org/) — global coverage, multi-year TMY files
+- [PVGIS](https://re.jrc.ec.europa.eu/pvg_tools/en/) — European Commission TMY generator ([methodology](https://joint-research-centre.ec.europa.eu/photovoltaic-geographical-information-system-pvgis/pvgis-tools/pvgis-typical-meteorological-year-tmy-generator_en))
 
 EPW files can also be downloaded from PVGIS programmatically (no API key required):
 
@@ -278,6 +278,9 @@ epw_path = solweig.download_epw(
 weather_list = solweig.Weather.from_epw(epw_path)
 location = solweig.Location.from_epw(epw_path)
 ```
+
+!!! note "TMY files represent typical climate, not a specific year"
+    A Typical Meteorological Year (TMY) is a statistical composite — each calendar month is selected from the most "typical" month across a multi-year reference period (2005–2020 for PVGIS v5.3). The result represents long-term average conditions, not observations from any single year. Data freshness depends on the upstream PVGIS release, not on SOLWEIG. See the [PVGIS TMY documentation](https://joint-research-centre.ec.europa.eu/photovoltaic-geographical-information-system-pvgis/pvgis-tools/pvgis-typical-meteorological-year-tmy-generator_en) for full methodology and data sources.
 
 !!! note "Data attribution"
     PVGIS weather data is derived from ERA5 reanalysis and contains modified Copernicus Climate Change Service information. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.

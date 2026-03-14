@@ -1114,9 +1114,22 @@ def download_epw(
     """
     Download a Typical Meteorological Year (TMY) EPW file from PVGIS.
 
-    Uses the EU Joint Research Centre's PVGIS API (no API key required).
+    Uses the EU Joint Research Centre's PVGIS API (v5.3, no API key required).
     Coverage is near-global (all continents except polar regions),
     using ERA5 reanalysis data.
+
+    **Important:** TMY files are *not* observations for a specific year.
+    A TMY is a statistical composite — each calendar month is selected from
+    the most "typical" month across a multi-year reference period (2005–2020
+    for PVGIS v5.3).  The resulting file represents long-term average climate
+    conditions, not a recent or continuously updated dataset.  The reference
+    period is fixed per PVGIS release; data freshness depends on the upstream
+    PVGIS version, not on SOLWEIG.
+
+    See the PVGIS TMY documentation for full methodology and data sources:
+    https://joint-research-centre.ec.europa.eu/photovoltaic-geographical-information-system-pvgis/pvgis-tools/pvgis-typical-meteorological-year-tmy-generator_en
+
+    Ref: UMEP-dev/solweig#8
 
     The downloaded data contains modified Copernicus Climate Change Service
     information. Neither the European Commission nor ECMWF is responsible

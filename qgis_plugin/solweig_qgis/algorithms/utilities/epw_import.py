@@ -55,6 +55,12 @@ Downloads a Typical Meteorological Year (TMY) EPW file from the EU
 PVGIS service (no API key required). Near-global coverage using
 ERA5 reanalysis data.
 
+A TMY is a statistical composite — each calendar month is selected
+from the most "typical" month across a multi-year reference period
+(2005–2020 for PVGIS v5.3). The result represents long-term average
+climate conditions, <i>not</i> observations from a specific year.
+Data freshness depends on the upstream PVGIS release, not on SOLWEIG.
+
 Enter latitude and longitude, and the file will be downloaded and
 saved to the specified output path.
 
@@ -76,6 +82,8 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis.
 
 <b>Documentation:</b>
 <ul>
+<li><a href="https://joint-research-centre.ec.europa.eu/photovoltaic-geographical-information-system-pvgis/pvgis-tools/pvgis-typical-meteorological-year-tmy-generator_en"
+>PVGIS TMY Methodology</a></li>
 <li><a href="https://umep-dev.github.io/solweig/guide/qgis-plugin/">QGIS Plugin Guide</a></li>
 <li><a href="https://umep-dev.github.io/solweig/getting-started/quick-start/">Quick Start</a></li>
 <li><a href="https://umep-dev.github.io/solweig/">SOLWEIG Documentation</a></li>
@@ -184,7 +192,7 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis.
     ) -> dict:
         """Download EPW from PVGIS and generate preview report."""
         feedback.pushInfo("=" * 60)
-        feedback.pushInfo("EPW Download from PVGIS")
+        feedback.pushInfo("EPW Download from PVGIS (Typical Meteorological Year)")
         feedback.pushInfo("=" * 60)
 
         # Import solweig
@@ -247,6 +255,11 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis.
 
         feedback.setProgress(60)
         feedback.pushInfo(f"Downloaded EPW file: {output_path}")
+        feedback.pushInfo(
+            "Note: This is a Typical Meteorological Year (TMY) file — a statistical"
+            " composite of typical months from the ERA5 reference period (2005-2020),"
+            " not observations from a specific year."
+        )
 
         # Generate preview report
         feedback.setProgressText("Generating report...")
@@ -471,6 +484,19 @@ EU Joint Research Centre. Data derived from ERA5 reanalysis.
             <tr><td>Total Timesteps</td><td>{len(df):,}</td></tr>
             <tr><td>Timestep Interval</td><td>Hourly</td></tr>
         </table>
+    </div>
+
+    <div class="info">
+        <strong>About Typical Meteorological Year (TMY) data:</strong>
+        A TMY file is a statistical composite &mdash; each calendar month is selected
+        from the most &ldquo;typical&rdquo; month across a multi-year reference period
+        (2005&ndash;2020 for PVGIS v5.3). It represents long-term average climate conditions,
+        not observations from any single year. The dates shown above are nominal; the
+        underlying data is drawn from the full reference period.
+        See the
+        <a href="https://joint-research-centre.ec.europa.eu/photovoltaic-geographical-information-system-pvgis/pvgis-tools/pvgis-typical-meteorological-year-tmy-generator_en"
+>PVGIS TMY documentation</a>
+        for full methodology and data sources.
     </div>
 
     <div class="card">
