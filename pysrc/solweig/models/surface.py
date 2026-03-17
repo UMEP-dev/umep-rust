@@ -1892,7 +1892,7 @@ class SurfaceData:
         2. Auto-generates TDSM from CDSM * trunk_ratio if TDSM is not provided
         3. Converts CDSM from relative to absolute if ``cdsm_relative=True``
         4. Converts TDSM from relative to absolute if ``tdsm_relative=True``
-        5. Zeros out vegetation pixels with height < 0.1m
+        5. Sets sub-threshold vegetation to NaN (absent from scene)
 
         Note:
             This method modifies arrays in-place and clears the per-layer
@@ -1978,7 +1978,7 @@ class SurfaceData:
             self.tdsm_relative = False
             logger.info(f"Converted relative TDSM to absolute (base: {'DEM' if self.dem is not None else 'DSM'})")
 
-        # Step 5: NaN out CDSM/TDSM where vegetation is below the surface
+        # Step 5: NaN out CDSM/TDSM where vegetation is below the DSM
         # Canopy below the DSM is physically impossible — it means the
         # vegetation layer sits inside a building or underground.  Mark as
         # absent (NaN) so the shadow caster skips these pixels entirely.

@@ -969,14 +969,15 @@ class TestPreprocessing:
         """CDSM is boosted to absolute height using DEM as base."""
         dsm = np.ones((10, 10), dtype=np.float32) * 110.0  # DSM includes building
         dem = np.ones((10, 10), dtype=np.float32) * 100.0  # Ground level
-        cdsm = np.ones((10, 10), dtype=np.float32) * 8.0  # 8m relative veg height
+        cdsm = np.ones((10, 10), dtype=np.float32) * 12.0  # 12m relative veg (above building)
 
         surface = SurfaceData(dsm=dsm, cdsm=cdsm, dem=dem)
         surface.preprocess()
 
-        # CDSM should now be DEM + relative_cdsm = 100 + 8 = 108
+        # CDSM should now be DEM + relative_cdsm = 100 + 12 = 112
+        # (above DSM=110, so not cleared by underground check)
         assert surface.cdsm is not None
-        assert np.allclose(surface.cdsm, 108.0, atol=0.01)
+        assert np.allclose(surface.cdsm, 112.0, atol=0.01)
 
     def test_cdsm_boosting_without_dem(self):
         """CDSM is boosted using DSM as base when DEM not provided."""
@@ -991,7 +992,7 @@ class TestPreprocessing:
         assert np.allclose(surface.cdsm, 111.0, atol=0.01)
 
     def test_preprocess_zeros_below_threshold(self):
-        """Preprocessing clamps vegetation below 0.1m threshold to base elevation."""
+        """Preprocessing sets sub-threshold vegetation to NaN (absent)."""
         dsm = np.ones((10, 10), dtype=np.float32) * 100.0
         cdsm = np.array([[0.05, 0.5], [1.0, 0.0]], dtype=np.float32)  # Some below threshold
         cdsm = np.pad(cdsm, ((0, 8), (0, 8)), constant_values=0.0)
@@ -999,12 +1000,13 @@ class TestPreprocessing:
         surface = SurfaceData(dsm=dsm, cdsm=cdsm)
         surface.preprocess()
 
-        # CDSM is now absolute elevation; below-threshold values clamped to base (DSM=100)
+        # CDSM is now absolute elevation; below-threshold values set to NaN (absent)
+        # Default min_object_height=1.0, so threshold = max(0.1, 1.0) = 1.0m
         assert surface.cdsm is not None
-        assert surface.cdsm[0, 0] == 100.0  # Was 0.05 relative, below threshold → base
-        assert surface.cdsm[0, 1] > 100.0  # Was 0.5 relative, above threshold → 100.5
-        assert surface.cdsm[1, 0] > 100.0  # Was 1.0 relative, above threshold → 101.0
-        assert surface.cdsm[1, 1] == 100.0  # Was 0.0 relative, below threshold → base
+        assert np.isnan(surface.cdsm[0, 0])  # Was 0.05 relative, below 1.0m → NaN
+        assert np.isnan(surface.cdsm[0, 1])  # Was 0.5 relative, below 1.0m → NaN
+        assert surface.cdsm[1, 0] > 100.0  # Was 1.0 relative, at threshold → 101.0
+        assert np.isnan(surface.cdsm[1, 1])  # Was 0.0 relative, below 1.0m → NaN
 
     def test_preprocess_idempotent(self):
         """Calling preprocess() multiple times has no effect after first call."""
