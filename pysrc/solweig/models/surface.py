@@ -1904,7 +1904,7 @@ class SurfaceData:
         # Fill NaN in surface layers before any height conversion
         self.fill_nan()
 
-        threshold = np.float32(0.1)
+        threshold = np.float32(max(0.1, self.min_object_height))
         zero32 = np.float32(0.0)
         nan32 = np.float32(np.nan)
 
@@ -1957,10 +1957,14 @@ class SurfaceData:
         base = self.dem if self.dem is not None else self.dsm
 
         # Step 3: Convert CDSM from relative to absolute
+        # Sub-threshold vegetation is set to NaN (absent), NOT to DEM height.
+        # Setting it to DEM would make the shadow caster treat bare ground as
+        # "vegetation at ground level," producing false vegetation shadows on
+        # every steep slope.
         if self.cdsm_relative and self.cdsm is not None:
             cdsm_rel = np.where(np.isnan(self.cdsm), zero32, self.cdsm)
             cdsm_abs = np.where(~np.isnan(base), base + cdsm_rel, nan32)
-            cdsm_abs = np.where(cdsm_abs - base < threshold, base, cdsm_abs)
+            cdsm_abs = np.where(cdsm_abs - base < threshold, nan32, cdsm_abs)
             self.cdsm = np.asarray(cdsm_abs, dtype=np.float32)
             self.cdsm_relative = False
             logger.info(f"Converted relative CDSM to absolute (base: {'DEM' if self.dem is not None else 'DSM'})")
@@ -1969,10 +1973,27 @@ class SurfaceData:
         if self.tdsm_relative and self.tdsm is not None:
             tdsm_rel = np.where(np.isnan(self.tdsm), zero32, self.tdsm)
             tdsm_abs = np.where(~np.isnan(base), base + tdsm_rel, nan32)
-            tdsm_abs = np.where(tdsm_abs - base < threshold, base, tdsm_abs)
+            tdsm_abs = np.where(tdsm_abs - base < threshold, nan32, tdsm_abs)
             self.tdsm = np.asarray(tdsm_abs, dtype=np.float32)
             self.tdsm_relative = False
             logger.info(f"Converted relative TDSM to absolute (base: {'DEM' if self.dem is not None else 'DSM'})")
+
+        # Step 5: NaN out CDSM/TDSM where vegetation is below the surface
+        # Canopy below the DSM is physically impossible — it means the
+        # vegetation layer sits inside a building or underground.  Mark as
+        # absent (NaN) so the shadow caster skips these pixels entirely.
+        if self.cdsm is not None:
+            below = self.cdsm < self.dsm
+            if np.any(below):
+                n = int(below.sum())
+                self.cdsm[below] = np.float32(np.nan)
+                logger.info(f"Cleared {n} CDSM pixels below DSM (canopy was underground)")
+        if self.tdsm is not None:
+            below = self.tdsm < self.dsm
+            if np.any(below):
+                n = int(below.sum())
+                self.tdsm[below] = np.float32(np.nan)
+                logger.info(f"Cleared {n} TDSM pixels below DSM (trunk was underground)")
 
         self._preprocessed = True
 

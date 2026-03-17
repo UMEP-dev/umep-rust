@@ -2588,7 +2588,7 @@ wheels = [
 
 [[package]]
 name = "solweig"
-version = "0.1.0b71"
+version = "0.1.0b72"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },
@@ -2619,6 +2619,7 @@ dev = [
     { name = "poethepoet" },
     { name = "pre-commit" },
     { name = "ruff" },
+    { name = "scipy" },
     { name = "ty" },
 ]
 qgis-compat = [
@@ -2660,6 +2661,7 @@ dev = [
     { name = "poethepoet", specifier = ">=0.29.0" },
     { name = "pre-commit", specifier = ">=4.3.0" },
     { name = "ruff", specifier = ">=0.5.1" },
+    { name = "scipy", specifier = ">=1.17.0" },
     { name = "ty", specifier = ">=0.0.12" },
 ]
 qgis-compat = [
