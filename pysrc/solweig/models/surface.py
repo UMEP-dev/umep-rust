@@ -210,6 +210,29 @@ def _max_shadow_height(dsm: np.ndarray, cdsm: np.ndarray | None = None, use_veg:
     return height
 
 
+def _looks_like_relative(
+    layer: np.ndarray | None,
+    reference: np.ndarray | None,
+) -> bool:
+    """Heuristically detect relative-height rasters passed as absolute.
+
+    Prepared surfaces store CDSM/TDSM as absolute elevations.  If a
+    layer tops out far below the reference surface, it very likely still
+    contains height-above-ground values.
+    """
+    if layer is None or reference is None:
+        return False
+    if layer.size == 0 or reference.size == 0:
+        return False
+    if not np.isfinite(layer).any() or not np.isfinite(reference).any():
+        return False
+    layer_max = float(np.nanmax(layer))
+    ref_min = float(np.nanmin(reference))
+    if ref_min > 10 and layer_max < ref_min * 0.5:
+        return True
+    return bool(layer_max < 60 and ref_min > layer_max + 20)
+
+
 @dataclass
 class SurfaceData:
     """
@@ -353,6 +376,164 @@ class SurfaceData:
             self.wall_aspect = np.asarray(self.wall_aspect, dtype=np.float32)
 
     @classmethod
+    def load(
+        cls,
+        directory: str | Path,
+        *,
+        load_svf: bool = True,
+    ) -> SurfaceData:
+        """
+        Load a pre-prepared surface directory produced by :meth:`prepare`.
+
+        This is the counterpart to :meth:`prepare`: it reads the cached
+        rasters, walls, SVF, and shadow matrices from ``directory`` and
+        returns a ready-to-use :class:`SurfaceData`.  The loaded data is
+        marked as fully preprocessed so that :meth:`fill_nan` and
+        :meth:`preprocess` are no-ops — this prevents NaN "no vegetation"
+        markers in CDSM/TDSM from being overwritten with DEM values.
+
+        Args:
+            directory: Path to the prepared surface directory (the
+                ``working_dir`` passed to :meth:`prepare`).
+            load_svf: Whether to load SVF arrays and shadow matrices.
+                Default True.  Set to False if only the raster data is
+                needed (avoids loading large SVF files).
+
+        Returns:
+            SurfaceData ready for :func:`calculate`.
+
+        Raises:
+            FileNotFoundError: If ``metadata.json`` or the DSM raster
+                is missing.
+            ValueError: If the loaded CDSM/TDSM appears to contain
+                relative heights instead of absolute elevations.
+
+        Example::
+
+            surface = SurfaceData.load("prepared_surface/")
+            result = calculate(surface, weather, location)
+        """
+        from .precomputed import PrecomputedData
+
+        directory = Path(directory)
+
+        # Read metadata (written by prepare → save_cleaned, or QGIS plugin)
+        metadata_path = directory / "metadata.json"
+        if not metadata_path.exists():
+            raise FileNotFoundError(
+                f"Not a valid prepared surface directory: {directory}\n"
+                "Missing metadata.json.  Run SurfaceData.prepare() first."
+            )
+
+        with open(metadata_path, encoding="utf-8") as f:
+            metadata = json.load(f)
+
+        pixel_size = metadata.get("pixel_size", 1.0)
+
+        # Determine raster source directory: prefer cleaned/, fall back to root
+        cleaned_dir = directory / "cleaned"
+        if (cleaned_dir / "dsm.tif").exists():
+            raster_dir = cleaned_dir
+            logger.info(f"Loading prepared surface from {cleaned_dir}")
+        elif (directory / "dsm.tif").exists():
+            raster_dir = directory
+            logger.info(f"Loading prepared surface from {directory} (legacy layout)")
+        else:
+            raise FileNotFoundError(
+                f"DSM raster not found in {cleaned_dir} or {directory}.\nRun SurfaceData.prepare() first."
+            )
+
+        # Load DSM (required)
+        dsm_arr, gt, crs_wkt, _ = io.load_raster(str(raster_dir / "dsm.tif"))
+        logger.info(f"  DSM: {dsm_arr.shape[1]}×{dsm_arr.shape[0]} pixels")
+
+        # Load optional layers based on metadata flags
+        def _load_if_present(name: str, flag: str) -> np.ndarray | None:
+            if not metadata.get(flag, False):
+                return None
+            try:
+                arr, _, _, _ = io.load_raster(str(raster_dir / f"{name}.tif"))
+                return arr
+            except FileNotFoundError:
+                logger.warning(f"  {name}.tif flagged in metadata but not found")
+                return None
+
+        cdsm = _load_if_present("cdsm", "has_cdsm")
+        dem = _load_if_present("dem", "has_dem")
+        tdsm = _load_if_present("tdsm", "has_tdsm")
+        lc = _load_if_present("land_cover", "has_land_cover")
+        land_cover = lc.astype(np.uint8) if lc is not None else None
+
+        # Load walls (always present after prepare)
+        wall_height = None
+        wall_aspect = None
+        try:
+            wall_height, _, _, _ = io.load_raster(str(raster_dir / "wall_height.tif"))
+            wall_aspect, _, _, _ = io.load_raster(str(raster_dir / "wall_aspect.tif"))
+        except FileNotFoundError:
+            pass
+
+        # Validate before expensive SVF loading
+        base_surface = dem if dem is not None else dsm_arr
+        if cdsm is not None and _looks_like_relative(cdsm, base_surface):
+            raise ValueError(
+                "Loaded CDSM appears to contain relative heights (height above ground) "
+                "instead of absolute elevations.  The prepared surface may be corrupt — "
+                "re-run SurfaceData.prepare() with the correct cdsm_relative flag."
+            )
+        if tdsm is not None and _looks_like_relative(tdsm, base_surface):
+            raise ValueError(
+                "Loaded TDSM appears to contain relative heights (height above ground) "
+                "instead of absolute elevations.  The prepared surface may be corrupt — "
+                "re-run SurfaceData.prepare() with the correct tdsm_relative flag."
+            )
+
+        # Construct SurfaceData
+        surface = cls(
+            dsm=dsm_arr,
+            cdsm=cdsm,
+            dem=dem,
+            tdsm=tdsm,
+            land_cover=land_cover,
+            wall_height=wall_height,
+            wall_aspect=wall_aspect,
+            pixel_size=pixel_size,
+            dsm_relative=False,
+            cdsm_relative=False,
+            tdsm_relative=False,
+        )
+        surface._geotransform = gt
+        surface._crs_wkt = crs_wkt
+        # Mark as fully preprocessed — the saved rasters are already
+        # absolute with NaN meaning "absent" for CDSM/TDSM.
+        surface._preprocessed = True
+        surface._nan_filled = True
+
+        # Load SVF and shadow matrices (expensive — done after validation)
+        if load_svf:
+            precomputed = PrecomputedData.prepare(svf_dir=str(directory))
+            if precomputed.svf is not None:
+                surface.svf = precomputed.svf
+            if precomputed.shadow_matrices is not None:
+                surface.shadow_matrices = precomputed.shadow_matrices
+
+        layers = ["DSM"]
+        for name, arr in [
+            ("CDSM", cdsm),
+            ("DEM", dem),
+            ("TDSM", tdsm),
+            ("land_cover", land_cover),
+            ("walls", wall_height),
+            ("SVF", surface.svf),
+            ("shadows", surface.shadow_matrices),
+        ]:
+            if arr is not None:
+                layers.append(name)
+        logger.info(f"  Loaded: {', '.join(layers)}")
+
+        return surface
+
+    @classmethod
     def prepare(
         cls,
         dsm: str | Path | NDArray[np.floating],
@@ -450,6 +631,8 @@ class SurfaceData:
             raise ValueError("working_dir is required when dsm is a file path")
 
         logger.info("Preparing surface data from GeoTIFF files...")
+        if feedback is not None and hasattr(feedback, "setProgressText"):
+            feedback.setProgressText("Loading and aligning rasters...")
 
         # Load and validate DSM — dsm is str | Path after the isinstance guard above
         dsm_path = cast("str | Path", dsm)
@@ -583,12 +766,36 @@ class SurfaceData:
                 surface_data.svf = None
 
         # Compute and cache walls if needed
-        if preprocess_data["compute_walls"]:
-            cls._compute_and_cache_walls(surface_data, aligned_rasters, working_path, pixel_size=pixel_size)
+        compute_walls = preprocess_data["compute_walls"]
+        compute_svf = preprocess_data["compute_svf"]
 
-        # Compute and cache SVF if needed
-        if preprocess_data["compute_svf"]:
-            cls._compute_and_cache_svf(surface_data, aligned_rasters, working_path, trunk_ratio, feedback=feedback)
+        if compute_walls:
+            if feedback is not None and hasattr(feedback, "setProgressText"):
+                feedback.setProgressText("Computing wall heights and aspects...")
+            # Walls use 10-30% when SVF follows, or 10-75% when walls-only
+            walls_range = (10, 30 if compute_svf else 75) if feedback is not None else None
+            cls._compute_and_cache_walls(
+                surface_data,
+                aligned_rasters,
+                working_path,
+                pixel_size=pixel_size,
+                feedback=feedback,
+                progress_range=walls_range,
+            )
+
+        if compute_svf:
+            if feedback is not None and hasattr(feedback, "setProgressText"):
+                feedback.setProgressText("Computing Sky View Factor...")
+            # SVF uses ~30-75% of QGIS progress bar
+            svf_range = (30, 75) if feedback is not None else None
+            cls._compute_and_cache_svf(
+                surface_data,
+                aligned_rasters,
+                working_path,
+                trunk_ratio,
+                feedback=feedback,
+                progress_range=svf_range,
+            )
 
         # Compute unified valid mask, apply across all layers, crop to valid bbox
         surface_data.compute_valid_mask()
@@ -1269,6 +1476,8 @@ class SurfaceData:
         working_path: Path,
         *,
         pixel_size: float = 1.0,
+        feedback: Any = None,
+        progress_range: tuple[float, float] | None = None,
     ) -> None:
         """
         Compute wall heights/aspects from DSM and cache to working_dir.
@@ -1278,6 +1487,8 @@ class SurfaceData:
             aligned_rasters: Dictionary with aligned raster data.
             working_path: Working directory for caching.
             pixel_size: Pixel size in metres (for pixel-size-keyed cache path).
+            feedback: Optional QGIS QgsProcessingFeedback for progress/cancellation.
+            progress_range: Optional (start_pct, end_pct) for QGIS progress sub-range.
         """
         logger.info("Computing walls from DSM and caching to working_dir...")
         walls_cache_dir = working_path / "walls" / pixel_size_tag(pixel_size)
@@ -1300,6 +1511,8 @@ class SurfaceData:
             dsm_path=str(resampled_dsm_path),
             bbox=None,  # Already resampled to target extent
             out_dir=str(walls_cache_dir),
+            feedback=feedback,
+            progress_range=progress_range,
         )
 
         # Load the generated walls back into surface_data
@@ -1892,7 +2105,7 @@ class SurfaceData:
         2. Auto-generates TDSM from CDSM * trunk_ratio if TDSM is not provided
         3. Converts CDSM from relative to absolute if ``cdsm_relative=True``
         4. Converts TDSM from relative to absolute if ``tdsm_relative=True``
-        5. Sets sub-threshold vegetation to NaN (absent from scene)
+        5. NaN's canopy pixels that sit below the DSM (inside buildings)
 
         Note:
             This method modifies arrays in-place and clears the per-layer
@@ -1978,22 +2191,24 @@ class SurfaceData:
             self.tdsm_relative = False
             logger.info(f"Converted relative TDSM to absolute (base: {'DEM' if self.dem is not None else 'DSM'})")
 
-        # Step 5: NaN out CDSM/TDSM where vegetation is below the DSM
+        # Step 5: NaN out CDSM where canopy is below the DSM surface
         # Canopy below the DSM is physically impossible — it means the
         # vegetation layer sits inside a building or underground.  Mark as
         # absent (NaN) so the shadow caster skips these pixels entirely.
+        # NOTE: Only CDSM is checked against DSM.  TDSM (trunk height) is
+        # naturally below the canopy top, and the DSM already includes the
+        # canopy, so trunk < DSM is expected at every tree pixel.  Clearing
+        # TDSM here would destroy all trunk data and break pergola shadows.
         if self.cdsm is not None:
             below = self.cdsm < self.dsm
             if np.any(below):
                 n = int(below.sum())
                 self.cdsm[below] = np.float32(np.nan)
-                logger.info(f"Cleared {n} CDSM pixels below DSM (canopy was underground)")
-        if self.tdsm is not None:
-            below = self.tdsm < self.dsm
-            if np.any(below):
-                n = int(below.sum())
-                self.tdsm[below] = np.float32(np.nan)
-                logger.info(f"Cleared {n} TDSM pixels below DSM (trunk was underground)")
+                # Also clear TDSM at the same pixels — if canopy is inside
+                # a building, the trunk is too.
+                if self.tdsm is not None:
+                    self.tdsm[below] = np.float32(np.nan)
+                logger.info(f"Cleared {n} vegetation pixels below DSM (canopy was underground)")
 
         self._preprocessed = True
 

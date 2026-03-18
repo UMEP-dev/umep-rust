@@ -64,9 +64,10 @@ surface = solweig.SurfaceData.prepare(
     dem=str(input_path / "DEM.tif"),
     cdsm=str(input_path / "CDSM.tif"),
     working_dir=str(output_folder_path / "working"),
-    bbox=EXTENTS_BBOX,
+    # bbox=EXTENTS_BBOX,
     pixel_size=2.5,
     dsm_relative=True,  # BDSM is height above ground, not absolute elevation
+    cdsm_relative=True,  # CDSM is height above ground (default)
 )
 
 # %%
@@ -91,7 +92,7 @@ summary = solweig.calculate(
     conifer=False,
     output_dir=str(output_dir),
     outputs=["tmrt", "shadow"],
-    max_shadow_distance_m=500,
+    max_shadow_distance_m=1000,
 )
 print(summary.report())
 

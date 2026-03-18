@@ -12,13 +12,8 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
-import tempfile
 import time
-import zipfile
-from pathlib import Path
 
-import numpy as np
 from qgis.core import (
     QgsProcessingContext,
     QgsProcessingException,
@@ -30,13 +25,35 @@ from qgis.core import (
     QgsProcessingParameterNumber,
 )
 
-from ...utils.converters import _align_layer, _load_optional_raster, load_raster_from_layer
+from ...utils.converters import _looks_like_relative_heights
 from ...utils.parameters import (
     add_land_cover_mapping_parameters,
     add_surface_parameters,
     add_vegetation_parameters,
 )
 from ..base import SolweigAlgorithmBase
+
+
+def _needs_relative_retry(
+    surface: object,
+    *,
+    cdsm_path: str | None,
+    tdsm_path: str | None,
+    cdsm_relative: bool,
+    tdsm_relative: bool,
+) -> tuple[bool, bool]:
+    """Detect likely normalized vegetation/trunk rasters marked as absolute."""
+    dem = getattr(surface, "dem", None)
+    dsm = getattr(surface, "dsm", None)
+    base_surface = dem if dem is not None else dsm
+
+    retry_cdsm = bool(
+        cdsm_path and not cdsm_relative and _looks_like_relative_heights(getattr(surface, "cdsm", None), base_surface)
+    )
+    retry_tdsm = bool(
+        tdsm_path and not tdsm_relative and _looks_like_relative_heights(getattr(surface, "tdsm", None), base_surface)
+    )
+    return retry_cdsm, retry_tdsm
 
 
 class SurfacePreprocessingAlgorithm(SolweigAlgorithmBase):
@@ -187,365 +204,155 @@ Run "SOLWEIG Calculation" with the prepared surface directory.
 
         # Import solweig
         solweig = self.import_solweig()
-        from solweig.utils import extract_bounds, intersect_bounds
 
-        # Step 1: Load DSM
-        feedback.setProgressText("Loading surface data...")
-        feedback.setProgress(5)
+        # Resolve raster sources from QGIS layers, then delegate preparation to
+        # the core SOLWEIG API instead of re-implementing alignment/masking here.
+        def _layer_source(param_name: str, *, required: bool = False) -> str | None:
+            layer = self.parameterAsRasterLayer(parameters, param_name, context)
+            if layer is None:
+                if required:
+                    raise QgsProcessingException(f"{param_name} layer is required")
+                return None
+            source = layer.source()
+            if required and not source:
+                raise QgsProcessingException(f"{param_name} layer has no readable source path")
+            return source or None
 
-        dsm_layer = self.parameterAsRasterLayer(parameters, "DSM", context)
-        if dsm_layer is None:
-            raise QgsProcessingException("DSM layer is required")
+        feedback.setProgressText("Preparing surface via core SOLWEIG API...")
+        feedback.setProgress(10)
 
-        dsm, dsm_gt, crs_wkt = load_raster_from_layer(dsm_layer)
-        native_pixel_size = abs(dsm_gt[1])
-        feedback.pushInfo(f"DSM: {dsm.shape[1]}x{dsm.shape[0]} pixels")
-        feedback.pushInfo(f"  range: {float(np.nanmin(dsm)):.1f} – {float(np.nanmax(dsm)):.1f} m")
-        feedback.pushInfo(f"Native pixel size: {native_pixel_size:.2f} m")
+        dsm_path = _layer_source("DSM", required=True)
+        cdsm_path = _layer_source("CDSM")
+        dem_path = _layer_source("DEM")
+        tdsm_path = _layer_source("TDSM")
+        land_cover_path = _layer_source("LAND_COVER")
 
-        # Resolve output pixel size
         requested_pixel_size = self.parameterAsDouble(parameters, "PIXEL_SIZE", context)
-        if requested_pixel_size > 0:
-            if requested_pixel_size < native_pixel_size - 1e-6:
-                raise QgsProcessingException(
-                    f"Requested pixel size ({requested_pixel_size:.2f} m) is finer than the DSM "
-                    f"native resolution ({native_pixel_size:.2f} m). Upsampling creates false "
-                    f"precision. Use a value >= {native_pixel_size:.2f} or leave at 0 for native."
-                )
-            pixel_size = requested_pixel_size
-            if abs(pixel_size - native_pixel_size) > 1e-6:
-                feedback.pushInfo(f"Resampling all rasters from {native_pixel_size:.2f} m to {pixel_size:.2f} m")
-        else:
-            pixel_size = native_pixel_size
-
-        feedback.pushInfo(f"Output pixel size: {pixel_size:.2f} m")
-
-        # Load optional rasters
-        cdsm, cdsm_gt = _load_optional_raster(parameters, "CDSM", context, self)
-        if cdsm is not None:
-            feedback.pushInfo(
-                f"Loaded CDSM (vegetation), range: {float(np.nanmin(cdsm)):.1f} – {float(np.nanmax(cdsm)):.1f} m"
-            )
-
-        dem, dem_gt = _load_optional_raster(parameters, "DEM", context, self)
-        if dem is not None:
-            feedback.pushInfo(
-                f"Loaded DEM (ground elevation), range: {float(np.nanmin(dem)):.1f} – {float(np.nanmax(dem)):.1f} m"
-            )
-
-        tdsm, tdsm_gt = _load_optional_raster(parameters, "TDSM", context, self)
-        if tdsm is not None:
-            feedback.pushInfo(
-                f"Loaded TDSM (trunk zone), range: {float(np.nanmin(tdsm)):.1f} – {float(np.nanmax(tdsm)):.1f} m"
-            )
-
-        lc_arr, lc_gt = _load_optional_raster(parameters, "LAND_COVER", context, self)
-        land_cover = lc_arr.astype(np.uint8) if lc_arr is not None else None
-        if land_cover is not None:
-            feedback.pushInfo("Loaded land cover classification")
-
-        if feedback.isCanceled():
-            return {}
-
-        # Step 2: Compute extent intersection
-        feedback.setProgressText("Aligning rasters...")
-        feedback.setProgress(15)
-
-        bounds_list = [extract_bounds(dsm_gt, dsm.shape)]
-        for arr, gt in [(cdsm, cdsm_gt), (dem, dem_gt), (tdsm, tdsm_gt), (lc_arr, lc_gt)]:
-            if arr is not None and gt is not None:
-                bounds_list.append(extract_bounds(gt, arr.shape))
-
-        extent_rect = self.parameterAsExtent(parameters, "EXTENT", context)
-        if not extent_rect.isNull():
-            target_bbox = [
-                extent_rect.xMinimum(),
-                extent_rect.yMinimum(),
-                extent_rect.xMaximum(),
-                extent_rect.yMaximum(),
-            ]
-            feedback.pushInfo(f"Using custom extent: {target_bbox}")
-        elif len(bounds_list) > 1:
-            target_bbox = intersect_bounds(bounds_list)
-            feedback.pushInfo(f"Auto-computed intersection extent: {target_bbox}")
-        else:
-            target_bbox = bounds_list[0]
-
-        # Align all layers
-        dsm = _align_layer(dsm, dsm_gt, target_bbox, pixel_size, "bilinear", crs_wkt)
-        if cdsm is not None and cdsm_gt is not None:
-            cdsm = _align_layer(cdsm, cdsm_gt, target_bbox, pixel_size, "bilinear", crs_wkt)
-        if dem is not None and dem_gt is not None:
-            dem = _align_layer(dem, dem_gt, target_bbox, pixel_size, "bilinear", crs_wkt)
-        if tdsm is not None and tdsm_gt is not None:
-            tdsm = _align_layer(tdsm, tdsm_gt, target_bbox, pixel_size, "bilinear", crs_wkt)
-        if land_cover is not None and lc_gt is not None:
-            land_cover = _align_layer(
-                land_cover.astype(np.float32),
-                lc_gt,
-                target_bbox,
-                pixel_size,
-                "nearest",
-                crs_wkt,
-            ).astype(np.uint8)
-
-        aligned_gt = [target_bbox[0], pixel_size, 0, target_bbox[3], 0, -pixel_size]
-        feedback.pushInfo(f"Aligned grid: {dsm.shape[1]}x{dsm.shape[0]} pixels")
-
-        if feedback.isCanceled():
-            return {}
-
-        # Step 3: Create SurfaceData, preprocess, mask, crop
-        feedback.setProgressText("Computing valid mask and cropping...")
-        feedback.setProgress(25)
-
+        pixel_size_arg = requested_pixel_size if requested_pixel_size > 0 else None
+        wall_limit = self.parameterAsDouble(parameters, "WALL_LIMIT", context)
         dsm_relative = self.parameterAsEnum(parameters, "DSM_HEIGHT_MODE", context) == 0
         cdsm_relative = self.parameterAsEnum(parameters, "CDSM_HEIGHT_MODE", context) == 0
         tdsm_relative = self.parameterAsEnum(parameters, "TDSM_HEIGHT_MODE", context) == 0
         min_object_height = self.parameterAsDouble(parameters, "MIN_OBJECT_HEIGHT", context)
 
-        surface = solweig.SurfaceData(
-            dsm=dsm,
-            cdsm=cdsm,
-            dem=dem,
-            tdsm=tdsm,
-            land_cover=land_cover,
-            pixel_size=pixel_size,
-            dsm_relative=dsm_relative,
-            cdsm_relative=cdsm_relative,
-            tdsm_relative=tdsm_relative,
-            min_object_height=min_object_height,
-        )
-        surface._geotransform = aligned_gt
-        surface._crs_wkt = crs_wkt
+        extent_rect = self.parameterAsExtent(parameters, "EXTENT", context)
+        bbox = None
+        if not extent_rect.isNull():
+            bbox = [
+                extent_rect.xMinimum(),
+                extent_rect.yMinimum(),
+                extent_rect.xMaximum(),
+                extent_rect.yMaximum(),
+            ]
+            feedback.pushInfo(f"Using custom extent: {bbox}")
 
-        # Convert relative heights to absolute and flatten sub-threshold features
-        needs_preprocess = (
-            dsm_relative
-            or (cdsm_relative and cdsm is not None)
-            or (tdsm_relative and tdsm is not None)
-            or dem is not None
-        )
-        if needs_preprocess:
-            feedback.pushInfo("Converting relative heights to absolute...")
-            surface.preprocess()
-
-        # Fill NaN with ground reference, mask invalid pixels, crop to valid bbox
-        # (uses SurfaceData library methods — single source of truth)
-        surface.fill_nan()
-        surface.compute_valid_mask()
-        surface.apply_valid_mask()
-        surface.crop_to_valid_bbox()
-
-        # Update local geotransform reference after crop
-        aligned_gt = surface._geotransform
-
-        feedback.pushInfo(f"After NaN fill + mask + crop: {surface.dsm.shape[1]}x{surface.dsm.shape[0]} pixels")
-
-        if feedback.isCanceled():
-            return {}
-
-        # Create output directory early so we can write incrementally
         output_dir = self.parameterAsString(parameters, "OUTPUT_DIR", context)
         os.makedirs(output_dir, exist_ok=True)
-        gt = surface._geotransform or aligned_gt
-        crs = surface._crs_wkt or crs_wkt
 
-        # Save aligned/cropped surface rasters immediately
-        feedback.setProgressText("Saving aligned surface rasters...")
-        self.save_georeferenced_output(surface.dsm, os.path.join(output_dir, "dsm.tif"), gt, crs)
-        feedback.pushInfo("Saved dsm.tif")
+        if pixel_size_arg is None:
+            feedback.pushInfo("Output pixel size: using native DSM resolution")
+        else:
+            feedback.pushInfo(f"Requested output pixel size: {pixel_size_arg:.2f} m")
 
-        if surface.cdsm is not None:
-            self.save_georeferenced_output(surface.cdsm, os.path.join(output_dir, "cdsm.tif"), gt, crs)
-            feedback.pushInfo("Saved cdsm.tif")
-
-        if surface.dem is not None:
-            self.save_georeferenced_output(surface.dem, os.path.join(output_dir, "dem.tif"), gt, crs)
-            feedback.pushInfo("Saved dem.tif")
-
-        if surface.tdsm is not None:
-            self.save_georeferenced_output(surface.tdsm, os.path.join(output_dir, "tdsm.tif"), gt, crs)
-            feedback.pushInfo("Saved tdsm.tif")
-
-        if surface.land_cover is not None:
-            self.save_georeferenced_output(
-                surface.land_cover.astype(np.float32),
-                os.path.join(output_dir, "land_cover.tif"),
-                gt,
-                crs,
+        try:
+            surface = solweig.SurfaceData.prepare(
+                dsm=dsm_path,
+                working_dir=output_dir,
+                cdsm=cdsm_path,
+                dem=dem_path,
+                tdsm=tdsm_path,
+                land_cover=land_cover_path,
+                bbox=bbox,
+                pixel_size=pixel_size_arg,
+                dsm_relative=dsm_relative,
+                cdsm_relative=cdsm_relative,
+                tdsm_relative=tdsm_relative,
+                min_object_height=min_object_height,
+                feedback=feedback,
             )
-            feedback.pushInfo("Saved land_cover.tif")
+        except Exception as e:
+            raise QgsProcessingException(f"Surface preparation failed: {e}") from e
 
-        # Step 4: Compute walls and save immediately
-        feedback.setProgressText("Computing wall heights...")
-        feedback.setProgress(25)
+        retry_cdsm, retry_tdsm = _needs_relative_retry(
+            surface,
+            cdsm_path=cdsm_path,
+            tdsm_path=tdsm_path,
+            cdsm_relative=cdsm_relative,
+            tdsm_relative=tdsm_relative,
+        )
+        if retry_cdsm or retry_tdsm:
+            corrected_cdsm_relative = cdsm_relative or retry_cdsm
+            corrected_tdsm_relative = tdsm_relative or retry_tdsm
+            retry_layers: list[str] = []
+            if retry_cdsm:
+                retry_layers.append("CDSM")
+            if retry_tdsm:
+                retry_layers.append("TDSM")
+            feedback.pushInfo(
+                "Detected likely relative vegetation heights in "
+                f"{', '.join(retry_layers)} despite an Absolute selection; "
+                "retrying preparation with terrain-relative interpretation."
+            )
+            try:
+                surface = solweig.SurfaceData.prepare(
+                    dsm=dsm_path,
+                    working_dir=output_dir,
+                    cdsm=cdsm_path,
+                    dem=dem_path,
+                    tdsm=tdsm_path,
+                    land_cover=land_cover_path,
+                    bbox=bbox,
+                    pixel_size=pixel_size_arg,
+                    dsm_relative=dsm_relative,
+                    cdsm_relative=corrected_cdsm_relative,
+                    tdsm_relative=corrected_tdsm_relative,
+                    min_object_height=min_object_height,
+                    force_recompute=True,
+                    feedback=feedback,
+                )
+            except Exception as e:
+                raise QgsProcessingException(
+                    f"Surface preparation retry with corrected vegetation height conventions failed: {e}"
+                ) from e
+            cdsm_relative = corrected_cdsm_relative
+            tdsm_relative = corrected_tdsm_relative
 
-        from solweig.physics import wallalgorithms as wa
+        gt = surface._geotransform or [0.0, surface.pixel_size, 0.0, 0.0, 0.0, -surface.pixel_size]
+        crs = surface._crs_wkt or ""
+        pixel_size = surface.pixel_size
 
-        wall_limit = self.parameterAsDouble(parameters, "WALL_LIMIT", context)
-        feedback.pushInfo(f"Computing walls (min height: {wall_limit:.1f} m)...")
+        feedback.pushInfo(f"Prepared grid: {surface.dsm.shape[1]}x{surface.dsm.shape[0]} pixels")
+        feedback.pushInfo(f"Output pixel size: {pixel_size:.2f} m")
 
-        walls = wa.findwalls(surface.dsm, wall_limit)
-        feedback.pushInfo("Wall heights computed")
+        if wall_limit != 1.0:
+            from solweig.physics import wallalgorithms as wa
 
-        feedback.setProgressText("Computing wall aspects...")
-        feedback.setProgress(30)
-
-        dsm_scale = 1.0 / pixel_size
-        dirwalls = wa.filter1Goodwin_as_aspect_v3(walls, dsm_scale, surface.dsm, feedback=feedback)
-        feedback.pushInfo("Wall aspects computed")
-
-        surface.wall_height = walls
-        surface.wall_aspect = dirwalls
-
-        # Save walls immediately
-        self.save_georeferenced_output(walls, os.path.join(output_dir, "wall_height.tif"), gt, crs)
-        feedback.pushInfo("Saved wall_height.tif")
-        self.save_georeferenced_output(dirwalls, os.path.join(output_dir, "wall_aspect.tif"), gt, crs)
-        feedback.pushInfo("Saved wall_aspect.tif")
+            feedback.pushInfo(
+                f"Recomputing walls with custom minimum height {wall_limit:.1f} m "
+                "(core SurfaceData.prepare() uses 1.0 m)"
+            )
+            walls = wa.findwalls(surface.dsm, wall_limit)
+            dirwalls = wa.filter1Goodwin_as_aspect_v3(walls, 1.0 / pixel_size, surface.dsm, feedback=feedback)
+            surface.wall_height = walls
+            surface.wall_aspect = dirwalls
 
         if feedback.isCanceled():
             return {}
-
-        # Step 5: Compute Sky View Factor
-        # Uses the same Python API as SurfaceData.prepare() — automatically
-        # tiles large grids to stay within GPU buffer limits.
-        feedback.setProgressText("Computing Sky View Factor (this may take a while)...")
-        feedback.setProgress(35)
-
-        from solweig.models.surface import SurfaceData as SD
-
-        use_veg = surface.cdsm is not None
-        dsm_f32 = surface.dsm.astype(np.float32)
-
-        aligned_rasters = {
-            "dsm_arr": dsm_f32,
-            "cdsm_arr": surface.cdsm.astype(np.float32) if use_veg else None,
-            "tdsm_arr": (
-                surface.tdsm.astype(np.float32)
-                if surface.tdsm is not None
-                else (surface.cdsm * 0.25).astype(np.float32)
-                if use_veg
-                else None
-            ),
-            "pixel_size": pixel_size,
-            "dsm_transform": gt,
-            "dsm_crs": crs,
-        }
-
-        rows, cols = dsm_f32.shape
-        from solweig.tiling import compute_max_tile_pixels
-
-        _max_px = compute_max_tile_pixels(context="svf")
-        n_pixels = rows * cols
-        if n_pixels > _max_px:
-            feedback.pushInfo(
-                f"Large grid ({rows}x{cols} = {n_pixels:,} px, limit {_max_px:,}) — using tiled computation"
-            )
-        else:
-            feedback.pushInfo(f"Grid {rows}x{cols} = {n_pixels:,} px — single-pass computation")
-
-        try:
-            SD._compute_and_cache_svf(
-                surface,
-                aligned_rasters,
-                Path(output_dir),
-                trunk_ratio=0.25,
-                feedback=feedback,
-                progress_range=(35.0, 75.0),
-            )
-        except Exception as e:
-            raise QgsProcessingException(f"SVF computation failed: {e}") from e
         if surface.svf is None:
             raise QgsProcessingException(
-                "SVF computation completed without producing SVF arrays "
+                "SurfaceData.prepare() completed without producing SVF arrays "
                 "(surface.svf is None). Check that the active solweig build "
                 "matches the current plugin code."
             )
 
-        feedback.pushInfo("Sky View Factor computed")
-        feedback.setProgress(75)
-
         if feedback.isCanceled():
             return {}
 
-        # Save SVF outputs (extract from surface object populated by _compute_and_cache_svf)
-        feedback.setProgressText("Saving SVF and shadow matrices...")
+        # Rasters, walls, SVF, and shadow matrices are already saved by
+        # SurfaceData.prepare() in cleaned/, walls/, and svf/ subdirectories.
+        # Only save QGIS-specific metadata files here.
+        feedback.setProgressText("Saving metadata...")
         feedback.setProgress(80)
-
-        # Reuse cache artifacts from _compute_and_cache_svf to avoid re-running
-        # large single-threaded SVF/shadow serialization.
-        from solweig.cache import pixel_size_tag
-
-        cache_dir = Path(output_dir) / "svf" / pixel_size_tag(pixel_size)
-        cache_zip = cache_dir / "svfs.zip"
-        cache_shadow = cache_dir / "shadowmats.npz"
-        cache_shadow_memmaps = cache_dir / "shadow_memmaps"
-        svf_zip_path = Path(output_dir) / "svfs.zip"
-        shadow_path = Path(output_dir) / "shadowmats.npz"
-
-        copied_zip = False
-        if cache_zip.exists():
-            shutil.copy2(cache_zip, svf_zip_path)
-            feedback.pushInfo(f"Copied svfs.zip from cache: {svf_zip_path}")
-            copied_zip = True
-        else:
-            feedback.pushInfo("SVF cache zip not found; generating svfs.zip from in-memory arrays")
-
-        if not copied_zip:
-            svf_data = surface.svf
-            svf_files = {
-                "svf.tif": svf_data.svf,
-                "svfN.tif": svf_data.svf_north,
-                "svfE.tif": svf_data.svf_east,
-                "svfS.tif": svf_data.svf_south,
-                "svfW.tif": svf_data.svf_west,
-                "svfveg.tif": svf_data.svf_veg,
-                "svfNveg.tif": svf_data.svf_veg_north,
-                "svfEveg.tif": svf_data.svf_veg_east,
-                "svfSveg.tif": svf_data.svf_veg_south,
-                "svfWveg.tif": svf_data.svf_veg_west,
-                "svfaveg.tif": svf_data.svf_aveg,
-                "svfNaveg.tif": svf_data.svf_aveg_north,
-                "svfEaveg.tif": svf_data.svf_aveg_east,
-                "svfSaveg.tif": svf_data.svf_aveg_south,
-                "svfWaveg.tif": svf_data.svf_aveg_west,
-            }
-            with tempfile.TemporaryDirectory() as tmpdir:
-                for filename, arr in svf_files.items():
-                    self.save_georeferenced_output(arr, os.path.join(tmpdir, filename), gt, crs)
-                with zipfile.ZipFile(str(svf_zip_path), "w", zipfile.ZIP_DEFLATED) as zf:
-                    for filename in svf_files:
-                        zf.write(os.path.join(tmpdir, filename), filename)
-            feedback.pushInfo("Saved svfs.zip")
-
-        copied_shadow = False
-        if cache_shadow.exists():
-            shutil.copy2(cache_shadow, shadow_path)
-            feedback.pushInfo(f"Copied shadowmats.npz from cache: {shadow_path}")
-            copied_shadow = True
-        elif cache_shadow_memmaps.exists() and (cache_shadow_memmaps / "metadata.json").exists():
-            feedback.pushInfo(
-                f"Using shadow memmap cache (skipping shadowmats.npz export for large grid): {cache_shadow_memmaps}"
-            )
-            copied_shadow = True
-        else:
-            feedback.pushInfo("Shadow cache not found; generating shadowmats.npz from in-memory arrays")
-
-        if not copied_shadow:
-            sm = surface.shadow_matrices
-            shmat_u8 = np.array(sm._shmat_u8)
-            vegshmat_u8 = np.array(sm._vegshmat_u8)
-            vbshmat_u8 = np.array(sm._vbshmat_u8)
-            np.savez_compressed(
-                str(shadow_path),
-                shadowmat=shmat_u8,
-                vegshadowmat=vegshmat_u8,
-                vbshmat=vbshmat_u8,
-                patch_count=np.array(sm.patch_count),
-            )
-            feedback.pushInfo("Saved shadowmats.npz")
 
         # Save UMEP-compatible parametersforsolweig.json with user's LC mapping,
         # vegetation settings, and any matrix overrides applied.
@@ -578,6 +385,9 @@ Run "SOLWEIG Calculation" with the prepared surface directory.
             "dsm_relative": False,  # Always absolute after preprocessing
             "cdsm_relative": False,
             "tdsm_relative": False,
+            "source_dsm_relative": dsm_relative,
+            "source_cdsm_relative": cdsm_relative,
+            "source_tdsm_relative": tdsm_relative,
             "has_cdsm": surface.cdsm is not None,
             "has_dem": surface.dem is not None,
             "has_tdsm": surface.tdsm is not None,

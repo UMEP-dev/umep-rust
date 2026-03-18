@@ -117,10 +117,10 @@ class SolweigAlgorithmBase(QgsProcessingAlgorithm):
             band = ds.GetRasterBand(1)
             array = band.ReadAsArray().astype(np.float32)
 
-            # Handle nodata — only honor negative sentinel values (e.g. -9999)
-            # to avoid converting valid zero-height pixels to NaN
+            # Match solweig.io.load_raster(): honor any explicit non-NaN nodata
+            # sentinel so QGIS and local API runs see the same valid mask.
             nodata = band.GetNoDataValue()
-            if nodata is not None and nodata < 0:
+            if nodata is not None and not np.isnan(nodata):
                 array = np.where(array == nodata, np.nan, array)
 
             geotransform = list(ds.GetGeoTransform())

@@ -7,11 +7,10 @@ expected by the solweig library API.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from osgeo import gdal, osr
+from osgeo import gdal
 from qgis.core import (
     QgsProcessingContext,
     QgsProcessingException,
@@ -50,10 +49,10 @@ def load_raster_from_layer(
         band = ds.GetRasterBand(1)
         array = band.ReadAsArray().astype(np.float32)
 
-        # Handle nodata — only honor negative sentinel values (e.g. -9999)
-        # to avoid converting valid zero-height pixels to NaN
+        # Match solweig.io.load_raster(): honor any explicit non-NaN nodata
+        # sentinel so QGIS and local API runs see the same valid mask.
         nodata = band.GetNoDataValue()
-        if nodata is not None and nodata < 0:
+        if nodata is not None and not np.isnan(nodata):
             array = np.where(array == nodata, np.nan, array)
 
         geotransform = list(ds.GetGeoTransform())
@@ -82,6 +81,19 @@ def _read_height_mode(
     default = 1 if default_absolute else 0
     value = parameters.get(param_name, default)
     return (int(value) if isinstance(value, (int, float)) else default) == 0
+
+
+def _looks_like_relative_heights(
+    layer: NDArray[np.floating] | None,
+    reference_surface: NDArray[np.floating] | None,
+) -> bool:
+    """Heuristically detect height-above-ground rasters passed as absolute.
+
+    Delegates to the canonical implementation in the core API.
+    """
+    from solweig.models.surface import _looks_like_relative
+
+    return _looks_like_relative(layer, reference_surface)
 
 
 def _load_optional_raster(
@@ -276,15 +288,6 @@ def create_surface_from_parameters(
         feedback.pushInfo("Converting relative heights to absolute...")
         surface.preprocess()
 
-    # Fill NaN with ground reference, mask invalid pixels, crop to valid bbox
-    # (uses SurfaceData library methods — single source of truth)
-    surface.fill_nan()
-    surface.compute_valid_mask()
-    surface.apply_valid_mask()
-    surface.crop_to_valid_bbox()
-
-    feedback.pushInfo(f"After NaN fill + mask + crop: {surface.dsm.shape[1]}x{surface.dsm.shape[0]} pixels")
-
     # Compute wall heights and aspects from DSM
     feedback.setProgressText("Computing wall heights...")
     feedback.pushInfo("Computing walls from DSM...")
@@ -298,6 +301,15 @@ def create_surface_from_parameters(
     surface.wall_height = walls
     surface.wall_aspect = dirwalls
     feedback.pushInfo("Wall computation complete")
+
+    # Match SurfaceData.prepare(): compute walls on aligned absolute-height
+    # rasters first, then derive the unified valid mask and crop everything.
+    surface.fill_nan()
+    surface.compute_valid_mask()
+    surface.apply_valid_mask()
+    surface.crop_to_valid_bbox()
+
+    feedback.pushInfo(f"After NaN fill + mask + crop: {surface.dsm.shape[1]}x{surface.dsm.shape[0]} pixels")
 
     # Save cleaned rasters
     if output_dir:
@@ -313,7 +325,8 @@ def load_prepared_surface(
     """
     Load a prepared surface directory into SurfaceData.
 
-    Reads GeoTIFFs and metadata saved by the Surface Preprocessing algorithm.
+    Delegates to ``SurfaceData.load()`` which reads the cleaned rasters,
+    walls, SVF, and shadow matrices cached by ``SurfaceData.prepare()``.
 
     Args:
         surface_dir: Path to prepared surface directory.
@@ -325,115 +338,35 @@ def load_prepared_surface(
     Raises:
         QgsProcessingException: If required files are missing.
     """
-    import json
-    import os
-
     try:
         import solweig
     except ImportError as e:
         raise QgsProcessingException("SOLWEIG library not found.") from e
 
-    # Load metadata
-    metadata_path = os.path.join(surface_dir, "metadata.json")
-    if not os.path.exists(metadata_path):
-        raise QgsProcessingException(
-            f"Not a valid prepared surface directory: {surface_dir}\n"
-            "Missing metadata.json. Run 'Prepare Surface Data' first."
-        )
-
-    with open(metadata_path) as f:
-        metadata = json.load(f)
-
     feedback.pushInfo(f"Loading prepared surface from {surface_dir}")
 
-    # Load DSM (required)
-    dsm_path = os.path.join(surface_dir, "dsm.tif")
-    if not os.path.exists(dsm_path):
-        raise QgsProcessingException(f"Missing required file: {dsm_path}")
+    try:
+        surface = solweig.SurfaceData.load(surface_dir)
+    except FileNotFoundError as e:
+        raise QgsProcessingException(str(e)) from e
+    except ValueError as e:
+        raise QgsProcessingException(str(e)) from e
 
-    dsm, gt, crs_wkt = _load_geotiff(dsm_path)
-    feedback.pushInfo(f"DSM: {dsm.shape[1]}x{dsm.shape[0]} pixels")
-
-    # Load optional rasters
-    cdsm = _load_geotiff_if_exists(os.path.join(surface_dir, "cdsm.tif"))
-    dem = _load_geotiff_if_exists(os.path.join(surface_dir, "dem.tif"))
-    tdsm = _load_geotiff_if_exists(os.path.join(surface_dir, "tdsm.tif"))
-    lc = _load_geotiff_if_exists(os.path.join(surface_dir, "land_cover.tif"))
-    land_cover = lc.astype(np.uint8) if lc is not None else None
-    wall_height = _load_geotiff_if_exists(os.path.join(surface_dir, "wall_height.tif"))
-    wall_aspect = _load_geotiff_if_exists(os.path.join(surface_dir, "wall_aspect.tif"))
-
-    pixel_size = metadata.get("pixel_size", abs(gt[1]))
-
-    surface = solweig.SurfaceData(
-        dsm=dsm,
-        cdsm=cdsm,
-        dem=dem,
-        tdsm=tdsm,
-        land_cover=land_cover,
-        pixel_size=pixel_size,
-        dsm_relative=False,  # Always absolute after preprocessing
-        cdsm_relative=False,
-        tdsm_relative=False,
-    )
-    surface._geotransform = gt
-    surface._crs_wkt = crs_wkt
-    surface.wall_height = wall_height
-    surface.wall_aspect = wall_aspect
-
-    layers = ["dsm"]
-    if cdsm is not None:
-        layers.append("cdsm")
-    if dem is not None:
-        layers.append("dem")
-    if tdsm is not None:
-        layers.append("tdsm")
-    if land_cover is not None:
-        layers.append("land_cover")
-    if wall_height is not None:
-        layers.append("walls")
-    feedback.pushInfo(f"Loaded layers: {', '.join(layers)}")
+    feedback.pushInfo(f"  Grid: {surface.dsm.shape[1]}x{surface.dsm.shape[0]} @ {surface.pixel_size:.2f}m")
 
     return surface
-
-
-def _load_geotiff(path: str) -> tuple[NDArray[np.floating], list[float], str]:
-    """Load a GeoTIFF file, returning (array, geotransform, crs_wkt)."""
-    ds = gdal.Open(path, gdal.GA_ReadOnly)
-    if ds is None:
-        raise QgsProcessingException(f"Cannot open raster: {path}")
-    try:
-        band = ds.GetRasterBand(1)
-        array = band.ReadAsArray().astype(np.float32)
-        nodata = band.GetNoDataValue()
-        if nodata is not None and nodata < 0:
-            array = np.where(array == nodata, np.nan, array)
-        geotransform = list(ds.GetGeoTransform())
-        crs_wkt = ds.GetProjection()
-        return array, geotransform, crs_wkt
-    finally:
-        ds = None
-
-
-def _load_geotiff_if_exists(path: str) -> NDArray[np.floating] | None:
-    """Load a GeoTIFF if it exists, return None otherwise."""
-    import os
-
-    if not os.path.exists(path):
-        return None
-    arr, _, _ = _load_geotiff(path)
-    return arr
 
 
 def create_location_from_parameters(
     parameters: dict[str, Any],
     surface: Any,  # solweig.SurfaceData
     feedback: QgsProcessingFeedback,
+    epw_path: str | None = None,
 ) -> Any:  # Returns solweig.Location
     """
     Create Location from QGIS processing parameters.
 
-    Supports auto-extraction from DSM CRS or manual input.
+    Supports core API location derivation from EPW, surface CRS, or manual input.
 
     Args:
         parameters: Algorithm parameters dict.
@@ -451,38 +384,30 @@ def create_location_from_parameters(
     except ImportError as e:
         raise QgsProcessingException("SOLWEIG library not found. Please install solweig package.") from e
 
+    if epw_path:
+        try:
+            location = solweig.Location.from_epw(epw_path)
+        except FileNotFoundError as e:
+            raise QgsProcessingException(f"EPW file not found: {epw_path}") from e
+        except Exception as e:
+            raise QgsProcessingException(f"Cannot derive location from EPW: {e}") from e
+
+        feedback.pushInfo(
+            "Using location from EPW header to match the core SOLWEIG API: "
+            f"{location.latitude:.4f}N, {location.longitude:.4f}E "
+            f"(UTC{location.utc_offset:+g}, {location.altitude:.0f} m)"
+        )
+        return location
+
     utc_offset = parameters.get("UTC_OFFSET", 0)
 
     if parameters.get("AUTO_EXTRACT_LOCATION", False):
-        # Extract from DSM CRS
         feedback.pushInfo("Auto-extracting location from DSM CRS...")
-
-        if surface._crs_wkt is None:
-            raise QgsProcessingException("Cannot auto-extract location: DSM has no CRS information")
-
-        # Get center point of raster
-        gt = surface._geotransform
-        rows, cols = surface.dsm.shape
-        center_x = gt[0] + cols * gt[1] / 2
-        center_y = gt[3] + rows * gt[5] / 2
-
-        # Transform to WGS84
-        source_srs = osr.SpatialReference()
-        source_srs.ImportFromWkt(surface._crs_wkt)
-
-        target_srs = osr.SpatialReference()
-        target_srs.ImportFromEPSG(4326)  # WGS84
-
-        transform = osr.CoordinateTransformation(source_srs, target_srs)
-        lon, lat, _ = transform.TransformPoint(center_x, center_y)
-
-        feedback.pushInfo(f"Location: {lat:.4f}N, {lon:.4f}E")
-
-        location = solweig.Location(
-            latitude=lat,
-            longitude=lon,
-            utc_offset=utc_offset,
-        )
+        try:
+            location = solweig.Location.from_surface(surface, utc_offset=utc_offset)
+        except Exception as e:
+            raise QgsProcessingException(f"Cannot auto-extract location: {e}") from e
+        feedback.pushInfo(f"Location: {location.latitude:.4f}N, {location.longitude:.4f}E")
     else:
         # Use manual input
         latitude = parameters.get("LATITUDE")
@@ -754,7 +679,7 @@ def load_weather_from_epw(
     feedback: QgsProcessingFeedback,
 ) -> list:  # Returns list[solweig.Weather]
     """
-    Load weather data from EPW file with optional filtering.
+    Load weather data from EPW file via ``solweig.Weather.from_epw()``.
 
     Args:
         epw_path: Path to EPW file.
@@ -771,7 +696,6 @@ def load_weather_from_epw(
     """
     try:
         import solweig
-        from solweig.io import read_epw
     except ImportError as e:
         raise QgsProcessingException("SOLWEIG library not found. Please install solweig package.") from e
 
@@ -799,111 +723,17 @@ def load_weather_from_epw(
                 fatalError=False,
             )
 
-    # Read EPW file
     try:
-        df, metadata = read_epw(epw_path)
+        weather_series = solweig.Weather.from_epw(
+            epw_path,
+            start=start_dt,
+            end=end_dt,
+            hours=hours_list,
+        )
     except FileNotFoundError as e:
         raise QgsProcessingException(f"EPW file not found: {epw_path}") from e
-    except Exception as e:
-        raise QgsProcessingException(f"Error reading EPW file: {e}") from e
-
-    feedback.pushInfo(
-        f"EPW location: {metadata.get('city', 'Unknown')}, "
-        f"lat={metadata.get('latitude', 'N/A')}, lon={metadata.get('longitude', 'N/A')}"
-    )
-
-    # Report EPW date range
-    epw_start = df.index.min()
-    epw_end = df.index.max()
-    feedback.pushInfo(f"EPW date range: {epw_start} to {epw_end}")
-
-    # Default to full EPW range when dates not provided
-    if start_dt is None:
-        start_dt = epw_start if isinstance(epw_start, datetime) else epw_start.to_pydatetime()
-        feedback.pushInfo("No start date specified — using EPW start")
-    if end_dt is None:
-        end_dt = epw_end if isinstance(epw_end, datetime) else epw_end.to_pydatetime()
-        feedback.pushInfo("No end date specified — using EPW end")
-
-    # Filter by date range
-    mask = (df.index >= start_dt) & (df.index <= end_dt)
-    df_filtered = df[mask]
-
-    # TMY EPW files mix years (e.g., Jan from 2015, Feb from 2009).
-    # If exact date filtering yields nothing, match by month-day-hour instead.
-    if len(df_filtered) == 0:
-        feedback.pushInfo(
-            "No exact date matches — trying month/day filter "
-            "(EPW may be a Typical Meteorological Year with mixed years)"
-        )
-        start_md = (start_dt.month, start_dt.day, start_dt.hour)
-        end_md = (end_dt.month, end_dt.day, end_dt.hour)
-
-        def _md_tuple(ts):
-            return (ts.month, ts.day, ts.hour)
-
-        if start_md <= end_md:
-            # Same-year range (e.g., Feb 1 – Feb 7)
-            mask = [start_md <= _md_tuple(t) <= end_md for t in df.index]
-        else:
-            # Cross-year range (e.g., Dec 15 – Jan 15)
-            mask = [_md_tuple(t) >= start_md or _md_tuple(t) <= end_md for t in df.index]
-
-        df_filtered = df[mask]
-
-    # Filter by hours if specified
-    if hours_list:
-        df_filtered = df_filtered[df_filtered.index.hour.isin(hours_list)]
-
-    if len(df_filtered) == 0:
-        raise QgsProcessingException(
-            f"No timesteps found between {start_dt} and {end_dt}.\n"
-            f"The EPW file contains data from {epw_start} to {epw_end}.\n"
-            f"Please adjust the date range to overlap with the EPW data."
-        )
-
-    # Convert to Weather objects — normalize timestamps to requested year
-    # For cross-year ranges (e.g., Dec 15 → Jan 15), months after December
-    # must advance to target_year+1 to keep timestamps monotonic.
-    target_year = start_dt.year
-    cross_year = end_dt.year > start_dt.year or (
-        end_dt.month < start_dt.month  # e.g., Dec→Jan within TMY
-    )
-    weather_series = []
-    for timestamp, row in df_filtered.iterrows():
-        dt = timestamp.to_pydatetime() if hasattr(timestamp, "to_pydatetime") else timestamp
-        # Remap to target year so timestamps are contiguous
-        year = target_year
-        if cross_year and dt.month < start_dt.month:
-            year = target_year + 1
-        try:
-            dt = dt.replace(year=year)
-        except ValueError:
-            # Feb 29 in a non-leap target year → skip
-            continue
-        w = solweig.Weather(
-            datetime=dt,
-            ta=float(row["temp_air"]) if not np.isnan(row["temp_air"]) else 20.0,
-            rh=float(row["relative_humidity"]) if not np.isnan(row["relative_humidity"]) else 50.0,
-            global_rad=float(row["ghi"]) if not np.isnan(row["ghi"]) else 0.0,
-            ws=float(row["wind_speed"]) if not np.isnan(row["wind_speed"]) else 1.0,
-            pressure=(float(row["atmospheric_pressure"]) / 100.0)  # Pa → hPa
-            if not np.isnan(row["atmospheric_pressure"])
-            else 1013.25,
-            measured_direct_rad=float(row["dni"]) if not np.isnan(row["dni"]) else None,
-            measured_diffuse_rad=float(row["dhi"]) if not np.isnan(row["dhi"]) else None,
-        )
-        weather_series.append(w)
-
-    if not weather_series:
-        raise QgsProcessingException(
-            f"No timesteps found between {start_dt} and {end_dt}.\n"
-            f"The EPW file contains data from {epw_start} to {epw_end}.\n"
-            f"Please adjust the date range to overlap with the EPW data."
-        )
-
-    # Sort by datetime to ensure monotonic order after year remapping
-    weather_series.sort(key=lambda w: w.datetime)
+    except ValueError as e:
+        raise QgsProcessingException(str(e)) from e
 
     feedback.pushInfo(f"Loaded {len(weather_series)} timesteps from EPW")
     feedback.pushInfo(f"Period: {weather_series[0].datetime} to {weather_series[-1].datetime}")

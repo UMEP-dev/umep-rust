@@ -162,7 +162,7 @@ def add_location_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     algorithm.addParameter(
         QgsProcessingParameterBoolean(
             "AUTO_EXTRACT_LOCATION",
-            algorithm.tr("Auto-extract location from DSM CRS"),
+            algorithm.tr("Auto-extract location from DSM CRS (ignored when EPW weather file is used)"),
             defaultValue=False,
         )
     )
@@ -172,7 +172,7 @@ def add_location_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     algorithm.addParameter(
         QgsProcessingParameterNumber(
             "LATITUDE",
-            algorithm.tr("Latitude (degrees)"),
+            algorithm.tr("Latitude (degrees, ignored when EPW weather file is used)"),
             type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=canvas_lat,
             minValue=-90.0,
@@ -184,7 +184,7 @@ def add_location_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     algorithm.addParameter(
         QgsProcessingParameterNumber(
             "LONGITUDE",
-            algorithm.tr("Longitude (degrees)"),
+            algorithm.tr("Longitude (degrees, ignored when EPW weather file is used)"),
             type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=canvas_lon,
             minValue=-180.0,
@@ -196,7 +196,7 @@ def add_location_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     algorithm.addParameter(
         QgsProcessingParameterNumber(
             "UTC_OFFSET",
-            algorithm.tr("UTC offset (hours)"),
+            algorithm.tr("UTC offset (hours, ignored when EPW weather file is used)"),
             type=QgsProcessingParameterNumber.Type.Double,
             defaultValue=0,
             minValue=-12,
@@ -596,7 +596,7 @@ def add_epw_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     algorithm.addParameter(
         QgsProcessingParameterFile(
             "EPW_FILE",
-            algorithm.tr("EPW weather file"),
+            algorithm.tr("EPW weather file (overrides location coordinates and UTC offset)"),
             extension="epw",
             optional=True,
         )
@@ -632,7 +632,7 @@ def add_date_filter_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     algorithm.addParameter(
         QgsProcessingParameterDateTime(
             "START_DATE",
-            algorithm.tr("Start date (leave empty for full range)"),
+            algorithm.tr("Start date (leave empty to use core API default)"),
             type=QgsProcessingParameterDateTime.Type.DateTime,
             optional=True,
         )
@@ -641,7 +641,7 @@ def add_date_filter_parameters(algorithm: QgsProcessingAlgorithm) -> None:
     algorithm.addParameter(
         QgsProcessingParameterDateTime(
             "END_DATE",
-            algorithm.tr("End date (leave empty for full range)"),
+            algorithm.tr("End date (leave empty to use core API default)"),
             type=QgsProcessingParameterDateTime.Type.DateTime,
             optional=True,
         )

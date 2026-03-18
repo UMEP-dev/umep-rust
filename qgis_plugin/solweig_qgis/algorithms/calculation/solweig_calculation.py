@@ -102,7 +102,8 @@ All rasters (DSM, CDSM, DEM, walls) are loaded automatically.
 <b>Weather modes:</b>
 <ul>
 <li><b>Single timestep:</b> Manual weather input for one date/time</li>
-<li><b>EPW weather file:</b> Load hourly data from an EnergyPlus Weather file</li>
+<li><b>EPW weather file:</b> Load hourly data from an EnergyPlus Weather file.
+EPW header overrides manual or auto-extracted coordinates and UTC offset.</li>
 <li><b>UMEP met file:</b> Load from UMEP/SUEWS meteorological forcing files</li>
 </ul>
 For timeseries modes, thermal state (ground heating/cooling) accumulates
@@ -348,11 +349,13 @@ GeoTIFF files organised into subfolders of the output directory:
         if feedback.isCanceled():
             return {}
 
+        epw_path = self.parameterAsFile(parameters, "EPW_FILE", context) if weather_mode == self.WEATHER_EPW else None
+
         # Step 2: Create Location
         feedback.setProgressText("Setting up location...")
         feedback.setProgress(10)
 
-        location = create_location_from_parameters(parameters, surface, feedback)
+        location = create_location_from_parameters(parameters, surface, feedback, epw_path=epw_path)
 
         if feedback.isCanceled():
             return {}
@@ -372,7 +375,7 @@ GeoTIFF files organised into subfolders of the output directory:
             weather = create_weather_from_parameters(parameters, feedback)
             weather_series = [weather]
         elif weather_mode == self.WEATHER_EPW:
-            epw_path = self.parameterAsFile(parameters, "EPW_FILE", context)
+            assert epw_path is not None  # guaranteed by weather_mode guard above
             weather_series = load_weather_from_epw(
                 epw_path=epw_path,
                 start_dt=start_dt,
@@ -435,18 +438,12 @@ GeoTIFF files organised into subfolders of the output directory:
             selected_outputs.append("pet")
         feedback.pushInfo(f"Outputs: {', '.join(selected_outputs)}")
 
-        # Load precomputed SVF — check explicit SVF_DIR, then prepared surface dir
+        # SVF: SurfaceData.load() already embeds SVF + shadows on the surface.
+        # Only use PrecomputedData if the user explicitly overrides with SVF_DIR.
         precomputed = None
         svf_dir = parameters.get("SVF_DIR") or None
-        if not svf_dir:
-            # Auto-detect SVF in prepared surface directory
-            svfs_path = os.path.join(prepared_dir, "svfs.zip")
-            if os.path.exists(svfs_path):
-                svf_dir = prepared_dir
-                feedback.pushInfo("Auto-detected SVF in prepared surface directory")
-
         if svf_dir:
-            feedback.pushInfo(f"Loading pre-computed SVF from {svf_dir}")
+            feedback.pushInfo(f"Loading SVF override from {svf_dir}")
             try:
                 precomputed = solweig.PrecomputedData.prepare(svf_dir=svf_dir)
             except Exception as e:
@@ -454,6 +451,8 @@ GeoTIFF files organised into subfolders of the output directory:
                     f"Could not load SVF from {svf_dir}: {e}",
                     fatalError=False,
                 )
+        elif surface.svf is not None:
+            feedback.pushInfo("Using SVF from prepared surface")
 
         if feedback.isCanceled():
             return {}

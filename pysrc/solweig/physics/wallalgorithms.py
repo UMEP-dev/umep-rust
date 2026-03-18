@@ -47,7 +47,11 @@ def findwalls(a: NDArray[np.floating], walllimit: float) -> NDArray[np.float32]:
 
 
 def filter1Goodwin_as_aspect_v3(
-    walls: NDArray[np.floating], scale: float, a: NDArray[np.floating], feedback: Any = None
+    walls: NDArray[np.floating],
+    scale: float,
+    a: NDArray[np.floating],
+    feedback: Any = None,
+    progress_range: tuple[float, float] | None = None,
 ) -> NDArray[np.float32]:
     """
     tThis function applies the filter processing presented in Goodwin et al (2010) but instead for removing
@@ -88,7 +92,9 @@ def filter1Goodwin_as_aspect_v3(
 
         # Poll progress (180 angle iterations)
         total = 180
-        pbar = ProgressReporter(total=total, desc="Computing wall aspects", feedback=feedback)
+        pbar = ProgressReporter(
+            total=total, desc="Computing wall aspects", feedback=feedback, progress_range=progress_range
+        )
         last = 0
         while thread.is_alive():
             thread.join(timeout=0.05)

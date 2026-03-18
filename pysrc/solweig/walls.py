@@ -31,6 +31,8 @@ def generate_wall_hts(
     bbox: list[float] | None,
     out_dir: str,
     wall_limit: float = 1,
+    feedback: object | None = None,
+    progress_range: tuple[float, float] | None = None,
 ):
     """
     Generate wall height and aspect rasters from a DSM.
@@ -40,6 +42,8 @@ def generate_wall_hts(
         bbox: Bounding box [minx, miny, maxx, maxy] or None for full extent
         out_dir: Output directory for wall_hts.tif and wall_aspects.tif
         wall_limit: Minimum height to be considered a wall (default: 1m)
+        feedback: Optional QGIS QgsProcessingFeedback for progress/cancellation.
+        progress_range: Optional (start_pct, end_pct) for QGIS progress sub-range.
 
     Outputs:
         wall_hts.tif: Wall heights in meters
@@ -54,5 +58,7 @@ def generate_wall_hts(
     walls = wa.findwalls(dsm_rast, wall_limit)
     common.save_raster(str(out_path / "wall_hts.tif"), walls, dsm_transf, dsm_crs, ensure_float32=True)
 
-    dirwalls = wa.filter1Goodwin_as_aspect_v3(walls, dsm_scale, dsm_rast)
+    dirwalls = wa.filter1Goodwin_as_aspect_v3(
+        walls, dsm_scale, dsm_rast, feedback=feedback, progress_range=progress_range
+    )
     common.save_raster(str(out_path / "wall_aspects.tif"), dirwalls, dsm_transf, dsm_crs, ensure_float32=True)

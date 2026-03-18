@@ -195,6 +195,41 @@ class TestSaveGeoreferencedOutput:
 
 
 # ---------------------------------------------------------------------------
+# load_raster_from_layer
+# ---------------------------------------------------------------------------
+
+
+class TestLoadRasterFromLayer:
+    """Tests for SolweigAlgorithmBase.load_raster_from_layer."""
+
+    def test_positive_nodata_is_mapped_to_nan(self, algo):
+        """Positive nodata sentinels should not survive as valid terrain values."""
+        layer = MagicMock()
+        layer.source.return_value = "/tmp/fake.tif"
+
+        mock_band = MagicMock()
+        mock_band.ReadAsArray.return_value = np.array([[1.0, 9999.0], [2.0, 3.0]], dtype=np.float32)
+        mock_band.GetNoDataValue.return_value = 9999.0
+
+        mock_ds = MagicMock()
+        mock_ds.GetRasterBand.return_value = mock_band
+        mock_ds.GetGeoTransform.return_value = [0.0, 1.0, 0.0, 2.0, 0.0, -1.0]
+        mock_ds.GetProjection.return_value = "WKT"
+
+        mock_gdal = MagicMock()
+        mock_gdal.Open.return_value = mock_ds
+        mock_gdal.GA_ReadOnly = 0
+
+        with patch("qgis_plugin.solweig_qgis.algorithms.base.gdal", mock_gdal):
+            array, geotransform, crs_wkt = algo.load_raster_from_layer(layer)
+
+        assert np.isnan(array[0, 1])
+        assert array[0, 0] == 1.0
+        assert geotransform == [0.0, 1.0, 0.0, 2.0, 0.0, -1.0]
+        assert crs_wkt == "WKT"
+
+
+# ---------------------------------------------------------------------------
 # createInstance / group / groupId
 # ---------------------------------------------------------------------------
 

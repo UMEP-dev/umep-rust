@@ -188,15 +188,16 @@ def resample_to_grid(
 
     if RASTERIO_AVAILABLE:
         from affine import Affine as AffineClass
-        from rasterio.transform import from_bounds
         from rasterio.warp import Resampling, reproject
 
         # Convert list to Affine if needed
         if isinstance(src_transform, list):
             src_transform = AffineClass.from_gdal(*src_transform)
 
-        # Create target transform
-        target_transform = from_bounds(minx, miny, maxx, maxy, width, height)
+        # Create target transform from origin + exact pixel size (not from_bounds,
+        # which back-computes pixel size as extent/count and drifts when the bbox
+        # isn't an exact multiple of target_pixel_size).
+        target_transform = AffineClass(target_pixel_size, 0, minx, 0, -target_pixel_size, maxy)
 
         # Create destination array
         destination = np.zeros((height, width), dtype=array.dtype)
