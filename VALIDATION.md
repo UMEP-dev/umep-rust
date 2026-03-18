@@ -265,6 +265,7 @@ pytest tests/validation/test_poi_sweep_all_sites.py -v -s
 | 0.1.0b70 | 2026-03-14 | 3 | 6.0–18.9 °C | Fix sitting posture producing negative Tmrt with anisotropic sky (#9). Add box direct beam splitting. Validation unchanged (standing posture). |
 | 0.1.0b71 | 2026-03-14 | 3 | 6.0–18.9 °C | Docs-only: clarify TMY nature of PVGIS downloads in docstrings, user docs, and QGIS plugin (#8). Validation unchanged. |
 | 0.1.0b72 | 2026-03-17 | 3 | 6.7–17.6 °C | Fix false vegetation shadows on slopes: sub-threshold CDSM/TDSM set to NaN instead of DEM height; underground vegetation cleared. Ldown improved at Kronenhuset (39→32 W/m²) and Gustav Adolfs (84→74 W/m²). Relax SVF veg golden tolerance (known shadowingfunction\_20 vs \_23 divergence). |
+| 0.1.0b74 | 2026-03-18 | 3 | 6.7–17.6 °C | Fix rasterio resampling pixel drift (from\_bounds inexact pixel size). Fix QGIS phantom vegetation (fill\_nan overwriting CDSM NaN markers). Add SurfaceData.load(); eliminate QGIS/core duplication. Fix progress bar regression. Validation unchanged from b72. |
 
 ---
 
