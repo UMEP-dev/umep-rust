@@ -9,6 +9,7 @@ large-raster tiling engine.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -80,6 +81,27 @@ class ThermalState:
             timeadd=0.0,
             timestep_dec=0.0,
         )
+
+    @classmethod
+    def initial_memmap(cls, shape: tuple[int, int], memmap_dir: Path) -> ThermalState:
+        """Create initial state backed by memory-mapped files.
+
+        Identical to :meth:`initial` but arrays are ``np.memmap`` objects,
+        allowing the OS to page them to disk transparently.  This is used
+        for very large rasters where 6 float32 arrays would exceed RAM.
+
+        Args:
+            shape: Grid shape (rows, cols) matching the DSM.
+            memmap_dir: Directory for the memmap backing files.
+        """
+        names = ["tgmap1", "tgmap1_e", "tgmap1_s", "tgmap1_w", "tgmap1_n", "tgout1"]
+        arrays = {}
+        for name in names:
+            fp = memmap_dir / f"state_{name}.dat"
+            arr = np.memmap(fp, dtype=np.float32, mode="w+", shape=shape)
+            arr[:] = 0
+            arrays[name] = arr
+        return cls(**arrays, firstdaytime=1.0, timeadd=0.0, timestep_dec=0.0)
 
     def copy(self) -> ThermalState:
         """Create a deep copy of this state."""

@@ -490,6 +490,9 @@ class GridAccumulator:
 
     Used identically by both ``timeseries.py`` and ``tiling.py``.
     All internal accumulators use float64 for numerical stability.
+
+    For very large rasters, pass *memmap_dir* to back arrays with
+    memory-mapped files so the OS can page them to disk transparently.
     """
 
     def __init__(
@@ -498,46 +501,77 @@ class GridAccumulator:
         heat_thresholds_day: list[float],
         heat_thresholds_night: list[float],
         timestep_hours: float,
+        memmap_dir: Path | None = None,
     ) -> None:
         self.shape = shape
         self.heat_thresholds_day = list(heat_thresholds_day)
         self.heat_thresholds_night = list(heat_thresholds_night)
         self.timestep_hours = timestep_hours
+        self._memmap_dir = memmap_dir
+
+        def _zeros(name: str, dtype=np.float64) -> NDArray:
+            if memmap_dir is not None:
+                fp = memmap_dir / f"acc_{name}.dat"
+                arr = np.memmap(fp, dtype=dtype, mode="w+", shape=shape)
+                arr[:] = 0
+                return arr
+            return np.zeros(shape, dtype=dtype)
+
+        def _full(name: str, fill: float, dtype=np.float64) -> NDArray:
+            if memmap_dir is not None:
+                fp = memmap_dir / f"acc_{name}.dat"
+                arr = np.memmap(fp, dtype=dtype, mode="w+", shape=shape)
+                arr[:] = fill
+                return arr
+            return np.full(shape, fill, dtype=dtype)
 
         # Tmrt accumulators
-        self._tmrt_sum = np.zeros(shape, dtype=np.float64)
-        self._tmrt_count = np.zeros(shape, dtype=np.int32)
-        self._tmrt_max = np.full(shape, -np.inf, dtype=np.float64)
-        self._tmrt_min = np.full(shape, np.inf, dtype=np.float64)
-        self._tmrt_day_sum = np.zeros(shape, dtype=np.float64)
-        self._tmrt_day_count = np.zeros(shape, dtype=np.int32)
-        self._tmrt_night_sum = np.zeros(shape, dtype=np.float64)
-        self._tmrt_night_count = np.zeros(shape, dtype=np.int32)
+        self._tmrt_sum = _zeros("tmrt_sum")
+        self._tmrt_count = _zeros("tmrt_count", dtype=np.int32)
+        self._tmrt_max = _full("tmrt_max", -np.inf)
+        self._tmrt_min = _full("tmrt_min", np.inf)
+        self._tmrt_day_sum = _zeros("tmrt_day_sum")
+        self._tmrt_day_count = _zeros("tmrt_day_count", dtype=np.int32)
+        self._tmrt_night_sum = _zeros("tmrt_night_sum")
+        self._tmrt_night_count = _zeros("tmrt_night_count", dtype=np.int32)
 
         # UTCI accumulators
-        self._utci_sum = np.zeros(shape, dtype=np.float64)
-        self._utci_count = np.zeros(shape, dtype=np.int32)
-        self._utci_max = np.full(shape, -np.inf, dtype=np.float64)
-        self._utci_min = np.full(shape, np.inf, dtype=np.float64)
-        self._utci_day_sum = np.zeros(shape, dtype=np.float64)
-        self._utci_day_count = np.zeros(shape, dtype=np.int32)
-        self._utci_night_sum = np.zeros(shape, dtype=np.float64)
-        self._utci_night_count = np.zeros(shape, dtype=np.int32)
+        self._utci_sum = _zeros("utci_sum")
+        self._utci_count = _zeros("utci_count", dtype=np.int32)
+        self._utci_max = _full("utci_max", -np.inf)
+        self._utci_min = _full("utci_min", np.inf)
+        self._utci_day_sum = _zeros("utci_day_sum")
+        self._utci_day_count = _zeros("utci_day_count", dtype=np.int32)
+        self._utci_night_sum = _zeros("utci_night_sum")
+        self._utci_night_count = _zeros("utci_night_count", dtype=np.int32)
 
         # Sun/shade
-        self._sun_hours = np.zeros(shape, dtype=np.float64)
-        self._shade_hours = np.zeros(shape, dtype=np.float64)
+        self._sun_hours = _zeros("sun_hours")
+        self._shade_hours = _zeros("shade_hours")
         self._shadow_seen = False
 
         # UTCI threshold exceedance — combine all unique thresholds
         all_thresholds = sorted(set(heat_thresholds_day) | set(heat_thresholds_night))
-        self._utci_hours_above: dict[float, NDArray] = {t: np.zeros(shape, dtype=np.float64) for t in all_thresholds}
+        self._utci_hours_above: dict[float, NDArray] = {t: _zeros(f"utci_above_{t}") for t in all_thresholds}
         self._day_thresholds_set = set(heat_thresholds_day)
         self._night_thresholds_set = set(heat_thresholds_night)
 
-        # Pre-allocated scratch buffers (avoids per-call allocation in update)
-        self._scratch_valid = np.empty(shape, dtype=np.bool_)
-        self._scratch_utci_valid = np.empty(shape, dtype=np.bool_)
+        # Pre-allocated scratch buffers (avoids per-call allocation in update).
+        # Only needed for the non-tiled update() path.
+        if memmap_dir is None:
+            self._scratch_valid = np.empty(shape, dtype=np.bool_)
+            self._scratch_utci_valid = np.empty(shape, dtype=np.bool_)
+        else:
+            self._scratch_valid = None
+            self._scratch_utci_valid = None
+
+        # Per-timestep tile accumulation state (used by begin_timestep/commit_timestep)
+        self._tile_tmrt_sum = 0.0
+        self._tile_tmrt_count = 0
+        self._tile_utci_sum = 0.0
+        self._tile_utci_count = 0
+        self._tile_shadow_sunlit_sum = 0.0
+        self._tile_shadow_valid_count = 0
 
         # Counters
         self._n_timesteps = 0
@@ -566,7 +600,14 @@ class GridAccumulator:
         weather: Weather,
         compute_utci_fn: Callable,
     ) -> None:
-        """Ingest one timestep. Must be called BEFORE arrays are freed."""
+        """Ingest one timestep. Must be called BEFORE arrays are freed.
+
+        Not available when *memmap_dir* was set — use :meth:`update_tile` instead.
+        """
+        assert self._scratch_valid is not None, (
+            "update() requires scratch buffers (memmap_dir must be None); "
+            "use update_tile() for memmap-backed accumulators"
+        )
         tmrt = result.tmrt
         np.isfinite(tmrt, out=self._scratch_valid)
         valid = self._scratch_valid
@@ -648,6 +689,152 @@ class GridAccumulator:
         self._ts_utci_mean.append(float(utci[utci_valid].mean()) if n_valid_utci > 0 else np.nan)
         self._ts_sun_fraction.append(sun_fraction)
         # Diffuse fraction: 0 = clear, 1 = overcast (NaN at night)
+        if weather.global_rad > 0:
+            self._ts_diffuse_fraction.append(weather.diffuse_rad / weather.global_rad)
+        else:
+            self._ts_diffuse_fraction.append(np.nan)
+        self._ts_clearness_index.append(weather.clearness_index)
+
+    # ------------------------------------------------------------------
+    # Tile-aware accumulation
+    # ------------------------------------------------------------------
+    # These three methods replace update() in the tiled timeseries path.
+    # They avoid assembling a full-raster intermediary: each tile's core
+    # result is written directly into the accumulator slices.
+
+    def begin_timestep(self) -> None:
+        """Reset per-timestep partial-sum accumulators before processing tiles."""
+        self._tile_tmrt_sum = 0.0
+        self._tile_tmrt_count = 0
+        self._tile_utci_sum = 0.0
+        self._tile_utci_count = 0
+        self._tile_shadow_sunlit_sum = 0.0
+        self._tile_shadow_valid_count = 0
+
+    def update_tile(
+        self,
+        tile_tmrt: NDArray[np.floating],
+        tile_shadow: NDArray[np.floating] | None,
+        write_slice: tuple[slice, slice],
+        core_slice: tuple[slice, slice],
+        weather: Weather,
+        compute_utci_fn: Callable,
+    ) -> NDArray[np.floating] | None:
+        """Accumulate one tile's core results into the full-raster accumulators.
+
+        This performs identical arithmetic to :meth:`update` but operates only
+        on the tile's core region, writing into *write_slice* of the internal
+        arrays.  No full-raster intermediary is needed.
+
+        Args:
+            tile_tmrt: Tile-sized Tmrt array (includes overlap).
+            tile_shadow: Tile-sized shadow array, or None.
+            write_slice: ``(row_slice, col_slice)`` into the full-raster accumulators.
+            core_slice: ``(row_slice, col_slice)`` to extract the non-overlap core
+                from the tile-sized arrays.
+            weather: Weather for this timestep.
+            compute_utci_fn: ``(tmrt, ta, rh, ws) -> utci`` callable.
+
+        Returns:
+            UTCI core array (float32) if UTCI was computed, else None.
+        """
+        ws = write_slice
+        tmrt = tile_tmrt[core_slice]
+        valid = np.isfinite(tmrt)
+        is_day = weather.is_daytime
+
+        # --- Tmrt grid stats ---
+        self._tmrt_sum[ws] += np.where(valid, tmrt, 0.0)
+        self._tmrt_count[ws] += valid
+        np.fmax(self._tmrt_max[ws], np.where(valid, tmrt, -np.inf), out=self._tmrt_max[ws])
+        np.fmin(self._tmrt_min[ws], np.where(valid, tmrt, np.inf), out=self._tmrt_min[ws])
+
+        if is_day:
+            self._tmrt_day_sum[ws] += np.where(valid, tmrt, 0.0)
+            self._tmrt_day_count[ws] += valid
+        else:
+            self._tmrt_night_sum[ws] += np.where(valid, tmrt, 0.0)
+            self._tmrt_night_count[ws] += valid
+
+        # --- UTCI ---
+        utci = compute_utci_fn(tmrt, weather.ta, weather.rh, weather.ws)
+        utci_valid = np.isfinite(utci) & valid
+
+        self._utci_sum[ws] += np.where(utci_valid, utci, 0.0)
+        self._utci_count[ws] += utci_valid
+        np.fmax(self._utci_max[ws], np.where(utci_valid, utci, -np.inf), out=self._utci_max[ws])
+        np.fmin(self._utci_min[ws], np.where(utci_valid, utci, np.inf), out=self._utci_min[ws])
+
+        if is_day:
+            self._utci_day_sum[ws] += np.where(utci_valid, utci, 0.0)
+            self._utci_day_count[ws] += utci_valid
+        else:
+            self._utci_night_sum[ws] += np.where(utci_valid, utci, 0.0)
+            self._utci_night_count[ws] += utci_valid
+
+        # --- Sun/shade hours ---
+        if tile_shadow is not None:
+            self._shadow_seen = True
+            shadow = tile_shadow[core_slice]
+            if is_day:
+                self._sun_hours[ws] += np.where(valid, shadow * self.timestep_hours, 0.0)
+                self._shade_hours[ws] += np.where(valid, (1.0 - shadow) * self.timestep_hours, 0.0)
+                n_v = int(valid.sum())
+                self._tile_shadow_sunlit_sum += float(shadow[valid].sum()) if n_v > 0 else 0.0
+                self._tile_shadow_valid_count += n_v
+            else:
+                self._shade_hours[ws] += np.where(valid, self.timestep_hours, 0.0)
+
+        # --- UTCI threshold exceedance ---
+        active_thresholds = self._day_thresholds_set if is_day else self._night_thresholds_set
+        for threshold in active_thresholds:
+            acc = self._utci_hours_above[threshold]
+            acc[ws] += np.where(utci_valid & (utci > threshold), self.timestep_hours, 0.0)
+
+        # --- Partial sums for per-timestep scalar means ---
+        n_valid_tmrt = int(valid.sum())
+        self._tile_tmrt_sum += float(tmrt[valid].sum()) if n_valid_tmrt > 0 else 0.0
+        self._tile_tmrt_count += n_valid_tmrt
+        n_valid_utci = int(utci_valid.sum())
+        self._tile_utci_sum += float(utci[utci_valid].sum()) if n_valid_utci > 0 else 0.0
+        self._tile_utci_count += n_valid_utci
+
+        return utci
+
+    def commit_timestep(self, weather: Weather) -> None:
+        """Finalise per-timestep scalar tracking after all tiles are processed.
+
+        Must be called once per timestep, after all :meth:`update_tile` calls.
+        """
+        is_day = weather.is_daytime
+
+        self._n_timesteps += 1
+        if is_day:
+            self._n_daytime += 1
+        else:
+            self._n_nighttime += 1
+
+        self._ts_datetime.append(weather.datetime)
+        self._ts_ta.append(weather.ta)
+        self._ts_rh.append(weather.rh)
+        self._ts_ws.append(weather.ws)
+        self._ts_global_rad.append(weather.global_rad)
+        self._ts_direct_rad.append(weather.direct_rad)
+        self._ts_diffuse_rad.append(weather.diffuse_rad)
+        self._ts_sun_altitude.append(weather.sun_altitude)
+        self._ts_is_daytime.append(is_day)
+
+        # Spatial means aggregated from tile partial sums
+        self._ts_tmrt_mean.append(self._tile_tmrt_sum / self._tile_tmrt_count if self._tile_tmrt_count > 0 else np.nan)
+        self._ts_utci_mean.append(self._tile_utci_sum / self._tile_utci_count if self._tile_utci_count > 0 else np.nan)
+        if self._tile_shadow_valid_count > 0:
+            sun_fraction = self._tile_shadow_sunlit_sum / self._tile_shadow_valid_count
+        elif not is_day and self._shadow_seen:
+            sun_fraction = 0.0
+        else:
+            sun_fraction = np.nan
+        self._ts_sun_fraction.append(sun_fraction)
+
         if weather.global_rad > 0:
             self._ts_diffuse_fraction.append(weather.diffuse_rad / weather.global_rad)
         else:

@@ -336,6 +336,7 @@ class TestComputeMaxTilePixels:
         headroom = compute_max_tile_pixels.__globals__["_GPU_HEADROOM"]
 
         monkeypatch.setattr(solweig, "get_gpu_limits", lambda: {"max_buffer_size": max_buf})
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_available_ram_bytes", lambda: None)
         monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_total_ram_bytes", lambda: None)
 
         svf_pixels = compute_max_tile_pixels(context="svf")
@@ -354,6 +355,7 @@ class TestComputeMaxTilePixels:
         headroom = compute_max_tile_pixels.__globals__["_GPU_HEADROOM"]
 
         monkeypatch.setattr(solweig, "get_gpu_limits", lambda: {"max_buffer_size": max_buf, "backend": "Metal"})
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_available_ram_bytes", lambda: None)
         monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_total_ram_bytes", lambda: None)
 
         svf_pixels = compute_max_tile_pixels(context="svf")
@@ -365,6 +367,49 @@ class TestComputeMaxTilePixels:
         assert svf_pixels == expected_svf
         assert solweig_pixels == expected_solweig
         assert svf_pixels < solweig_pixels
+
+    def test_available_ram_takes_precedence_over_total(self, monkeypatch):
+        """When available RAM < total, tiles should be sized to available."""
+        monkeypatch.setattr(solweig, "get_gpu_limits", lambda: None)
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_available_ram_bytes", lambda: 4_000_000_000)
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_total_ram_bytes", lambda: 32_000_000_000)
+
+        pixels = compute_max_tile_pixels(context="solweig")
+        # 4GB * 0.50 / 400 = 5_000_000
+        assert pixels == 5_000_000
+
+    def test_available_ram_without_total(self, monkeypatch):
+        """Available RAM alone (total detection failed) should still work."""
+        monkeypatch.setattr(solweig, "get_gpu_limits", lambda: None)
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_available_ram_bytes", lambda: 8_000_000_000)
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_total_ram_bytes", lambda: None)
+
+        pixels = compute_max_tile_pixels(context="solweig")
+        assert pixels == 10_000_000  # 8GB * 0.50 / 400
+
+    def test_falls_back_to_total_when_available_fails(self, monkeypatch):
+        """When available detection fails, total × fraction is used."""
+        monkeypatch.setattr(solweig, "get_gpu_limits", lambda: None)
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_available_ram_bytes", lambda: None)
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_total_ram_bytes", lambda: 16_000_000_000)
+
+        pixels = compute_max_tile_pixels(context="solweig")
+        assert pixels == 20_000_000  # 16GB * 0.50 / 400
+
+    def test_tile_side_logging_with_avail_only(self, monkeypatch):
+        """compute_max_tile_side must not crash when total RAM is None."""
+        from solweig.tiling import _cached_max_tile_side, compute_max_tile_side
+
+        monkeypatch.setattr(solweig, "get_gpu_limits", lambda: None)
+        monkeypatch.setitem(compute_max_tile_side.__globals__, "_get_available_ram_bytes", lambda: 8_000_000_000)
+        monkeypatch.setitem(compute_max_tile_side.__globals__, "_get_total_ram_bytes", lambda: None)
+        _cached_max_tile_side.pop("solweig", None)
+
+        try:
+            side = compute_max_tile_side(context="solweig")
+            assert side >= MIN_TILE_SIZE
+        finally:
+            _cached_max_tile_side.pop("solweig", None)
 
 
 class TestValidateTileSize:

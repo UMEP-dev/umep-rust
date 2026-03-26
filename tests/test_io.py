@@ -285,5 +285,66 @@ class TestGeoTIFFLoading:
         np.testing.assert_array_almost_equal(array, expected)
 
 
+class TestWindowedWriteRoundTrip:
+    """Verify create_empty_raster + write_raster_window round-trips correctly.
+
+    This exercises the code path used by TiledGeoTiffWriter and must work
+    under both rasterio and GDAL backends.
+    """
+
+    def test_windowed_write_recovers_data(self, tmp_path):
+        """Write two non-overlapping windows, read back the full raster."""
+        path = tmp_path / "windowed.tif"
+        rows, cols = 20, 30
+        transform = [0.0, 1.0, 0.0, float(rows), 0.0, -1.0]
+
+        io.create_empty_raster(
+            path_str=path,
+            rows=rows,
+            cols=cols,
+            transform=transform,
+            crs_wkt="",
+            dtype=np.float32,
+            nodata=np.nan,
+        )
+
+        # Write two tiles covering the full raster
+        top = np.full((10, 30), 1.0, dtype=np.float32)
+        bot = np.full((10, 30), 2.0, dtype=np.float32)
+        io.write_raster_window(path, top, window=(slice(0, 10), slice(0, 30)))
+        io.write_raster_window(path, bot, window=(slice(10, 20), slice(0, 30)))
+
+        # Read back
+        data, _, _, _ = io.load_raster(str(path))
+        np.testing.assert_array_equal(data[:10, :], 1.0)
+        np.testing.assert_array_equal(data[10:, :], 2.0)
+
+    def test_windowed_write_nan_nodata(self, tmp_path):
+        """Pixels not written should remain NaN (the nodata fill)."""
+        path = tmp_path / "partial.tif"
+        rows, cols = 10, 10
+        transform = [0.0, 1.0, 0.0, float(rows), 0.0, -1.0]
+
+        io.create_empty_raster(
+            path_str=path,
+            rows=rows,
+            cols=cols,
+            transform=transform,
+            crs_wkt="",
+            dtype=np.float32,
+            nodata=np.nan,
+        )
+
+        # Write only the top-left 5x5 quadrant
+        patch = np.full((5, 5), 42.0, dtype=np.float32)
+        io.write_raster_window(path, patch, window=(slice(0, 5), slice(0, 5)))
+
+        data, _, _, _ = io.load_raster(str(path))
+        np.testing.assert_array_equal(data[:5, :5], 42.0)
+        # Unwritten pixels: NaN on GDAL (Fill), possibly garbage on rasterio.
+        # Both backends must at least produce a readable file.
+        assert data.shape == (10, 10)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

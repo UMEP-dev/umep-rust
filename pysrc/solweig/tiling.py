@@ -25,7 +25,7 @@ import numpy as np
 
 from .errors import MissingPrecomputedData
 from .models import HumanParams, PrecomputedData, SolweigResult, SurfaceData, ThermalState, TileSpec
-from .output_async import AsyncGeoTiffWriter, async_output_enabled
+from .output_async import TiledGeoTiffWriter
 from .postprocess import compute_utci_grid
 from .solweig_logging import get_logger
 from .summary import GridAccumulator, TimeseriesSummary
@@ -54,8 +54,41 @@ MAX_BUFFER_M = 1000.0  # Default maximum buffer / shadow distance in meters
 # Backward-compat alias (imported by tests)
 MAX_TILE_SIZE = _FALLBACK_MAX_TILE_SIZE
 
-# Resource estimation constants
-_RAM_FRACTION = 0.50  # Use at most 50% of total physical RAM for tile arrays
+
+# Resource estimation constants — overridable via environment variables so
+# users with unusual hardware can tune without patching source code.
+#
+#   SOLWEIG_RAM_FRACTION   — fraction of physical RAM for tile arrays (default 0.50)
+#   SOLWEIG_MAX_TILE_SIDE  — hard cap on tile side in pixels (default: unlimited)
+#   SOLWEIG_MEMMAP_THRESHOLD — pixel count above which memmap is used (default 50M)
+#
+def _parse_env_float(key: str, default: float) -> float:
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        import warnings
+
+        warnings.warn(f"Ignoring invalid {key}={raw!r}, using default {default}", stacklevel=2)
+        return default
+
+
+def _parse_env_int(key: str, default: int) -> int:
+    raw = os.environ.get(key)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        import warnings
+
+        warnings.warn(f"Ignoring invalid {key}={raw!r}, using default {default}", stacklevel=2)
+        return default
+
+
+_RAM_FRACTION = _parse_env_float("SOLWEIG_RAM_FRACTION", 0.50)
 
 # GPU memory constants — two sets per context, derived from
 # rust/src/gpu/shadow_gpu.rs allocate_buffers() + init_svf_accumulation().
@@ -91,6 +124,11 @@ _GPU_HEADROOM = 0.80  # Use 80% of GPU max buffer to leave headroom
 _TOTAL_MEMORY_BACKENDS = {"Metal", "Dx12"}
 _MAX_AUTO_TILE_WORKERS = min(os.cpu_count() or 4, 16)  # Scale with CPU count, cap at 16
 
+# When total pixels exceed this threshold, use memory-mapped files for
+# GridAccumulator and ThermalState arrays so the OS can page to disk.
+# 50M pixels ≈ 200 MB per float32 array, ~4 GB for the full accumulator set.
+_MEMMAP_PIXEL_THRESHOLD = _parse_env_int("SOLWEIG_MEMMAP_THRESHOLD", 50_000_000)
+
 # Cache for computed tile limits (populated once per context on first call)
 _cached_max_tile_side: dict[str, int] = {}
 
@@ -107,7 +145,6 @@ def _get_total_ram_bytes() -> int | None:
     Uses ``os.sysconf`` on POSIX (macOS/Linux) and ``ctypes`` on Windows.
     Returns ``None`` if detection fails.  No external dependencies.
     """
-    import os
     import sys
 
     try:
@@ -137,6 +174,61 @@ def _get_total_ram_bytes() -> int | None:
             if pages > 0 and page_size > 0:
                 return pages * page_size
     except (OSError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def _get_available_ram_bytes() -> int | None:
+    """Detect available (free + reclaimable) RAM in bytes.
+
+    Unlike :func:`_get_total_ram_bytes`, this accounts for memory already
+    consumed by the OS, loaded raster data, SVF caches, etc.  Using
+    available RAM for tile sizing means tiles automatically shrink when the
+    process has a large memory footprint.
+    """
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform == "win32":
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(stat)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            return stat.ullAvailPhys
+        elif sys.platform == "darwin":
+            # macOS: vm_stat reports free + inactive (reclaimable) pages
+            result = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                free = inactive = 0
+                for line in result.stdout.splitlines():
+                    if "Pages free" in line:
+                        free = int(line.split()[-1].rstrip("."))
+                    elif "Pages inactive" in line:
+                        inactive = int(line.split()[-1].rstrip("."))
+                page_size = os.sysconf("SC_PAGE_SIZE")
+                return (free + inactive) * page_size
+        else:
+            # Linux: /proc/meminfo MemAvailable is the best estimate
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) * 1024  # kB -> bytes
+    except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired):
         pass
     return None
 
@@ -182,12 +274,16 @@ def compute_max_tile_pixels(*, context: str = "solweig") -> int:
         bpp = gpu_total_bpp if backend in _TOTAL_MEMORY_BACKENDS else gpu_single_bpp
         gpu_max_pixels = int(int(max_buf) * _GPU_HEADROOM) // bpp
 
-    # RAM constraint: total physical RAM × fraction / bytes per pixel.
-    # - "svf": ~150 B/px (Rust SvfIntermediate + memmap overhead)
-    # - "solweig": ~400 B/px (timestep with radiation grids, state arrays, etc).
+    # RAM constraint: use available RAM (not total) so tile sizing
+    # automatically accounts for memory already consumed by loaded rasters,
+    # SVF caches, OS, etc.  Fall back to total × fraction if unavailable.
     ram_max_pixels = None
+    avail_ram = _get_available_ram_bytes()
     total_ram = _get_total_ram_bytes()
-    if total_ram is not None:
+    if avail_ram is not None:
+        usable_ram = int(avail_ram * _RAM_FRACTION)
+        ram_max_pixels = usable_ram // ram_bytes_per_pixel
+    elif total_ram is not None:
         usable_ram = int(total_ram * _RAM_FRACTION)
         ram_max_pixels = usable_ram // ram_bytes_per_pixel
 
@@ -217,16 +313,35 @@ def compute_max_tile_side(*, context: str = "solweig") -> int:
     max_pixels = compute_max_tile_pixels(context=context)
     side = max(MIN_TILE_SIZE, int(math.isqrt(max_pixels)))
 
+    # User-configurable hard cap — allows limiting tile size without
+    # patching source code (addresses issue #11 usability feedback).
+    env_cap = os.environ.get("SOLWEIG_MAX_TILE_SIDE")
+    if env_cap is not None:
+        parsed = _parse_env_int("SOLWEIG_MAX_TILE_SIDE", side)
+        cap = max(MIN_TILE_SIZE, parsed)
+        if cap < side:
+            side = cap
+
     # Log once so the user can see what limits are driving tile sizing
     from . import get_gpu_limits
 
     limits = get_gpu_limits()
+    avail_ram = _get_available_ram_bytes()
     total_ram = _get_total_ram_bytes()
     gpu_str = f"{limits['max_buffer_size']:,} bytes" if limits else "N/A"
-    ram_str = f"{total_ram:,} bytes" if total_ram else "N/A"
+    if avail_ram is not None and total_ram is not None:
+        ram_str = f"{avail_ram:,} available of {total_ram:,} total"
+    elif avail_ram is not None:
+        ram_str = f"{avail_ram:,} bytes (available)"
+    elif total_ram is not None:
+        ram_str = f"{total_ram:,} bytes (total; available detection failed)"
+    else:
+        ram_str = "N/A"
+    cap_str = f", SOLWEIG_MAX_TILE_SIDE={env_cap}" if env_cap else ""
     logger.info(
         f"Resource-aware tile sizing (context={context}): "
-        f"GPU max_buffer={gpu_str}, system RAM={ram_str}, max_tile_side={side} px"
+        f"GPU max_buffer={gpu_str}, RAM={ram_str}, "
+        f"max_tile_side={side} px{cap_str}"
     )
 
     _cached_max_tile_side[context] = side
@@ -898,13 +1013,35 @@ def _calculate_tiled(
         f"tile_size={adjusted_tile_size}, buffer={buffer_m:.0f}m ({buffer_pixels}px) from max height {max_height:.1f}m"
     )
 
-    # Initialize output arrays
-    tmrt_out = np.full((rows, cols), np.nan, dtype=np.float32)
-    shadow_out = np.full((rows, cols), np.nan, dtype=np.float32)
-    kdown_out = np.full((rows, cols), np.nan, dtype=np.float32)
-    kup_out = np.full((rows, cols), np.nan, dtype=np.float32)
-    ldown_out = np.full((rows, cols), np.nan, dtype=np.float32)
-    lup_out = np.full((rows, cols), np.nan, dtype=np.float32)
+    # Initialize output arrays.  For large rasters use memory-mapped files
+    # so the OS pages data to disk instead of consuming heap.
+    total_pixels = rows * cols
+    _memmap_tmpdir_st = None
+    if total_pixels > _MEMMAP_PIXEL_THRESHOLD:
+        import tempfile
+
+        _memmap_tmpdir_st = tempfile.TemporaryDirectory(prefix="solweig_tiled_")
+        _mm = Path(_memmap_tmpdir_st.name)
+        logger.info(f"Large single-timestep raster ({total_pixels / 1e6:.1f}M pixels) — using memmap output arrays")
+
+        def _mm_full(name: str) -> np.ndarray:
+            arr = np.memmap(_mm / f"{name}.dat", dtype=np.float32, mode="w+", shape=(rows, cols))
+            arr[:] = np.nan
+            return arr
+
+        tmrt_out = _mm_full("tmrt")
+        shadow_out = _mm_full("shadow")
+        kdown_out = _mm_full("kdown")
+        kup_out = _mm_full("kup")
+        ldown_out = _mm_full("ldown")
+        lup_out = _mm_full("lup")
+    else:
+        tmrt_out = np.full((rows, cols), np.nan, dtype=np.float32)
+        shadow_out = np.full((rows, cols), np.nan, dtype=np.float32)
+        kdown_out = np.full((rows, cols), np.nan, dtype=np.float32)
+        kup_out = np.full((rows, cols), np.nan, dtype=np.float32)
+        ldown_out = np.full((rows, cols), np.nan, dtype=np.float32)
+        lup_out = np.full((rows, cols), np.nan, dtype=np.float32)
 
     # Set up progress reporting
     from .progress import ProgressReporter
@@ -985,17 +1122,36 @@ def _calculate_tiled(
         mean_turnaround_ms = (turnaround_sum / completed) * 1000.0
         logger.info(f"Tiled telemetry: mean_turnaround={mean_turnaround_ms:.1f}ms, max_queue={max_queue}")
 
-    return SolweigResult(
-        tmrt=tmrt_out,
-        shadow=shadow_out,
-        kdown=kdown_out,
-        kup=kup_out,
-        ldown=ldown_out,
-        lup=lup_out,
-        utci=None,
-        pet=None,
-        state=None,
-    )
+    if _memmap_tmpdir_st is not None:
+        # Copy memmaps to regular heap arrays before deleting backing files.
+        # np.array(memmap) returns the memmap itself (subclass of ndarray),
+        # so .copy() is required to break the file reference.
+        result = SolweigResult(
+            tmrt=tmrt_out.copy(),
+            shadow=shadow_out.copy(),
+            kdown=kdown_out.copy(),
+            kup=kup_out.copy(),
+            ldown=ldown_out.copy(),
+            lup=lup_out.copy(),
+            utci=None,
+            pet=None,
+            state=None,
+        )
+        del tmrt_out, shadow_out, kdown_out, kup_out, ldown_out, lup_out
+        _memmap_tmpdir_st.cleanup()
+    else:
+        result = SolweigResult(
+            tmrt=tmrt_out,
+            shadow=shadow_out,
+            kdown=kdown_out,
+            kup=kup_out,
+            ldown=ldown_out,
+            lup=lup_out,
+            utci=None,
+            pet=None,
+            state=None,
+        )
+    return result
 
 
 def _calculate_timeseries_tiled(
@@ -1103,12 +1259,6 @@ def _calculate_timeseries_tiled(
     if effective_outputs:
         requested_outputs |= set(effective_outputs)
 
-    need_shadow = "shadow" in requested_outputs
-    need_kdown = "kdown" in requested_outputs
-    need_kup = "kup" in requested_outputs
-    need_ldown = "ldown" in requested_outputs
-    need_lup = "lup" in requested_outputs
-
     # Fill NaN in surface layers
     surface.fill_nan()
 
@@ -1190,8 +1340,6 @@ def _calculate_timeseries_tiled(
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
-    use_async_output = bool(effective_outputs) and async_output_enabled()
-    _writer = AsyncGeoTiffWriter(output_dir=output_path, surface=surface) if use_async_output else None
 
     from .api import _calculate_single
 
@@ -1208,8 +1356,23 @@ def _calculate_timeseries_tiled(
         f"Tiled runtime: workers={n_workers}, inflight_limit={inflight_limit}, prefetch={effective_prefetch_tiles}"
     )
 
+    # Determine whether to use memory-mapped backing for large rasters.
+    total_pixels = rows * cols
+    use_memmap = total_pixels > _MEMMAP_PIXEL_THRESHOLD
+    _memmap_dir: Path | None = None
+    _memmap_tmpdir = None  # tempfile.TemporaryDirectory handle for cleanup
+    if use_memmap:
+        import tempfile
+
+        _memmap_tmpdir = tempfile.TemporaryDirectory(prefix="solweig_memmap_")
+        _memmap_dir = Path(_memmap_tmpdir.name)
+        logger.info(f"Large raster ({total_pixels / 1e6:.1f}M pixels) — using memory-mapped arrays in {_memmap_dir}")
+
     # Initialize global state
-    state = ThermalState.initial(surface.shape)
+    if use_memmap and _memmap_dir is not None:
+        state = ThermalState.initial_memmap(surface.shape, _memmap_dir)
+    else:
+        state = ThermalState.initial(surface.shape)
     if len(weather_series) >= 2:
         dt0 = weather_series[0].datetime
         dt1 = weather_series[1].datetime
@@ -1224,7 +1387,30 @@ def _calculate_timeseries_tiled(
         heat_thresholds_day=heat_thresholds_day if heat_thresholds_day is not None else [32.0, 38.0],
         heat_thresholds_night=heat_thresholds_night if heat_thresholds_night is not None else [26.0],
         timestep_hours=_timestep_hours,
+        memmap_dir=_memmap_dir,
     )
+
+    # Tiled GeoTIFF writer — writes tiles directly to disk, no full-raster
+    # intermediary needed.  Falls back to None when no per-timestep output
+    # is requested.  Unlike the non-tiled path's AsyncGeoTiffWriter, this
+    # writer is inherently synchronous (windowed writes), so it does not
+    # check async_output_enabled().
+    _tiled_writer: TiledGeoTiffWriter | None = None
+    if effective_outputs:
+        _writer_transform = surface._geotransform if surface._geotransform is not None else None
+        _writer_crs = surface._crs_wkt if surface._crs_wkt is not None else ""
+        _tiled_writer = TiledGeoTiffWriter(
+            output_dir=output_path,
+            rows=rows,
+            cols=cols,
+            transform=_writer_transform,
+            crs_wkt=_writer_crs,
+        )
+
+    # Determine which output arrays the writer needs per tile
+    _writer_output_names: list[str] = list(effective_outputs) if effective_outputs else []
+    _need_utci_output = "utci" in _writer_output_names
+    _need_pet_output = "pet" in _writer_output_names
 
     processed_steps = 0
     total_work = n_steps * n_tiles
@@ -1249,13 +1435,12 @@ def _calculate_timeseries_tiled(
     try:
         with ThreadPoolExecutor(max_workers=n_workers) as executor:
             for t_idx, weather in enumerate(weather_series):
-                # Initialize output arrays for this timestep
-                tmrt_out = np.full((rows, cols), np.nan, dtype=np.float32)
-                shadow_out = np.full((rows, cols), np.nan, dtype=np.float32) if need_shadow else None
-                kdown_out = np.full((rows, cols), np.nan, dtype=np.float32) if need_kdown else None
-                kup_out = np.full((rows, cols), np.nan, dtype=np.float32) if need_kup else None
-                ldown_out = np.full((rows, cols), np.nan, dtype=np.float32) if need_ldown else None
-                lup_out = np.full((rows, cols), np.nan, dtype=np.float32) if need_lup else None
+                # Begin tile-aware accumulation for this timestep — no
+                # full-raster output arrays are allocated.
+                _accumulator.begin_timestep()
+
+                if _tiled_writer is not None:
+                    _tiled_writer.open_timestep(weather.datetime, _writer_output_names)
 
                 # Refresh preallocated tile states from the current global state.
                 for tile_idx, tile in enumerate(tiles):
@@ -1313,17 +1498,43 @@ def _calculate_timeseries_tiled(
                             _t_ffi = time.perf_counter() - _t0
                             _t1 = time.perf_counter()
 
-                        # Write core results to global arrays (non-overlapping write_slice)
-                        _write_tile_result(
-                            tile_result,
-                            tile,
-                            tmrt_out,
-                            shadow_out,
-                            kdown_out,
-                            kup_out,
-                            ldown_out,
-                            lup_out,
+                        # Feed tile directly into accumulator — no full-raster
+                        # intermediary.  Returns UTCI core array for writer.
+                        utci_core = _accumulator.update_tile(
+                            tile_result.tmrt,
+                            tile_result.shadow,
+                            tile.write_slice,
+                            tile.core_slice,
+                            weather,
+                            compute_utci_grid,
                         )
+
+                        # Write tile results directly to GeoTIFF files
+                        if _tiled_writer is not None:
+                            core = tile.core_slice
+                            tile_arrays: dict[str, np.ndarray] = {}
+                            if "tmrt" in _writer_output_names and tile_result.tmrt is not None:
+                                tile_arrays["tmrt"] = tile_result.tmrt[core]
+                            if "shadow" in _writer_output_names and tile_result.shadow is not None:
+                                tile_arrays["shadow"] = tile_result.shadow[core]
+                            if "kdown" in _writer_output_names and tile_result.kdown is not None:
+                                tile_arrays["kdown"] = tile_result.kdown[core]
+                            if "kup" in _writer_output_names and tile_result.kup is not None:
+                                tile_arrays["kup"] = tile_result.kup[core]
+                            if "ldown" in _writer_output_names and tile_result.ldown is not None:
+                                tile_arrays["ldown"] = tile_result.ldown[core]
+                            if "lup" in _writer_output_names and tile_result.lup is not None:
+                                tile_arrays["lup"] = tile_result.lup[core]
+                            if _need_utci_output and utci_core is not None:
+                                tile_arrays["utci"] = utci_core  # already core-sliced by update_tile()
+                            if _need_pet_output and tile_result.tmrt is not None:
+                                from .postprocess import compute_pet_grid
+
+                                pet_core = compute_pet_grid(
+                                    tile_result.tmrt[core], weather.ta, weather.rh, weather.ws, effective_human
+                                )
+                                tile_arrays["pet"] = pet_core
+                            _tiled_writer.write_tile(tile.write_slice, tile_arrays)
 
                         # Merge tile state back to global state (non-overlapping write_slice)
                         if tile_result.state is not None:
@@ -1357,56 +1568,39 @@ def _calculate_timeseries_tiled(
                 rate = (t_idx + 1) / elapsed if elapsed > 0 else 0
                 logger.info(f"  Timestep {t_idx + 1}/{n_steps} complete ({rate:.2f} steps/s)")
 
-                # Create result for this timestep
-                result = SolweigResult(
-                    tmrt=tmrt_out,
-                    shadow=shadow_out,
-                    kdown=kdown_out,
-                    kup=kup_out,
-                    ldown=ldown_out,
-                    lup=lup_out,
-                    utci=None,
-                    pet=None,
-                    state=None,  # State managed externally
-                )
+                # Finalise per-timestep scalar tracking
+                _accumulator.commit_timestep(weather)
 
-                # Update grid accumulator (before potential array release)
-                _accumulator.update(result, weather, compute_utci_fn=compute_utci_grid)
+                if _tiled_writer is not None:
+                    _tiled_writer.close_timestep()
 
-                from ._orchestration import process_timestep_result
-
-                process_timestep_result(
-                    result,
-                    weather,
-                    effective_outputs,
-                    effective_human,
-                    _writer,
-                    output_dir,
-                    surface=surface,
-                )
                 processed_steps += 1
     finally:
         if _progress is not None:
             _progress.close()
-        if _writer is not None:
-            _writer.close()
+        if _tiled_writer is not None:
+            _tiled_writer.close()
 
-    # Finalize summary
+    # Finalize summary — must happen while memmap backing files still exist.
     from ._orchestration import finalize_summary
 
-    return finalize_summary(
-        _accumulator,
-        surface,
-        processed_steps=processed_steps,
-        start_time=start_time,
-        location=location,
-        weather_series=weather_series,
-        human=effective_human,
-        physics=effective_physics,
-        materials=effective_materials,
-        use_anisotropic_sky=effective_aniso,
-        conifer=conifer,
-        output_dir=output_dir,
-        outputs=effective_outputs,
-        label="(tiled)",
-    )
+    try:
+        return finalize_summary(
+            _accumulator,
+            surface,
+            processed_steps=processed_steps,
+            start_time=start_time,
+            location=location,
+            weather_series=weather_series,
+            human=effective_human,
+            physics=effective_physics,
+            materials=effective_materials,
+            use_anisotropic_sky=effective_aniso,
+            conifer=conifer,
+            output_dir=output_dir,
+            outputs=effective_outputs,
+            label="(tiled)",
+        )
+    finally:
+        if _memmap_tmpdir is not None:
+            _memmap_tmpdir.cleanup()

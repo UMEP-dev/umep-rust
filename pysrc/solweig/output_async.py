@@ -141,3 +141,71 @@ def _write_outputs(
             crs_wkt=crs_wkt,
             no_data_val=np.nan,
         )
+
+
+class TiledGeoTiffWriter:
+    """Writes per-timestep GeoTIFFs tile-by-tile using windowed writes.
+
+    Instead of assembling a full-raster array in memory, this writer
+    creates empty GeoTIFF files at full dimensions and writes each tile's
+    core region directly.  Only one tile's worth of data is in memory at
+    a time.
+    """
+
+    def __init__(
+        self,
+        output_dir: str | Path,
+        rows: int,
+        cols: int,
+        *,
+        transform: list[float] | None = None,
+        crs_wkt: str = "",
+    ) -> None:
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.rows = rows
+        self.cols = cols
+        self.transform = transform if transform is not None else [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
+        self.crs_wkt = crs_wkt
+        self._open_files: dict[str, Path] = {}
+
+    def open_timestep(self, timestamp: dt, output_names: list[str]) -> None:
+        """Create empty GeoTIFFs for the current timestep."""
+        from . import io
+
+        ts_str = timestamp.strftime("%Y%m%d_%H%M")
+        self._open_files = {}
+        for name in output_names:
+            comp_dir = self.output_dir / name
+            comp_dir.mkdir(parents=True, exist_ok=True)
+            filepath = comp_dir / f"{name}_{ts_str}.tif"
+            io.create_empty_raster(
+                path_str=filepath,
+                rows=self.rows,
+                cols=self.cols,
+                transform=self.transform,
+                crs_wkt=self.crs_wkt,
+                dtype=np.float32,
+                nodata=np.nan,
+            )
+            self._open_files[name] = filepath
+
+    def write_tile(self, write_slice: tuple[slice, slice], arrays: dict[str, NDArray[np.floating]]) -> None:
+        """Write tile core data to the open GeoTIFFs at the correct window."""
+        from . import io
+
+        for name, data in arrays.items():
+            if name in self._open_files:
+                io.write_raster_window(
+                    path_str=self._open_files[name],
+                    data=data,
+                    window=write_slice,
+                )
+
+    def close_timestep(self) -> None:
+        """Mark the current timestep's files as complete."""
+        self._open_files = {}
+
+    def close(self) -> None:
+        """Clean up (no-op; files are already closed after each write)."""
+        self._open_files = {}

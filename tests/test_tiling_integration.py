@@ -12,6 +12,7 @@ from conftest import make_mock_svf, read_timestep_geotiff
 from solweig import (
     Location,
     PrecomputedData,
+    SolweigResult,
     SurfaceData,
     Weather,
     calculate,
@@ -556,6 +557,34 @@ class TestTimeseriesTiledIntegration:
                 assert diff.mean() < 0.01, f"Timestep {i}: mean Tmrt diff {diff.mean():.2f}deg C too large"
                 assert diff.max() < 0.1, f"Timestep {i}: max Tmrt diff {diff.max():.2f}deg C too large"
 
+    def test_timeseries_tiled_writes_output_with_async_disabled(self, small_surface, location, weather_pair, tmp_path):
+        """Tiled timeseries must write per-timestep GeoTIFFs even with SOLWEIG_ASYNC_OUTPUT=0."""
+        import os
+
+        from solweig.tiling import _calculate_timeseries_tiled
+
+        old_val = os.environ.get("SOLWEIG_ASYNC_OUTPUT")
+        os.environ["SOLWEIG_ASYNC_OUTPUT"] = "0"
+        try:
+            _calculate_timeseries_tiled(
+                surface=small_surface,
+                weather_series=weather_pair,
+                location=location,
+                output_dir=tmp_path,
+                outputs=["tmrt"],
+            )
+        finally:
+            if old_val is None:
+                os.environ.pop("SOLWEIG_ASYNC_OUTPUT", None)
+            else:
+                os.environ["SOLWEIG_ASYNC_OUTPUT"] = old_val
+
+        # Verify output files were actually written
+        for i in range(len(weather_pair)):
+            tmrt = read_timestep_geotiff(tmp_path, "tmrt", i)
+            assert tmrt is not None, f"No tmrt GeoTIFF for timestep {i} with SOLWEIG_ASYNC_OUTPUT=0"
+            assert np.isfinite(tmrt).sum() > 0
+
     def test_timeseries_tiled_state_accumulates(self, small_surface, location, weather_pair, tmp_path):
         """Thermal state should evolve across timesteps in tiled mode."""
         from solweig.tiling import _calculate_timeseries_tiled
@@ -920,3 +949,429 @@ class TestHeightAwareBuffer:
             assert captured["buffer_pixels"] == expected_px, (
                 f"Expected {expected_px}px buffer (capped at {cap}m), got {captured['buffer_pixels']}px"
             )
+
+
+class TestTiledAccumulatorParity:
+    """Verify GridAccumulator.update_tile() produces identical results to update().
+
+    This is the core correctness gate for the memory-efficient tiled path:
+    accumulating per-tile must yield the same grids as accumulating the whole
+    raster at once.
+    """
+
+    @pytest.fixture
+    def setup(self):
+        """Create a 100x100 raster with known values and 4 tiles."""
+        from solweig.models.state import TileSpec
+        from solweig.postprocess import compute_utci_grid
+
+        np.random.seed(42)
+        rows, cols = 100, 100
+        shape = (rows, cols)
+
+        tmrt = np.random.uniform(20.0, 60.0, shape).astype(np.float32)
+        # Sprinkle some NaNs to exercise the valid mask
+        tmrt[0:5, :] = np.nan
+        tmrt[50:55, 30:40] = np.nan
+
+        shadow = np.random.uniform(0.0, 1.0, shape).astype(np.float32)
+        shadow[0:5, :] = np.nan
+
+        weather_day = Weather(
+            datetime=datetime(2024, 7, 15, 12, 0),
+            ta=28.0,
+            rh=45.0,
+            global_rad=850.0,
+            ws=2.0,
+        )
+        weather_night = Weather(
+            datetime=datetime(2024, 7, 15, 22, 0),
+            ta=18.0,
+            rh=70.0,
+            global_rad=0.0,
+            ws=1.0,
+        )
+        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
+        weather_day.compute_derived(location)
+        weather_night.compute_derived(location)
+
+        # 4 tiles: 2x2, tile_size=50, no overlap for simplicity
+        tiles = [
+            TileSpec(
+                row_start=r * 50,
+                row_end=(r + 1) * 50,
+                col_start=c * 50,
+                col_end=(c + 1) * 50,
+                row_start_full=r * 50,
+                row_end_full=(r + 1) * 50,
+                col_start_full=c * 50,
+                col_end_full=(c + 1) * 50,
+                overlap_top=0,
+                overlap_bottom=0,
+                overlap_left=0,
+                overlap_right=0,
+            )
+            for r in range(2)
+            for c in range(2)
+        ]
+
+        return {
+            "shape": shape,
+            "tmrt": tmrt,
+            "shadow": shadow,
+            "weather_day": weather_day,
+            "weather_night": weather_night,
+            "tiles": tiles,
+            "compute_utci_fn": compute_utci_grid,
+        }
+
+    def _run_reference(self, setup, weathers):
+        """Run the reference (non-tiled) path."""
+        from solweig.summary import GridAccumulator
+
+        acc = GridAccumulator(
+            shape=setup["shape"],
+            heat_thresholds_day=[32.0, 38.0],
+            heat_thresholds_night=[26.0],
+            timestep_hours=1.0,
+        )
+        for w in weathers:
+            result = SolweigResult(
+                tmrt=setup["tmrt"].copy(),
+                shadow=setup["shadow"].copy(),
+                kdown=None,
+                kup=None,
+                ldown=None,
+                lup=None,
+                utci=None,
+                pet=None,
+                state=None,
+            )
+            acc.update(result, w, compute_utci_fn=setup["compute_utci_fn"])
+        return acc
+
+    def _run_tiled(self, setup, weathers):
+        """Run the tile-aware path."""
+        from solweig.summary import GridAccumulator
+
+        acc = GridAccumulator(
+            shape=setup["shape"],
+            heat_thresholds_day=[32.0, 38.0],
+            heat_thresholds_night=[26.0],
+            timestep_hours=1.0,
+        )
+        for w in weathers:
+            acc.begin_timestep()
+            for tile in setup["tiles"]:
+                # Tile-sized arrays (identical to full since overlap=0)
+                tile_tmrt = setup["tmrt"][tile.read_slice]
+                tile_shadow = setup["shadow"][tile.read_slice]
+                acc.update_tile(
+                    tile_tmrt,
+                    tile_shadow,
+                    tile.write_slice,
+                    tile.core_slice,
+                    w,
+                    setup["compute_utci_fn"],
+                )
+            acc.commit_timestep(w)
+        return acc
+
+    def test_grid_accumulators_match_exactly(self, setup):
+        """All internal grid accumulators must be identical between paths."""
+        weathers = [setup["weather_day"], setup["weather_night"]]
+        ref = self._run_reference(setup, weathers)
+        tiled = self._run_tiled(setup, weathers)
+
+        # Compare all grid accumulators
+        grid_attrs = [
+            "_tmrt_sum",
+            "_tmrt_count",
+            "_tmrt_max",
+            "_tmrt_min",
+            "_tmrt_day_sum",
+            "_tmrt_day_count",
+            "_tmrt_night_sum",
+            "_tmrt_night_count",
+            "_utci_sum",
+            "_utci_count",
+            "_utci_max",
+            "_utci_min",
+            "_utci_day_sum",
+            "_utci_day_count",
+            "_utci_night_sum",
+            "_utci_night_count",
+            "_sun_hours",
+            "_shade_hours",
+        ]
+        for attr in grid_attrs:
+            ref_arr = getattr(ref, attr)
+            tiled_arr = getattr(tiled, attr)
+            np.testing.assert_array_equal(
+                ref_arr,
+                tiled_arr,
+                err_msg=f"GridAccumulator.{attr} differs between update() and update_tile()",
+            )
+
+        # UTCI threshold exceedance
+        for threshold in ref._utci_hours_above:
+            np.testing.assert_array_equal(
+                ref._utci_hours_above[threshold],
+                tiled._utci_hours_above[threshold],
+                err_msg=f"UTCI hours above {threshold} differs",
+            )
+
+    def test_scalar_accumulators_match(self, setup):
+        """Per-timestep scalar timeseries must match between paths."""
+        weathers = [setup["weather_day"], setup["weather_night"]]
+        ref = self._run_reference(setup, weathers)
+        tiled = self._run_tiled(setup, weathers)
+
+        assert ref._n_timesteps == tiled._n_timesteps
+        assert ref._n_daytime == tiled._n_daytime
+        assert ref._n_nighttime == tiled._n_nighttime
+        assert ref._ts_datetime == tiled._ts_datetime
+        assert ref._ts_ta == tiled._ts_ta
+        assert ref._ts_is_daytime == tiled._ts_is_daytime
+
+        # Spatial means may differ in the last few decimal places due to
+        # summation order (tile-by-tile vs whole-array).  Use rtol.
+        for attr in ["_ts_tmrt_mean", "_ts_utci_mean", "_ts_sun_fraction"]:
+            ref_vals = getattr(ref, attr)
+            tiled_vals = getattr(tiled, attr)
+            for i, (r, t) in enumerate(zip(ref_vals, tiled_vals, strict=True)):
+                if np.isnan(r) and np.isnan(t):
+                    continue
+                assert abs(r - t) < 1e-4, f"{attr}[{i}] differs: ref={r}, tiled={t} (diff={abs(r - t):.2e})"
+
+    def test_finalized_summaries_match(self, setup):
+        """Final TimeseriesSummary grids must match."""
+        weathers = [setup["weather_day"], setup["weather_night"]]
+        ref = self._run_reference(setup, weathers).finalize()
+        tiled = self._run_tiled(setup, weathers).finalize()
+
+        for attr in [
+            "tmrt_mean",
+            "tmrt_max",
+            "tmrt_min",
+            "utci_mean",
+            "utci_max",
+            "utci_min",
+            "sun_hours",
+            "shade_hours",
+        ]:
+            ref_arr = getattr(ref, attr)
+            tiled_arr = getattr(tiled, attr)
+            both_valid = np.isfinite(ref_arr) & np.isfinite(tiled_arr)
+            if both_valid.sum() > 0:
+                np.testing.assert_allclose(
+                    tiled_arr[both_valid],
+                    ref_arr[both_valid],
+                    rtol=1e-5,
+                    atol=1e-5,
+                    err_msg=f"TimeseriesSummary.{attr} differs",
+                )
+
+    def test_memmap_accumulator_matches_inmemory(self, setup, tmp_path):
+        """GridAccumulator with memmap backing must produce identical results."""
+        from solweig.summary import GridAccumulator
+
+        weathers = [setup["weather_day"]]
+        ref = self._run_tiled(setup, weathers)
+
+        # Memmap-backed
+        acc = GridAccumulator(
+            shape=setup["shape"],
+            heat_thresholds_day=[32.0, 38.0],
+            heat_thresholds_night=[26.0],
+            timestep_hours=1.0,
+            memmap_dir=tmp_path,
+        )
+        for w in weathers:
+            acc.begin_timestep()
+            for tile in setup["tiles"]:
+                acc.update_tile(
+                    setup["tmrt"][tile.read_slice],
+                    setup["shadow"][tile.read_slice],
+                    tile.write_slice,
+                    tile.core_slice,
+                    w,
+                    setup["compute_utci_fn"],
+                )
+            acc.commit_timestep(w)
+
+        np.testing.assert_array_equal(ref._tmrt_sum, acc._tmrt_sum)
+        np.testing.assert_array_equal(ref._utci_sum, acc._utci_sum)
+        np.testing.assert_array_equal(ref._sun_hours, acc._sun_hours)
+
+
+class TestThermalStateMemmapParity:
+    """Verify ThermalState.initial_memmap() behaves identically to initial()."""
+
+    def test_memmap_state_shape_and_dtype(self, tmp_path):
+        shape = (50, 50)
+        state = ThermalState.initial_memmap(shape, tmp_path)
+        assert state.tgmap1.shape == shape
+        assert state.tgmap1.dtype == np.float32
+        assert state.tgout1.shape == shape
+
+    def test_memmap_state_zeros(self, tmp_path):
+        shape = (50, 50)
+        state = ThermalState.initial_memmap(shape, tmp_path)
+        np.testing.assert_array_equal(state.tgmap1, 0.0)
+        np.testing.assert_array_equal(state.tgout1, 0.0)
+
+    def test_memmap_state_matches_initial(self, tmp_path):
+        shape = (30, 40)
+        ref = ThermalState.initial(shape)
+        mm = ThermalState.initial_memmap(shape, tmp_path)
+        for attr in ["tgmap1", "tgmap1_e", "tgmap1_s", "tgmap1_w", "tgmap1_n", "tgout1"]:
+            np.testing.assert_array_equal(getattr(ref, attr), getattr(mm, attr))
+        assert mm.firstdaytime == ref.firstdaytime
+        assert mm.timeadd == ref.timeadd
+
+    def test_memmap_state_is_writable(self, tmp_path):
+        shape = (20, 20)
+        state = ThermalState.initial_memmap(shape, tmp_path)
+        state.tgmap1[5, 5] = 42.0
+        assert state.tgmap1[5, 5] == 42.0
+
+
+class TestTiledMemoryRegression:
+    """Verify the tiled timeseries path does not allocate full-raster output arrays.
+
+    This is the primary regression gate: the fix for issue #11 eliminates
+    per-timestep np.full((rows, cols), ...) allocations in the tiled loop.
+    We use tracemalloc to detect any allocation proportional to full-raster
+    size within the critical section.
+    """
+
+    def test_no_full_raster_output_arrays_in_tiled_timeseries(self, tmp_path):
+        """Peak memory during tiled timeseries must NOT grow with raster size.
+
+        Strategy: run the tiled timeseries with a mock _calculate_single that
+        returns tile-shaped results.  Track allocations with tracemalloc.
+        Compare peak allocation of a 200x200 raster (4 tiles) vs a 400x400
+        raster (16 tiles).  Peak should be proportional to tile size, not
+        raster size.
+        """
+        import tracemalloc
+
+        from solweig.tiling import _calculate_timeseries_tiled
+
+        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
+        weather_pair = [
+            Weather(datetime=datetime(2024, 7, 15, 11, 0), ta=26.0, rh=50.0, global_rad=750.0, ws=2.0),
+            Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0),
+        ]
+
+        def _run_tiled(size):
+            dsm = np.ones((size, size), dtype=np.float32) * 5.0
+            dsm[size // 4 : size // 4 + 10, size // 4 : size // 4 + 10] = 10.0
+            surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
+
+            # Use a mock _calculate_single that returns tile-shaped arrays
+            # to isolate the orchestration overhead from Rust compute.
+            def _fake_calculate(**kwargs):
+                shape = kwargs["surface"].dsm.shape
+                return SolweigResult(
+                    tmrt=np.full(shape, 40.0, dtype=np.float32),
+                    shadow=np.full(shape, 0.5, dtype=np.float32),
+                    kdown=None,
+                    kup=None,
+                    ldown=None,
+                    lup=None,
+                    utci=None,
+                    pet=None,
+                    state=None,
+                )
+
+            import unittest.mock
+
+            tracemalloc.start()
+            snapshot_before = tracemalloc.take_snapshot()
+
+            with unittest.mock.patch("solweig.api._calculate_single", _fake_calculate):
+                _calculate_timeseries_tiled(
+                    surface=surface,
+                    weather_series=weather_pair,
+                    location=location,
+                    output_dir=tmp_path / f"mem_{size}",
+                    tile_workers=1,
+                    prefetch_tiles=False,
+                )
+
+            snapshot_after = tracemalloc.take_snapshot()
+            tracemalloc.stop()
+
+            # Sum allocated bytes from tiling.py and summary.py
+            stats = snapshot_after.compare_to(snapshot_before, "filename")
+            tiling_bytes = sum(
+                s.size_diff
+                for s in stats
+                if ("tiling.py" in str(s.traceback) or "summary.py" in str(s.traceback)) and s.size_diff > 0
+            )
+            return tiling_bytes
+
+        small_bytes = _run_tiled(200)
+        large_bytes = _run_tiled(400)
+
+        # 400x400 is 4x the pixels of 200x200.  If the old code allocated
+        # full-raster arrays per timestep, large_bytes would be ~4x small_bytes.
+        # With the fix, both should be similar (proportional to tile size).
+        # Allow a generous 2.5x ratio to account for accumulator resizing —
+        # the key assertion is that it's NOT ~4x.
+        ratio = large_bytes / max(small_bytes, 1)
+        assert ratio < 2.5, (
+            f"Memory scaled {ratio:.1f}x when raster size quadrupled. "
+            f"Expected <2.5x (small={small_bytes / 1024:.0f}KB, "
+            f"large={large_bytes / 1024:.0f}KB). "
+            f"This suggests full-raster arrays are still being allocated."
+        )
+
+    def test_memmap_threshold_activates(self, tmp_path):
+        """Verify memmap is used when pixel count exceeds the threshold."""
+        from unittest.mock import patch
+
+        from solweig.tiling import _calculate_timeseries_tiled
+
+        # Use a small raster but lower the threshold so memmap activates
+        size = 100
+        dsm = np.ones((size, size), dtype=np.float32) * 5.0
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
+        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
+        weather = [
+            Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0),
+        ]
+
+        def _fake_calculate(**kwargs):
+            shape = kwargs["surface"].dsm.shape
+            return SolweigResult(
+                tmrt=np.full(shape, 40.0, dtype=np.float32),
+                shadow=np.full(shape, 0.5, dtype=np.float32),
+                kdown=None,
+                kup=None,
+                ldown=None,
+                lup=None,
+                utci=None,
+                pet=None,
+                state=None,
+            )
+
+        # Set threshold to 1 pixel so memmap always activates
+        with (
+            patch("solweig.tiling._MEMMAP_PIXEL_THRESHOLD", 1),
+            patch("solweig.api._calculate_single", _fake_calculate),
+        ):
+            summary = _calculate_timeseries_tiled(
+                surface=surface,
+                weather_series=weather,
+                location=location,
+                output_dir=tmp_path,
+            )
+
+        # Summary should still be valid
+        assert summary is not None
+        assert summary.tmrt_mean is not None
+        valid = np.isfinite(summary.tmrt_mean)
+        assert valid.sum() > 0
