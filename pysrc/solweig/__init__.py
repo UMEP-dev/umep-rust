@@ -164,11 +164,13 @@ def disable_gpu() -> None:
 
 def get_gpu_limits() -> dict[str, int | str] | None:
     """
-    Query real GPU buffer limits from the wgpu adapter.
+    Query GPU limits from the wgpu adapter.
 
     Returns a dict with keys:
-      - ``max_buffer_size``: int — largest single GPU buffer in bytes
+      - ``max_buffer_size``: int — raw adapter-reported maximum buffer size in bytes
       - ``backend``: str — GPU backend name (``"Metal"``, ``"Vulkan"``, ``"Dx12"``, ``"Gl"``, etc.)
+      - ``gpu_memory_budget``: int — resolved GPU memory budget in bytes
+        (only present when real VRAM is detectable via DXGI/sysfs/Metal)
 
     Returns ``None`` if GPU is not available or not compiled in.
     Lazily initialises the GPU context on first call.

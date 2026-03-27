@@ -58,8 +58,11 @@ MAX_TILE_SIZE = _FALLBACK_MAX_TILE_SIZE
 # Resource estimation constants — overridable via environment variables so
 # users with unusual hardware can tune without patching source code.
 #
-#   SOLWEIG_RAM_FRACTION   — fraction of physical RAM for tile arrays (default 0.50)
-#   SOLWEIG_MAX_TILE_SIDE  — hard cap on tile side in pixels (default: unlimited)
+#   SOLWEIG_RAM_FRACTION    — fraction of physical RAM for tile arrays (default 0.50)
+#   SOLWEIG_GPU_HEADROOM    — fraction of GPU limit/budget to use (default 0.80)
+#   SOLWEIG_GPU_BUDGET_BYTES — conservative GPU budget fallback when the Rust
+#                              layer cannot determine real VRAM (default 3 GiB)
+#   SOLWEIG_MAX_TILE_SIDE   — hard cap on tile side in pixels (default: unlimited)
 #   SOLWEIG_MEMMAP_THRESHOLD — pixel count above which memmap is used (default 50M)
 #
 def _parse_env_float(key: str, default: float) -> float:
@@ -90,38 +93,32 @@ def _parse_env_int(key: str, default: int) -> int:
 
 _RAM_FRACTION = _parse_env_float("SOLWEIG_RAM_FRACTION", 0.50)
 
-# GPU memory constants — two sets per context, derived from
-# rust/src/gpu/shadow_gpu.rs allocate_buffers() + init_svf_accumulation().
+# GPU memory constants — bytes per pixel for ALL wgpu buffers alive
+# simultaneously during a given processing stage.  The Rust layer
+# provides a resolved ``gpu_memory_budget`` (real VRAM when detectable,
+# else a sane heuristic); Python divides that budget by these BPP values
+# to determine tile sizes.
 #
-# *_TOTAL: aggregate footprint of ALL wgpu buffers alive simultaneously.
-#          Used when max_buffer_size ≈ total GPU memory (Metal/DX12).
-# *_SINGLE: largest single buffer per pixel.
-#           Used when max_buffer_size is a per-buffer cap (Vulkan/GL).
+# Timestep context ("solweig"): shadow + GVF run together
+#   Shadow (shadow_gpu.rs allocate_buffers):
+#     17 f32 storage + 10× staging = 27 × 4 = 108, ~120 with overhead
+#   GVF (gvf_gpu.rs ensure_buffers_locked, 18 azimuths):
+#     lup/albshadow/sunwall (12) + blocking_distance 18×4 (72)
+#     + facesh 18×4 (72) + outputs 10×4 (40) + staging 10×4 (40) = 236
+#   Combined: 120 + 236 = 356, rounded to 360
+_TIMESTEP_GPU_BPP = 360
 #
-# Shadow context ("solweig" timestep): allocate_buffers() only
-#   16 f32 storage buffers (64 B/px) + staging 10× (40 B/px) + overhead/headroom
-_SHADOW_GPU_TOTAL_BPP = 120
-_SHADOW_GPU_SINGLE_BPP = 40  # staging_buffer = 10 × buffer_size
+# SVF context: shadow + SVF accumulation + bitpack
+#   shadow (108) + svf_data 15× (60) + svf_staging (60)
+#   + bitpack 3×20 output (60) + bitpack staging (60) = ~348, rounded to 384
+_SVF_GPU_BPP = 384
 #
-# SVF context: allocate_buffers() + init_svf_accumulation()
-#   shadow (104) + svf_data 15× (60) + svf_staging (60)
-#   + bitpack 3×20 output (60) + bitpack staging (60)
-_SVF_GPU_TOTAL_BPP = 384
-_SVF_GPU_SINGLE_BPP = 60  # svf_data_buffer = 15 × buffer_size
-#
-# SVF CPU/RAM: Rust SvfIntermediate::zeros() = 15 f32 arrays (60 B/px)
-# + 3 bitpacked u8 arrays at 20 B each (60 B/px) + memmap overhead (~30 B/px).
-_SVF_RAM_BYTES_PER_PIXEL = 150
+# RAM bytes per pixel (Python-side peak allocation)
+_TIMESTEP_RAM_BPP = 400  # benchmarked ~370 for full timestep pipeline
+_SVF_RAM_BPP = 150  # Rust SvfIntermediate + bitpack + memmap overhead
 
-_SOLWEIG_BYTES_PER_PIXEL = 400  # Peak Python-side bytes per pixel (benchmarked ~370)
-_GPU_HEADROOM = 0.80  # Use 80% of GPU max buffer to leave headroom
-
-# Backends where max_buffer_size ≈ total GPU/unified memory.
-# On these backends we constrain by total allocation across all buffers.
-# On others (Vulkan, GL) max_buffer_size is a per-buffer cap, so we
-# constrain by the largest single buffer and rely on init_svf_accumulation()
-# falling back to CPU if total VRAM is exceeded.
-_TOTAL_MEMORY_BACKENDS = {"Metal", "Dx12"}
+_GPU_HEADROOM = _parse_env_float("SOLWEIG_GPU_HEADROOM", 0.80)
+_GPU_BUDGET_BYTES = _parse_env_int("SOLWEIG_GPU_BUDGET_BYTES", 3 * 1024**3)
 _MAX_AUTO_TILE_WORKERS = min(os.cpu_count() or 4, 16)  # Scale with CPU count, cap at 16
 
 # When total pixels exceed this threshold, use memory-mapped files for
@@ -233,61 +230,70 @@ def _get_available_ram_bytes() -> int | None:
     return None
 
 
+def _get_gpu_memory_budget() -> int | None:
+    """
+    Resolved GPU memory budget in bytes, or ``None``.
+
+    Prefers the platform-specific ``gpu_memory_budget`` from the Rust layer
+    (DXGI on Windows, sysfs on Linux, Metal passthrough).  When the Rust
+    layer cannot determine real VRAM it returns no ``gpu_memory_budget``
+    key, and we fall back to the conservative ``_GPU_BUDGET_BYTES``.
+    """
+    from . import get_gpu_limits
+
+    limits = get_gpu_limits()
+    if limits is None:
+        return None
+    budget = limits.get("gpu_memory_budget")
+    if budget is not None:
+        return int(budget)
+    # Rust couldn't determine real VRAM — use conservative default
+    return _GPU_BUDGET_BYTES
+
+
+def _get_usable_ram() -> int | None:
+    """Usable RAM in bytes for tile arrays (available or total × fraction)."""
+    ram = _get_available_ram_bytes()
+    if ram is None:
+        ram = _get_total_ram_bytes()
+    if ram is not None:
+        return int(ram * _RAM_FRACTION)
+    return None
+
+
 def compute_max_tile_pixels(*, context: str = "solweig") -> int:
     """
     Compute the maximum number of pixels that fit in a single tile,
-    based on real GPU buffer limits and system RAM.
+    based on GPU memory budget and system RAM.
 
     Args:
-        context: ``"solweig"`` for timestep tiling, or ``"svf"`` for SVF-only
-            tiling. Affects the bytes-per-pixel estimate used for the RAM
-            constraint.
+        context: ``"solweig"`` for timestep tiling (shadow + GVF), or
+            ``"svf"`` for SVF preprocessing. Affects the bytes-per-pixel
+            estimate.
 
     Returns:
         Maximum pixel count for a tile (rows * cols).
     """
-    from . import get_gpu_limits
-
     if context == "svf":
-        ram_bytes_per_pixel = _SVF_RAM_BYTES_PER_PIXEL
-        gpu_total_bpp = _SVF_GPU_TOTAL_BPP
-        gpu_single_bpp = _SVF_GPU_SINGLE_BPP
+        gpu_bpp = _SVF_GPU_BPP
+        ram_bpp = _SVF_RAM_BPP
     else:
-        ram_bytes_per_pixel = _SOLWEIG_BYTES_PER_PIXEL
-        gpu_total_bpp = _SHADOW_GPU_TOTAL_BPP
-        gpu_single_bpp = _SHADOW_GPU_SINGLE_BPP
+        gpu_bpp = _TIMESTEP_GPU_BPP
+        ram_bpp = _TIMESTEP_RAM_BPP
 
-    # GPU constraint: total GPU allocation for all buffers must fit in memory.
-    # On Metal (Apple Silicon), max_buffer_size ≈ total GPU/unified memory,
-    # so this effectively constrains the aggregate footprint per tile.
-    # - "solweig": shadow buffers only (~104 B/px)
-    # - "svf": shadow + SVF accumulation + bitpack (~344 B/px with veg)
+    # GPU constraint: budget / bpp
     gpu_max_pixels = None
-    limits = get_gpu_limits()
-    if limits is not None:
-        max_buf = limits["max_buffer_size"]
-        backend = str(limits.get("backend", ""))
-        # Metal/DX12 backends generally report max_buffer_size close to total
-        # GPU/unified memory, so constrain by aggregate per-tile working set.
-        # Other backends may expose per-buffer caps; for them use largest single
-        # buffer estimate.
-        bpp = gpu_total_bpp if backend in _TOTAL_MEMORY_BACKENDS else gpu_single_bpp
-        gpu_max_pixels = int(int(max_buf) * _GPU_HEADROOM) // bpp
+    budget = _get_gpu_memory_budget()
+    if budget is not None:
+        gpu_max_pixels = int(budget * _GPU_HEADROOM) // gpu_bpp
 
-    # RAM constraint: use available RAM (not total) so tile sizing
-    # automatically accounts for memory already consumed by loaded rasters,
-    # SVF caches, OS, etc.  Fall back to total × fraction if unavailable.
+    # RAM constraint
     ram_max_pixels = None
-    avail_ram = _get_available_ram_bytes()
-    total_ram = _get_total_ram_bytes()
-    if avail_ram is not None:
-        usable_ram = int(avail_ram * _RAM_FRACTION)
-        ram_max_pixels = usable_ram // ram_bytes_per_pixel
-    elif total_ram is not None:
-        usable_ram = int(total_ram * _RAM_FRACTION)
-        ram_max_pixels = usable_ram // ram_bytes_per_pixel
+    usable_ram = _get_usable_ram()
+    if usable_ram is not None:
+        ram_max_pixels = usable_ram // ram_bpp
 
-    # Use the tighter of the two constraints
+    # Tightest constraint wins
     candidates = [c for c in [gpu_max_pixels, ram_max_pixels] if c is not None]
     if candidates:
         return max(MIN_TILE_SIZE**2, min(candidates))
@@ -305,8 +311,6 @@ def compute_max_tile_side(*, context: str = "solweig") -> int:
     Returns:
         Maximum tile side in pixels (at least ``MIN_TILE_SIZE``).
     """
-    import math
-
     if context in _cached_max_tile_side:
         return _cached_max_tile_side[context]
 
@@ -322,13 +326,20 @@ def compute_max_tile_side(*, context: str = "solweig") -> int:
         if cap < side:
             side = cap
 
-    # Log once so the user can see what limits are driving tile sizing
-    from . import get_gpu_limits
+    # Log once per context
+    budget = _get_gpu_memory_budget()
+    if budget is not None:
+        from . import get_gpu_limits
 
-    limits = get_gpu_limits()
+        limits = get_gpu_limits()
+        assert limits is not None  # budget came from limits
+        raw_buf = int(limits.get("max_buffer_size", 0))
+        extra = f" (raw max_buffer_size={raw_buf:,})" if raw_buf != budget else ""
+        gpu_str = f"{budget:,} bytes{extra}"
+    else:
+        gpu_str = "N/A"
     avail_ram = _get_available_ram_bytes()
     total_ram = _get_total_ram_bytes()
-    gpu_str = f"{limits['max_buffer_size']:,} bytes" if limits else "N/A"
     if avail_ram is not None and total_ram is not None:
         ram_str = f"{avail_ram:,} available of {total_ram:,} total"
     elif avail_ram is not None:
@@ -340,7 +351,7 @@ def compute_max_tile_side(*, context: str = "solweig") -> int:
     cap_str = f", SOLWEIG_MAX_TILE_SIDE={env_cap}" if env_cap else ""
     logger.info(
         f"Resource-aware tile sizing (context={context}): "
-        f"GPU max_buffer={gpu_str}, RAM={ram_str}, "
+        f"GPU budget={gpu_str}, RAM={ram_str}, "
         f"max_tile_side={side} px{cap_str}"
     )
 
@@ -380,8 +391,16 @@ def _resolve_tile_workers(tile_workers: int | None, n_tiles: int) -> int:
     if tile_workers is not None and tile_workers < 1:
         raise ValueError(f"tile_workers must be >= 1, got {tile_workers}")
     if tile_workers is None:
-        cpu_count = os.cpu_count() or 2
-        tile_workers = max(2, min(_MAX_AUTO_TILE_WORKERS, cpu_count // 2))
+        from . import GPU_ENABLED
+
+        # Multiple concurrent GPU tile jobs multiply the wgpu working set
+        # and trigger OOM on discrete GPUs. Check the compile-time flag
+        # to avoid triggering full GPU context initialization here.
+        if GPU_ENABLED and not os.environ.get("SOLWEIG_NO_GPU"):
+            tile_workers = 1
+        else:
+            cpu_count = os.cpu_count() or 2
+            tile_workers = max(2, min(_MAX_AUTO_TILE_WORKERS, cpu_count // 2))
     return max(1, min(tile_workers, n_tiles))
 
 
@@ -421,19 +440,18 @@ def _resolve_prefetch_default(
     if n_tiles <= 0:
         return False
 
-    total_ram = _get_total_ram_bytes()
-    if total_ram is None:
+    usable_ram = _get_usable_ram()
+    if usable_ram is None:
         return True
 
     full_side = core_tile_size + 2 * buffer_pixels
     tile_pixels = max(MIN_TILE_SIZE**2, full_side * full_side)
-    estimated_tile_bytes = tile_pixels * _SOLWEIG_BYTES_PER_PIXEL
+    estimated_tile_bytes = tile_pixels * _TIMESTEP_RAM_BPP
 
     # Default prefetch queues up to n_workers extra tasks.
     estimated_inflight_tiles = min(n_tiles, n_workers * 2)
     estimated_inflight_bytes = estimated_inflight_tiles * estimated_tile_bytes
 
-    usable_ram = int(total_ram * _RAM_FRACTION)
     return estimated_inflight_bytes <= int(usable_ram * 0.5)
 
 

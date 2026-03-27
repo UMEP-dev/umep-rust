@@ -70,11 +70,12 @@ pub fn is_gpu_enabled() -> bool {
 
 #[cfg(feature = "gpu")]
 #[pyfunction]
-/// Return GPU buffer limits as a dict, or None if GPU is unavailable.
+/// Return GPU limits as a dict, or None if GPU is unavailable.
 ///
 /// Keys:
-///   - "max_buffer_size": u64 — largest single wgpu buffer in bytes
+///   - "max_buffer_size": u64 — raw adapter-reported maximum buffer size
 ///   - "backend": str — GPU backend name ("Metal", "Vulkan", "Dx12", "Gl", etc.)
+///   - "gpu_memory_budget": u64 — resolved GPU memory budget (only present when detectable)
 ///
 /// Initialises the GPU context lazily on first call.
 pub fn gpu_limits(py: Python<'_>) -> PyResult<Option<PyObject>> {
@@ -85,6 +86,9 @@ pub fn gpu_limits(py: Python<'_>) -> PyResult<Option<PyObject>> {
     let dict = pyo3::types::PyDict::new(py);
     dict.set_item("max_buffer_size", ctx.max_buffer_size)?;
     dict.set_item("backend", format!("{:?}", ctx.backend))?;
+    if let Some(budget) = ctx.gpu_memory_budget {
+        dict.set_item("gpu_memory_budget", budget)?;
+    }
     Ok(Some(dict.into()))
 }
 

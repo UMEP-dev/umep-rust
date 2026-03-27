@@ -1,6 +1,145 @@
 use ndarray::{Array2, Array3, ArrayView2};
 use std::sync::Arc;
 
+// ── Cross-platform GPU VRAM detection ────────────────────────────────────
+
+/// Maximum `max_buffer_size` we trust from wgpu.  Values above this
+/// are treated as bogus (DX12 reports 2^52, the D3D12 spec maximum).
+const SANE_MAX_BUFFER_BYTES: u64 = 64 * 1024 * 1024 * 1024; // 64 GiB
+
+/// Query actual dedicated GPU video memory via platform-specific APIs.
+///
+/// Returns `Some(bytes)` when the platform exposes real VRAM, `None`
+/// otherwise (caller falls back to `max_buffer_size` heuristics).
+#[cfg(target_os = "windows")]
+fn query_platform_vram(info: &wgpu::AdapterInfo) -> Option<u64> {
+    use windows::Win32::Graphics::Dxgi::*;
+    unsafe {
+        let factory: IDXGIFactory1 = CreateDXGIFactory1().ok()?;
+        // EnumAdapters1 returns Err (DXGI_ERROR_NOT_FOUND) when index
+        // exceeds the adapter count, which terminates the loop via `?`.
+        for i in 0u32..64 {
+            let adapter = match factory.EnumAdapters1(i) {
+                Ok(a) => a,
+                Err(_) => return None,
+            };
+            let desc = adapter.GetDesc1().ok()?;
+            if desc.VendorId == info.vendor as u32
+                && desc.DeviceId == info.device as u32
+            {
+                let vram = desc.DedicatedVideoMemory;
+                if vram > 0 {
+                    return Some(vram as u64);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Linux/AMD: read `/sys/class/drm/card*/device/mem_info_vram_total` (amdgpu driver).
+/// Returns `None` on NVIDIA and Intel (no sysfs VRAM file); those fall back
+/// to `max_buffer_size` heuristics in `resolve_gpu_memory_budget`.
+#[cfg(target_os = "linux")]
+fn query_platform_vram(info: &wgpu::AdapterInfo) -> Option<u64> {
+    use std::fs;
+    use std::path::Path;
+
+    let drm = Path::new("/sys/class/drm");
+    if !drm.is_dir() {
+        return None;
+    }
+    for entry in fs::read_dir(drm).ok()? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        // Skip renderD*, connector entries (card0-DP-1), etc.
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.starts_with("card") || !name_str[4..].chars().all(|c| c.is_ascii_digit()) {
+            continue;
+        }
+        let dev_dir = entry.path().join("device");
+        if !dev_dir.is_dir() {
+            continue;
+        }
+        // Match vendor + device IDs (skip entries without these files)
+        let vendor = match fs::read_to_string(dev_dir.join("vendor")) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let device = match fs::read_to_string(dev_dir.join("device")) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let vid = match u32::from_str_radix(vendor.trim().trim_start_matches("0x"), 16) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let did = match u32::from_str_radix(device.trim().trim_start_matches("0x"), 16) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        if vid != info.vendor as u32 || did != info.device as u32 {
+            continue;
+        }
+        let vram_path = dev_dir.join("mem_info_vram_total");
+        if let Ok(content) = fs::read_to_string(&vram_path) {
+            if let Ok(bytes) = content.trim().parse::<u64>() {
+                if bytes > 0 {
+                    return Some(bytes);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+fn query_platform_vram(_info: &wgpu::AdapterInfo) -> Option<u64> {
+    None
+}
+
+/// Resolve the best available GPU memory budget.
+///
+/// Priority:
+/// 1. Platform VRAM query (DXGI on Windows, sysfs on Linux)
+/// 2. Metal `max_buffer_size` (reflects real unified memory)
+/// 3. `max_buffer_size` if sane (< 64 GiB)
+/// 4. None — Python-side will use a conservative fallback
+fn resolve_gpu_memory_budget(
+    backend: wgpu::Backend,
+    info: &wgpu::AdapterInfo,
+    max_buffer_size: u64,
+) -> Option<u64> {
+    // 1. Platform-specific query
+    if let Some(vram) = query_platform_vram(info) {
+        eprintln!(
+            "[GPU] Detected {:.1} GiB dedicated video memory via platform API",
+            vram as f64 / (1024.0 * 1024.0 * 1024.0)
+        );
+        return Some(vram);
+    }
+
+    // 2. Metal: max_buffer_size reflects real unified memory
+    if backend == wgpu::Backend::Metal {
+        return Some(max_buffer_size);
+    }
+
+    // 3. Trust max_buffer_size only if it looks like a real VRAM value
+    if max_buffer_size > 0 && max_buffer_size <= SANE_MAX_BUFFER_BYTES {
+        return Some(max_buffer_size);
+    }
+
+    // 4. Bogus or zero — let Python use conservative default
+    eprintln!(
+        "[GPU] max_buffer_size={} exceeds sanity cap, cannot determine real VRAM",
+        max_buffer_size
+    );
+    None
+}
+
 /// Ensures mapped staging buffers are always unmapped on scope exit.
 struct MappedBufferGuard<'a> {
     buffer: &'a wgpu::Buffer,
@@ -175,6 +314,8 @@ pub struct ShadowGpuContext {
     pub(crate) queue: Arc<wgpu::Queue>,
     /// Adapter-reported maximum single buffer size in bytes.
     pub(crate) max_buffer_size: u64,
+    /// Resolved GPU memory budget (real VRAM when detectable, else heuristic).
+    pub(crate) gpu_memory_budget: Option<u64>,
     /// Adapter-reported maximum workgroups per dispatch dimension.
     max_compute_workgroups_per_dimension: u32,
     /// GPU backend (Metal, Vulkan, Dx12, Gl, etc.).
@@ -632,12 +773,16 @@ impl ShadowGpuContext {
             cache: None,
         });
 
-        let backend = adapter.get_info().backend;
+        let info = adapter.get_info();
+        let backend = info.backend;
+        let gpu_memory_budget =
+            resolve_gpu_memory_budget(backend, &info, adapter_limits.max_buffer_size);
 
         Ok(Self {
             device,
             queue,
             max_buffer_size: adapter_limits.max_buffer_size,
+            gpu_memory_budget,
             max_compute_workgroups_per_dimension: adapter_limits
                 .max_compute_workgroups_per_dimension,
             backend,

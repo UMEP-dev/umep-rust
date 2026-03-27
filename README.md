@@ -127,15 +127,15 @@ summary.plot()
 
 ### Core classes
 
-| Class | Purpose |
-|-------|---------|
-| `SurfaceData` | Holds all spatial inputs (DSM, CDSM, DEM, land cover) and precomputed arrays (walls, SVF). Use `.prepare()` to load GeoTIFFs with automatic caching. |
-| `Location` | Geographic coordinates (latitude, longitude, UTC offset). Create from coordinates, DSM CRS, or an EPW file. |
-| `Weather` | Per-timestep meteorological data (air temperature, relative humidity, global radiation, optional wind speed). Load from EPW files or create manually. |
-| `SolweigResult` | Output grids from a single timestep: Tmrt, shadow, UTCI, PET, radiation components. |
-| `TimeseriesSummary` | Aggregated results from a multi-timestep run: mean/max/min grids, sun hours, UTCI threshold exceedance, per-timestep scalars. |
-| `HumanParams` | Body parameters: posture (standing/sitting), absorption coefficients, PET body parameters (age, weight, height, etc.). |
-| `ModelConfig` | Runtime settings: anisotropic sky, max shadow distance, tiling workers. |
+| Class               | Purpose                                                                                                                                               |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SurfaceData`       | Holds all spatial inputs (DSM, CDSM, DEM, land cover) and precomputed arrays (walls, SVF). Use `.prepare()` to load GeoTIFFs with automatic caching.  |
+| `Location`          | Geographic coordinates (latitude, longitude, UTC offset). Create from coordinates, DSM CRS, or an EPW file.                                           |
+| `Weather`           | Per-timestep meteorological data (air temperature, relative humidity, global radiation, optional wind speed). Load from EPW files or create manually. |
+| `SolweigResult`     | Output grids from a single timestep: Tmrt, shadow, UTCI, PET, radiation components.                                                                   |
+| `TimeseriesSummary` | Aggregated results from a multi-timestep run: mean/max/min grids, sun hours, UTCI threshold exceedance, per-timestep scalars.                         |
+| `HumanParams`       | Body parameters: posture (standing/sitting), absorption coefficients, PET body parameters (age, weight, height, etc.).                                |
+| `ModelConfig`       | Runtime settings: anisotropic sky, max shadow distance, tiling workers.                                                                               |
 
 ### Main functions
 
@@ -177,38 +177,38 @@ epw_path = solweig.download_epw(latitude=37.98, longitude=23.73, output_path="at
 
 ### What you need
 
-| Input | Required? | What it is |
-|-------|-----------|------------|
-| **DSM** | Yes | Digital Surface Model — a height grid (metres) including buildings. GeoTIFF or numpy array. |
-| **Location** | Yes | Latitude, longitude, and UTC offset. Can be extracted from the DSM's CRS or an EPW file. |
-| **Weather** | Yes | Air temperature, relative humidity, and global solar radiation. Load from an EPW file or create manually. |
-| **CDSM** | No | Canopy heights (trees). Adds vegetation shading. |
-| **DEM** | No | Ground elevation. Separates terrain from buildings. |
-| **Land cover** | No | Surface type grid (paved, grass, water, etc.). Affects surface temperatures. |
+| Input          | Required? | What it is                                                                                                |
+| -------------- | --------- | --------------------------------------------------------------------------------------------------------- |
+| **DSM**        | Yes       | Digital Surface Model — a height grid (metres) including buildings. GeoTIFF or numpy array.               |
+| **Location**   | Yes       | Latitude, longitude, and UTC offset. Can be extracted from the DSM's CRS or an EPW file.                  |
+| **Weather**    | Yes       | Air temperature, relative humidity, and global solar radiation. Load from an EPW file or create manually. |
+| **CDSM**       | No        | Canopy heights (trees). Adds vegetation shading.                                                          |
+| **DEM**        | No        | Ground elevation. Separates terrain from buildings.                                                       |
+| **Land cover** | No        | Surface type grid (paved, grass, water, etc.). Affects surface temperatures.                              |
 
 ### What you get
 
-| Output | Unit | Description |
-|--------|------|-------------|
-| **Tmrt** | °C | Mean Radiant Temperature — how much radiation a person absorbs. |
-| **Shadow** | 0–1 | Shadow fraction (1 = sunlit, 0 = fully shaded). |
-| **UTCI** | °C | Universal Thermal Climate Index — "feels like" temperature. |
-| **PET** | °C | Physiological Equivalent Temperature — similar to UTCI with customisable body parameters. |
-| Kdown / Kup | W/m² | Shortwave radiation (down and reflected up). |
-| Ldown / Lup | W/m² | Longwave radiation (thermal, down and emitted up). |
+| Output      | Unit | Description                                                                               |
+| ----------- | ---- | ----------------------------------------------------------------------------------------- |
+| **Tmrt**    | °C   | Mean Radiant Temperature — how much radiation a person absorbs.                           |
+| **Shadow**  | 0–1  | Shadow fraction (1 = sunlit, 0 = fully shaded).                                           |
+| **UTCI**    | °C   | Universal Thermal Climate Index — "feels like" temperature.                               |
+| **PET**     | °C   | Physiological Equivalent Temperature — similar to UTCI with customisable body parameters. |
+| Kdown / Kup | W/m² | Shortwave radiation (down and reflected up).                                              |
+| Ldown / Lup | W/m² | Longwave radiation (thermal, down and emitted up).                                        |
 
 ### Timeseries summary grids
 
 When running `calculate()` with a list of weather timesteps, the returned `TimeseriesSummary` provides aggregated grids across all timesteps:
 
-| Grid | Description |
-|------|-------------|
-| `tmrt_mean`, `tmrt_max`, `tmrt_min` | Overall Tmrt statistics |
-| `tmrt_day_mean`, `tmrt_night_mean` | Day/night Tmrt averages |
-| `utci_mean`, `utci_max`, `utci_min` | Overall UTCI statistics |
-| `utci_day_mean`, `utci_night_mean` | Day/night UTCI averages |
-| `sun_hours`, `shade_hours` | Hours of direct sun / shade per pixel |
-| `utci_hours_above` | Dict of threshold → grid of hours exceeding that UTCI value |
+| Grid                                | Description                                                 |
+| ----------------------------------- | ----------------------------------------------------------- |
+| `tmrt_mean`, `tmrt_max`, `tmrt_min` | Overall Tmrt statistics                                     |
+| `tmrt_day_mean`, `tmrt_night_mean`  | Day/night Tmrt averages                                     |
+| `utci_mean`, `utci_max`, `utci_min` | Overall UTCI statistics                                     |
+| `utci_day_mean`, `utci_night_mean`  | Day/night UTCI averages                                     |
+| `sun_hours`, `shade_hours`          | Hours of direct sun / shade per pixel                       |
+| `utci_hours_above`                  | Dict of threshold → grid of hours exceeding that UTCI value |
 
 Plus a `Timeseries` object with per-timestep spatial means (Tmrt, UTCI, sun fraction, air temperature, radiation, etc.) for plotting.
 
@@ -240,13 +240,13 @@ summary = solweig.calculate(surface, weather=[weather], location=location, human
 
 Key parameters accepted by `calculate()`:
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `use_anisotropic_sky` | `True` | Use Perez anisotropic sky model for more accurate diffuse radiation. |
-| `conifer` | `False` | Treat trees as evergreen (skip seasonal leaf-off). |
-| `max_shadow_distance_m` | `1000` | Maximum shadow reach in metres. Increase for mountainous terrain. |
-| `output_dir` | _(required)_ | Working directory for all output (summary grids, per-timestep GeoTIFFs, metadata). |
-| `outputs` | `None` | Which per-timestep grids to save: `"tmrt"`, `"utci"`, `"pet"`, `"shadow"`, `"kdown"`, `"kup"`, `"ldown"`, `"lup"`. |
+| Parameter               | Default      | Description                                                                                                        |
+| ----------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `use_anisotropic_sky`   | `True`       | Use Perez anisotropic sky model for more accurate diffuse radiation.                                               |
+| `conifer`               | `False`      | Treat trees as evergreen (skip seasonal leaf-off).                                                                 |
+| `max_shadow_distance_m` | `1000`       | Maximum shadow reach in metres. Increase for mountainous terrain.                                                  |
+| `output_dir`            | _(required)_ | Working directory for all output (summary grids, per-timestep GeoTIFFs, metadata).                                 |
+| `outputs`               | `None`       | Which per-timestep grids to save: `"tmrt"`, `"utci"`, `"pet"`, `"shadow"`, `"kdown"`, `"kup"`, `"ldown"`, `"lup"`. |
 
 ### Physics and materials
 
@@ -319,11 +319,11 @@ The plugin requires QGIS 4.0+ (Qt6, Python 3.11+). On first use it will offer to
 
 Once installed, SOLWEIG algorithms appear in the **Processing Toolbox** under the SOLWEIG group:
 
-| Algorithm | Description |
-|-----------|-------------|
-| **Download / Preview Weather File** | Download a TMY EPW file from PVGIS, or preview an existing EPW file. |
-| **Prepare Surface Data** | Align rasters, compute wall heights, wall aspects, and SVF. Results are cached and reused. |
-| **SOLWEIG Calculation** | Single-timestep or timeseries Tmrt with optional inline UTCI/PET. Supports EPW and UMEP met files. |
+| Algorithm                           | Description                                                                                        |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------- |
+| **Download / Preview Weather File** | Download a TMY EPW file from PVGIS, or preview an existing EPW file.                               |
+| **Prepare Surface Data**            | Align rasters, compute wall heights, wall aspects, and SVF. Results are cached and reused.         |
+| **SOLWEIG Calculation**             | Single-timestep or timeseries Tmrt with optional inline UTCI/PET. Supports EPW and UMEP met files. |
 
 ### QGIS-specific features
 
@@ -356,11 +356,11 @@ Complete working scripts:
 
 SOLWEIG is validated against field radiation measurements from three sites in Gothenburg, Sweden (Lindberg et al. 2008, 2011). All geodata, measurements, and test scripts are checked into the repository and run as part of the test suite.
 
-| Site | Season | Days | Tmrt RMSE | Tmrt R² |
-|------|--------|-----:|----------:|--------:|
-| Kronenhuset (courtyard, 1 m) | Autumn | 1 | 6.0 °C | 0.52 |
-| Gustav Adolfs torg (open square, 2 m) | Autumn + Summer | 3 | 9.3–18.9 °C | 0.72–0.91 |
-| GVC (university campus, 2 m) | Summer | 3 | 11.5–15.6 °C | 0.00–0.20 |
+| Site                                  | Season          | Days |    Tmrt RMSE |   Tmrt R² |
+| ------------------------------------- | --------------- | ---: | -----------: | --------: |
+| Kronenhuset (courtyard, 1 m)          | Autumn          |    1 |       6.0 °C |      0.52 |
+| Gustav Adolfs torg (open square, 2 m) | Autumn + Summer |    3 |  9.3–18.9 °C | 0.72–0.91 |
+| GVC (university campus, 2 m)          | Summer          |    3 | 11.5–15.6 °C | 0.00–0.20 |
 
 Anisotropic sky mode, matched daytime observation hours. Full details, radiation budget comparisons, and version history: **[Validation Report](VALIDATION.md)**.
 

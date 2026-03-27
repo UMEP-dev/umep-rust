@@ -330,42 +330,63 @@ class TestCalculateBufferDistance:
 class TestComputeMaxTilePixels:
     """Tests for compute_max_tile_pixels() in tiling.py."""
 
-    def test_backend_without_hint_uses_single_buffer_estimate(self, monkeypatch):
-        """Unknown backend should use largest-single-buffer bytes/pixel estimate."""
-        max_buf = 1_000_000_000  # bytes (1 GB — large enough to exceed MIN_TILE_SIZE²)
+    def test_gpu_memory_budget_drives_tile_sizing(self, monkeypatch):
+        """When gpu_memory_budget is present, it drives tile sizing directly."""
+        budget = 8_000_000_000  # 8 GiB
         headroom = compute_max_tile_pixels.__globals__["_GPU_HEADROOM"]
 
-        monkeypatch.setattr(solweig, "get_gpu_limits", lambda: {"max_buffer_size": max_buf})
+        monkeypatch.setattr(
+            solweig,
+            "get_gpu_limits",
+            lambda: {"max_buffer_size": 4_503_599_627_370_496, "gpu_memory_budget": budget, "backend": "Dx12"},
+        )
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_available_ram_bytes", lambda: None)
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_total_ram_bytes", lambda: None)
+
+        solweig_pixels = compute_max_tile_pixels(context="solweig")
+        svf_pixels = compute_max_tile_pixels(context="svf")
+
+        assert solweig_pixels == int(budget * headroom) // 360  # _TIMESTEP_GPU_BPP
+        assert svf_pixels == int(budget * headroom) // 384  # _SVF_GPU_BPP
+
+    def test_no_gpu_memory_budget_uses_conservative_fallback(self, monkeypatch):
+        """When Rust can't determine VRAM, fall back to _GPU_BUDGET_BYTES."""
+        gpu_budget = compute_max_tile_pixels.__globals__["_GPU_BUDGET_BYTES"]
+        headroom = compute_max_tile_pixels.__globals__["_GPU_HEADROOM"]
+
+        # No gpu_memory_budget key — Rust couldn't detect real VRAM
+        monkeypatch.setattr(
+            solweig,
+            "get_gpu_limits",
+            lambda: {"max_buffer_size": 4_503_599_627_370_496, "backend": "Dx12"},
+        )
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_available_ram_bytes", lambda: None)
+        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_total_ram_bytes", lambda: None)
+
+        solweig_pixels = compute_max_tile_pixels(context="solweig")
+        svf_pixels = compute_max_tile_pixels(context="svf")
+
+        assert solweig_pixels == int(gpu_budget * headroom) // 360
+        assert svf_pixels == int(gpu_budget * headroom) // 384
+
+    def test_svf_and_solweig_use_different_bpp(self, monkeypatch):
+        """SVF (384 B/px) should produce smaller tiles than solweig (360 B/px)."""
+        budget = 4_000_000_000
+        headroom = compute_max_tile_pixels.__globals__["_GPU_HEADROOM"]
+
+        monkeypatch.setattr(
+            solweig,
+            "get_gpu_limits",
+            lambda: {"max_buffer_size": budget, "gpu_memory_budget": budget, "backend": "Metal"},
+        )
         monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_available_ram_bytes", lambda: None)
         monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_total_ram_bytes", lambda: None)
 
         svf_pixels = compute_max_tile_pixels(context="svf")
         solweig_pixels = compute_max_tile_pixels(context="solweig")
 
-        expected_svf = int(max_buf * headroom) // 60  # _SVF_GPU_SINGLE_BPP
-        expected_solweig = int(max_buf * headroom) // 40  # _SHADOW_GPU_SINGLE_BPP
-
-        assert svf_pixels == expected_svf
-        assert solweig_pixels == expected_solweig
-        assert svf_pixels < solweig_pixels
-
-    def test_metal_backend_uses_total_working_set_estimate(self, monkeypatch):
-        """Metal backend should constrain by aggregate GPU working-set bytes/pixel."""
-        max_buf = 1_000_000_000  # bytes (1 GB — large enough to exceed MIN_TILE_SIZE²)
-        headroom = compute_max_tile_pixels.__globals__["_GPU_HEADROOM"]
-
-        monkeypatch.setattr(solweig, "get_gpu_limits", lambda: {"max_buffer_size": max_buf, "backend": "Metal"})
-        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_available_ram_bytes", lambda: None)
-        monkeypatch.setitem(compute_max_tile_pixels.__globals__, "_get_total_ram_bytes", lambda: None)
-
-        svf_pixels = compute_max_tile_pixels(context="svf")
-        solweig_pixels = compute_max_tile_pixels(context="solweig")
-
-        expected_svf = int(max_buf * headroom) // 384  # _SVF_GPU_TOTAL_BPP
-        expected_solweig = int(max_buf * headroom) // 120  # _SHADOW_GPU_TOTAL_BPP
-
-        assert svf_pixels == expected_svf
-        assert solweig_pixels == expected_solweig
+        assert svf_pixels == int(budget * headroom) // 384
+        assert solweig_pixels == int(budget * headroom) // 360
         assert svf_pixels < solweig_pixels
 
     def test_available_ram_takes_precedence_over_total(self, monkeypatch):
@@ -579,6 +600,11 @@ class TestTilingRuntimeControls:
 
     def test_resolve_tile_workers_clamps_to_tile_count(self):
         assert _resolve_tile_workers(tile_workers=16, n_tiles=3) == 3
+
+    def test_resolve_tile_workers_defaults_to_one_on_gpu(self, monkeypatch):
+        monkeypatch.setattr(solweig, "GPU_ENABLED", True)
+        monkeypatch.delenv("SOLWEIG_NO_GPU", raising=False)
+        assert _resolve_tile_workers(tile_workers=None, n_tiles=8) == 1
 
     def test_resolve_tile_workers_zero_raises(self):
         with pytest.raises(ValueError, match="tile_workers must be >= 1"):

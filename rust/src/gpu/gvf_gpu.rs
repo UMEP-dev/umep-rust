@@ -192,7 +192,7 @@ impl GvfGpuContext {
             guard
         });
 
-        self.ensure_buffers_locked(&mut buf_cache, rows, cols, num_azimuths, max_steps);
+        self.ensure_buffers_locked(&mut buf_cache, rows, cols, num_azimuths, max_steps)?;
         let buffers = buf_cache
             .as_mut()
             .ok_or_else(|| "GVF GPU buffers missing after allocation".to_string())?;
@@ -471,14 +471,14 @@ impl GvfGpuContext {
         cols: usize,
         num_azimuths: usize,
         max_steps: usize,
-    ) {
+    ) -> Result<(), String> {
         if let Some(ref c) = *cache {
             if c.rows == rows
                 && c.cols == cols
                 && c.num_azimuths == num_azimuths
                 && c.max_steps == max_steps
             {
-                return;
+                return Ok(());
             }
         }
 
@@ -491,6 +491,10 @@ impl GvfGpuContext {
         let shifts_bytes = (total_shifts * 8) as u64; // vec2<i32> = 8 bytes
         let meta_bytes = (num_azimuths * std::mem::size_of::<AzimuthMetaGpu>()) as u64;
         let output_bytes = (total_pixels * NUM_OUTPUT_CHANNELS * 4) as u64;
+
+        // Capture OOM errors instead of panicking
+        self.device
+            .push_error_scope(wgpu::ErrorFilter::OutOfMemory);
 
         let make = |label: &str, size: u64, usage: wgpu::BufferUsages| -> wgpu::Buffer {
             self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -528,6 +532,16 @@ impl GvfGpuContext {
             output_bytes,
             wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
         );
+
+        // Check for OOM before creating bind groups
+        let err = pollster::block_on(self.device.pop_error_scope());
+        if let Some(e) = err {
+            *cache = None;
+            return Err(format!(
+                "GPU OOM allocating GVF buffers for {}x{} grid ({} azimuths): {}",
+                rows, cols, num_azimuths, e
+            ));
+        }
 
         let bind_group_0 = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("GVF BG0"),
@@ -607,6 +621,7 @@ impl GvfGpuContext {
             geometry_uploaded: false,
             readback_inflight: false,
         });
+        Ok(())
     }
 
     fn checked_workgroups_2d(
