@@ -440,6 +440,11 @@ def _extract_tile_surface(
         svf=tile_svf,
         shadow_matrices=tile_shadow_matrices,
     )
+    # Inherit NaN-filled state from parent — prevents fill_nan() from
+    # re-filling intentional CDSM/TDSM NaN markers (no-vegetation pixels)
+    # with DEM values, which would create phantom vegetation.
+    if surface._nan_filled:
+        tile_surface._nan_filled = True
     return tile_surface
 
 

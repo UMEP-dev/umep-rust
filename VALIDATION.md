@@ -48,7 +48,7 @@ from the original shapefiles provided with each validation dataset.
 
 ---
 
-## Results — v0.1.0b72 (2026-03-17)
+## Results — v0.1.0b78 (2026-03-29)
 
 ### Summary
 
@@ -266,6 +266,7 @@ pytest tests/validation/test_poi_sweep_all_sites.py -v -s
 | 0.1.0b71 | 2026-03-14 | 3 | 6.0–18.9 °C | Docs-only: clarify TMY nature of PVGIS downloads in docstrings, user docs, and QGIS plugin (#8). Validation unchanged. |
 | 0.1.0b72 | 2026-03-17 | 3 | 6.7–17.6 °C | Fix false vegetation shadows on slopes: sub-threshold CDSM/TDSM set to NaN instead of DEM height; underground vegetation cleared. Ldown improved at Kronenhuset (39→32 W/m²) and Gustav Adolfs (84→74 W/m²). Relax SVF veg golden tolerance (known shadowingfunction\_20 vs \_23 divergence). |
 | 0.1.0b74 | 2026-03-18 | 3 | 6.7–17.6 °C | Fix rasterio resampling pixel drift (from\_bounds inexact pixel size). Fix QGIS phantom vegetation (fill\_nan overwriting CDSM NaN markers). Add SurfaceData.load(); eliminate QGIS/core duplication. Fix progress bar regression. Validation unchanged from b72. |
+| 0.1.0b78 | 2026-03-29 | 3 | 6.7–17.6 °C | Fix phantom vegetation in tiled timeseries: tile-extracted surfaces inherit \_nan\_filled state, preventing double fill\_nan from overwriting intentional CDSM/TDSM NaN markers with DEM values. Also fix tiling buffer overflow on small rasters (core=1 / segfault). Unified tile-outer timeseries architecture. Validation restored to b72 baseline. |
 
 ---
 
