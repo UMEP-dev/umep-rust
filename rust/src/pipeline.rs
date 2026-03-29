@@ -843,7 +843,7 @@ pub fn precompute_gvf_cache(
     {
         if let Some(ctx) = get_gvf_gpu_context() {
             match ctx.upload_geometry(&cache) {
-                Ok(()) => eprintln!("[GPU] GVF geometry uploaded to GPU"),
+                Ok(()) => {},
                 Err(e) => {
                     eprintln!("[GPU] GVF geometry upload failed, falling back to CPU: {}", e);
                     GVF_GPU_ENABLED.store(false, std::sync::atomic::Ordering::Relaxed);

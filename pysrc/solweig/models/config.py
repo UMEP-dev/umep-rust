@@ -40,13 +40,18 @@ class ModelConfig:
             Caps horizontal shadow ray distance and serves as tile overlap
             buffer for automatic tiled processing. On mountainous terrain,
             increase this to capture terrain shadows across valleys.
-        tile_workers: Number of workers for tiled orchestration. If None,
-            picks an adaptive default based on CPU count.
-        tile_queue_depth: Extra queued tile tasks beyond active workers.
-            If None, defaults to one queue slot per worker when prefetching
-            is enabled.
-        prefetch_tiles: Whether to prefetch tile tasks beyond active workers.
-            If None, runtime chooses automatically based on memory pressure.
+        tile_size: Core tile side length in pixels for tiled processing.
+            If None (default), auto-calculated from available resources.
+            Minimum 256.
+        tile_workers: Legacy runtime control for the low-level tiled executor.
+            Retained for config compatibility. ``calculate()`` ignores this in
+            tile-outer timeseries mode.
+        tile_queue_depth: Legacy queue-depth control for the low-level tiled
+            executor. Retained for config compatibility. ``calculate()``
+            ignores this in tile-outer timeseries mode.
+        prefetch_tiles: Legacy prefetch control for the low-level tiled
+            executor. Retained for config compatibility. ``calculate()``
+            ignores this in tile-outer timeseries mode.
 
     Note:
         UTCI and PET are computed inline when requested via
@@ -76,6 +81,7 @@ class ModelConfig:
     physics: SimpleNamespace | None = None
     materials: SimpleNamespace | None = None
     max_shadow_distance_m: float = 1000.0
+    tile_size: int | None = None
     tile_workers: int | None = None
     tile_queue_depth: int | None = None
     prefetch_tiles: bool | None = None
@@ -89,6 +95,8 @@ class ModelConfig:
         """
         if self.max_shadow_distance_m <= 0:
             raise ValueError(f"max_shadow_distance_m must be > 0, got {self.max_shadow_distance_m}")
+        if self.tile_size is not None and self.tile_size < 256:
+            raise ValueError(f"tile_size must be >= 256, got {self.tile_size}")
         if self.tile_workers is not None and self.tile_workers < 1:
             raise ValueError(f"tile_workers must be >= 1, got {self.tile_workers}")
         if self.tile_queue_depth is not None and self.tile_queue_depth < 0:
@@ -166,6 +174,7 @@ class ModelConfig:
         data = {
             "use_anisotropic_sky": self.use_anisotropic_sky,
             "max_shadow_distance_m": self.max_shadow_distance_m,
+            "tile_size": self.tile_size,
             "tile_workers": self.tile_workers,
             "tile_queue_depth": self.tile_queue_depth,
             "prefetch_tiles": self.prefetch_tiles,
@@ -218,6 +227,7 @@ class ModelConfig:
         return cls(
             use_anisotropic_sky=data.get("use_anisotropic_sky", True),
             max_shadow_distance_m=data.get("max_shadow_distance_m", 1000.0),
+            tile_size=data.get("tile_size"),
             tile_workers=data.get("tile_workers"),
             tile_queue_depth=data.get("tile_queue_depth"),
             prefetch_tiles=data.get("prefetch_tiles"),

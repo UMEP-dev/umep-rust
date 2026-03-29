@@ -502,8 +502,10 @@ class GridAccumulator:
         heat_thresholds_night: list[float],
         timestep_hours: float,
         memmap_dir: Path | None = None,
+        track_scalars: bool = True,
     ) -> None:
         self.shape = shape
+        self._track_scalars = track_scalars
         self.heat_thresholds_day = list(heat_thresholds_day)
         self.heat_thresholds_night = list(heat_thresholds_night)
         self.timestep_hours = timestep_hours
@@ -599,10 +601,15 @@ class GridAccumulator:
         result: SolweigResult,
         weather: Weather,
         compute_utci_fn: Callable,
-    ) -> None:
+    ) -> NDArray[np.floating]:
         """Ingest one timestep. Must be called BEFORE arrays are freed.
 
         Not available when *memmap_dir* was set — use :meth:`update_tile` instead.
+
+        Returns:
+            The computed UTCI grid (full tile shape, float32). Callers can
+            slice this to the core region for per-timestep output without
+            recomputing.
         """
         assert self._scratch_valid is not None, (
             "update() requires scratch buffers (memmap_dir must be None); "
@@ -671,29 +678,30 @@ class GridAccumulator:
         else:
             self._n_nighttime += 1
 
-        # --- Per-timestep scalar tracking ---
-        self._ts_datetime.append(weather.datetime)
-        self._ts_ta.append(weather.ta)
-        self._ts_rh.append(weather.rh)
-        self._ts_ws.append(weather.ws)
-        self._ts_global_rad.append(weather.global_rad)
-        self._ts_direct_rad.append(weather.direct_rad)
-        self._ts_diffuse_rad.append(weather.diffuse_rad)
-        self._ts_sun_altitude.append(weather.sun_altitude)
-        self._ts_is_daytime.append(is_day)
+        # --- Per-timestep scalar tracking (skipped in tile-outer mode) ---
+        if self._track_scalars:
+            self._ts_datetime.append(weather.datetime)
+            self._ts_ta.append(weather.ta)
+            self._ts_rh.append(weather.rh)
+            self._ts_ws.append(weather.ws)
+            self._ts_global_rad.append(weather.global_rad)
+            self._ts_direct_rad.append(weather.direct_rad)
+            self._ts_diffuse_rad.append(weather.diffuse_rad)
+            self._ts_sun_altitude.append(weather.sun_altitude)
+            self._ts_is_daytime.append(is_day)
 
-        # Spatial means (over valid pixels)
-        n_valid_tmrt = valid.sum()
-        self._ts_tmrt_mean.append(float(tmrt[valid].mean()) if n_valid_tmrt > 0 else np.nan)
-        n_valid_utci = utci_valid.sum()
-        self._ts_utci_mean.append(float(utci[utci_valid].mean()) if n_valid_utci > 0 else np.nan)
-        self._ts_sun_fraction.append(sun_fraction)
-        # Diffuse fraction: 0 = clear, 1 = overcast (NaN at night)
-        if weather.global_rad > 0:
-            self._ts_diffuse_fraction.append(weather.diffuse_rad / weather.global_rad)
-        else:
-            self._ts_diffuse_fraction.append(np.nan)
-        self._ts_clearness_index.append(weather.clearness_index)
+            n_valid_tmrt = valid.sum()
+            self._ts_tmrt_mean.append(float(tmrt[valid].mean()) if n_valid_tmrt > 0 else np.nan)
+            n_valid_utci = utci_valid.sum()
+            self._ts_utci_mean.append(float(utci[utci_valid].mean()) if n_valid_utci > 0 else np.nan)
+            self._ts_sun_fraction.append(sun_fraction)
+            if weather.global_rad > 0:
+                self._ts_diffuse_fraction.append(weather.diffuse_rad / weather.global_rad)
+            else:
+                self._ts_diffuse_fraction.append(np.nan)
+            self._ts_clearness_index.append(weather.clearness_index)
+
+        return utci
 
     # ------------------------------------------------------------------
     # Tile-aware accumulation

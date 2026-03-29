@@ -376,6 +376,7 @@ def calculate(
     materials: SimpleNamespace | None = None,
     wall_material: str | None = None,
     max_shadow_distance_m: float | None = None,
+    tile_size: int | None = None,
     outputs: list[str] | None = None,
     heat_thresholds_day: list[float] | None = None,
     heat_thresholds_night: list[float] | None = None,
@@ -402,6 +403,8 @@ def calculate(
         materials: Material properties from load_materials().
         wall_material: Wall material type ("brick", "concrete", "wood", "cobblestone").
         max_shadow_distance_m: Maximum shadow reach in metres (default 1000.0).
+        tile_size: Core tile side in pixels for tiled processing. If None
+            (default), auto-calculated from available resources. Minimum 256.
         output_dir: Working directory for all output. Summary grids are always
             saved to ``output_dir/summary/``. Per-timestep GeoTIFFs are saved
             when ``outputs`` is specified.
@@ -409,7 +412,7 @@ def calculate(
             (e.g., ``["tmrt", "shadow"]``). If None, only summary grids are saved.
         heat_thresholds_day: Daytime UTCI thresholds for exceedance grids.
         heat_thresholds_night: Nighttime UTCI thresholds for exceedance grids.
-        progress_callback: Called as progress_callback(current, total) per timestep.
+        progress_callback: Called as progress_callback(current, total) per tile-timestep.
 
     Returns:
         TimeseriesSummary with per-pixel grids (mean/max/min Tmrt and UTCI,
@@ -458,6 +461,7 @@ def calculate(
         materials=materials,
         wall_material=wall_material,
         max_shadow_distance_m=max_shadow_distance_m,
+        tile_size=tile_size,
         output_dir=output_dir,
         outputs=outputs,
         heat_thresholds_day=heat_thresholds_day,

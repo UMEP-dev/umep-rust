@@ -506,9 +506,12 @@ GeoTIFF files organised into subfolders of the output directory:
             if feedback.isCanceled():
                 raise KeyboardInterrupt
             if current > 0 and weather_series:
-                idx = min(current - 1, len(weather_series) - 1)
-                timestamp_str = weather_series[idx].datetime.strftime("%Y-%m-%d %H:%M")
-                feedback.setProgressText(f"Timestep {current}/{total} \u2014 {timestamp_str}")
+                n_steps = len(weather_series)
+                # current/total may be tile-granular (n_tiles * n_steps);
+                # derive the timestep index from the modular position.
+                timestep_idx = (current - 1) % n_steps
+                timestamp_str = weather_series[timestep_idx].datetime.strftime("%Y-%m-%d %H:%M")
+                feedback.setProgressText(f"Step {current}/{total} \u2014 {timestamp_str}")
             total_safe = max(total, 1)
             pct = 25 + int(55 * current / total_safe)
             feedback.setProgress(pct)

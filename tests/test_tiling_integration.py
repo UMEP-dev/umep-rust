@@ -11,279 +11,26 @@ import pytest
 from conftest import make_mock_svf, read_timestep_geotiff
 from solweig import (
     Location,
+    ModelConfig,
     PrecomputedData,
     SolweigResult,
     SurfaceData,
     Weather,
-    calculate,
 )
-from solweig.errors import MissingPrecomputedData
 from solweig.models.state import ThermalState, TileSpec
 from solweig.tiling import (
     _calculate_auto_tile_size,
-    _calculate_tiled,
     _extract_tile_surface,
-    _merge_tile_state,
-    _should_use_tiling,
-    _slice_tile_state,
     calculate_buffer_distance,
     compute_max_tile_side,
 )
+from solweig.timeseries import _calculate_timeseries
 
 pytestmark = pytest.mark.slow
 
 
-class TestMultiTileProcessing:
-    """Tests that actually exercise multi-tile processing."""
-
-    @pytest.fixture(scope="class")
-    def large_urban_surface(self):
-        """Create a 400x400 synthetic urban surface with low buildings.
-
-        Uses LOW buildings (5m) so buffer requirement is small enough
-        to actually trigger multi-tile processing.
-
-        Buffer formula: max_height / tan(3deg) = 5 / 0.0524 ~ 95m
-        With 95px buffer, tile_size=256 has 66px core which is too small.
-        But with tile_size=300, we get ~108px core (marginal).
-        """
-        np.random.seed(42)
-        size = 400
-
-        # Base terrain at 10m
-        dsm = np.ones((size, size), dtype=np.float32) * 10.0
-
-        # Add LOW buildings (5m above ground = 15m total) to keep buffer small
-        for _ in range(15):
-            x, y = np.random.randint(50, size - 50, 2)
-            w, h = np.random.randint(15, 30, 2)
-            dsm[y : y + h, x : x + w] = 15.0  # 5m above ground
-
-        # Create land cover (grass=5, buildings=2)
-        land_cover = np.ones((size, size), dtype=np.int32) * 5
-        land_cover[dsm > 12] = 2
-
-        from conftest import make_mock_svf
-
-        surface = SurfaceData(
-            dsm=dsm,
-            land_cover=land_cover,
-            pixel_size=1.0,
-            svf=make_mock_svf((size, size)),
-        )
-
-        return surface
-
-    @pytest.fixture(scope="class")
-    def weather_noon(self):
-        """Summer noon weather conditions."""
-        return Weather(
-            datetime=datetime(2024, 7, 15, 12, 0),
-            ta=28.0,
-            rh=45.0,
-            global_rad=850.0,
-            ws=2.0,
-        )
-
-    @pytest.fixture(scope="class")
-    def location_gothenburg(self):
-        """Gothenburg, Sweden location."""
-        return Location(latitude=57.7, longitude=12.0, utc_offset=2)
-
-    def test_multitile_actually_tiles(self, large_urban_surface, location_gothenburg, weather_noon):
-        """Verify that large raster is actually processed in multiple tiles."""
-        from unittest.mock import patch
-
-        # 5m buildings (relative height = 15m DSM - 10m ground = 5m)
-        # buffer = 5 / tan(3deg) = 95.4m -> 96px (below cap of 100m)
-        # tile_size=350, buffer=96px -> 4 tiles on a 400x400 raster
-        captured = {}
-        original_generate_tiles = __import__("solweig.tiling", fromlist=["generate_tiles"]).generate_tiles
-
-        def spy_generate_tiles(rows, cols, tile_size, buffer_pixels):
-            captured["n_tiles"] = len(original_generate_tiles(rows, cols, tile_size, buffer_pixels))
-            captured["buffer_pixels"] = buffer_pixels
-            return original_generate_tiles(rows, cols, tile_size, buffer_pixels)
-
-        with patch("solweig.tiling.generate_tiles", side_effect=spy_generate_tiles):
-            result = _calculate_tiled(
-                large_urban_surface,
-                location_gothenburg,
-                weather_noon,
-                tile_size=350,
-                max_shadow_distance_m=100.0,
-            )
-
-        # Check that multi-tile processing was used
-        assert captured.get("n_tiles", 0) > 1, f"Expected multiple tiles, got {captured.get('n_tiles', 0)}"
-
-        # Buffer from 5m relative height: ceil(95.4 / 1.0) = 96px
-        assert captured["buffer_pixels"] == 96
-
-        # Verify output shape matches input
-        assert result.tmrt.shape == large_urban_surface.shape
-
-        # Verify reasonable Tmrt values (not all NaN)
-        valid_pixels = np.isfinite(result.tmrt)
-        assert valid_pixels.sum() > 0.8 * result.tmrt.size, "Too many NaN values in Tmrt"
-
-        # Tmrt should be in reasonable range for summer midday
-        valid_tmrt = result.tmrt[valid_pixels]
-        assert 20 < np.median(valid_tmrt) < 80, f"Median Tmrt {np.median(valid_tmrt):.1f}deg C out of expected range"
-
-    def test_multitile_vs_nontiled_comparison(self, location_gothenburg, weather_noon, tmp_path):
-        """Compare tiled vs non-tiled results on a moderate-size raster."""
-        # Use 400x400 which can be processed either way
-        size = 400
-        np.random.seed(123)
-
-        dsm = np.ones((size, size), dtype=np.float32) * 5.0
-        # Add a few small buildings
-        for _ in range(5):
-            x, y = np.random.randint(50, size - 50, 2)
-            dsm[y : y + 20, x : x + 20] = 15.0
-
-        surface = SurfaceData(dsm=dsm, pixel_size=2.0, svf=make_mock_svf((size, size)))  # 2m pixels = 800m extent
-
-        ref_dir = tmp_path / "ref"
-        ref_dir.mkdir()
-
-        # Non-tiled reference
-        calculate(surface, [weather_noon], location_gothenburg, output_dir=ref_dir, outputs=["tmrt", "shadow"])
-        tmrt_ref = read_timestep_geotiff(ref_dir, "tmrt", 0)
-
-        # Tiled with limited shadow distance to keep buffer manageable
-        # With max_shadow_distance_m=200 and 2m pixels: buffer = 100 pixels
-        result_tiled = _calculate_tiled(
-            surface,
-            location_gothenburg,
-            weather_noon,
-            tile_size=300,
-            max_shadow_distance_m=200.0,
-        )
-
-        # Compare Tmrt where both are valid
-        both_valid = np.isfinite(tmrt_ref) & np.isfinite(result_tiled.tmrt)
-
-        if both_valid.sum() > 0:
-            diff = np.abs(result_tiled.tmrt[both_valid] - tmrt_ref[both_valid])
-            mean_diff = diff.mean()
-            max_diff = diff.max()
-
-            # Both paths now use the same mock SVF (tiled path slices from global).
-            # Only shadow edge effects from tiling should cause small differences.
-            assert mean_diff < 0.01, f"Mean Tmrt diff {mean_diff:.2f}deg C too large"
-            assert max_diff < 0.1, f"Max Tmrt diff {max_diff:.2f}deg C too large (possible tile boundary issue)"
-
-    def test_tile_boundary_continuity(self, location_gothenburg, weather_noon):
-        """Verify results are continuous across tile boundaries."""
-        size = 300
-
-        # Uniform flat terrain - should have smooth Tmrt
-        dsm = np.ones((size, size), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
-
-        result = _calculate_tiled(
-            surface,
-            location_gothenburg,
-            weather_noon,
-            tile_size=256,
-            max_shadow_distance_m=50.0,
-        )
-
-        valid_tmrt = result.tmrt[np.isfinite(result.tmrt)]
-
-        # For flat terrain, Tmrt should be nearly uniform
-        std_dev = np.std(valid_tmrt)
-        assert std_dev < 0.5, f"Tmrt std dev {std_dev:.2f}deg C too high for flat terrain"
-
-    def test_progress_callback(self, large_urban_surface, location_gothenburg, weather_noon):
-        """Test that progress callback is called correctly."""
-        progress_calls = []
-
-        def track_progress(tile_idx, total_tiles):
-            progress_calls.append((tile_idx, total_tiles))
-
-        _result = _calculate_tiled(
-            large_urban_surface,
-            location_gothenburg,
-            weather_noon,
-            tile_size=350,
-            max_shadow_distance_m=100.0,
-            progress_callback=track_progress,
-        )
-
-        # Should have received progress updates
-        assert len(progress_calls) > 0, "No progress callbacks received"
-
-        # Last call should indicate completion
-        last_idx, total = progress_calls[-1]
-        assert last_idx == total, f"Final callback should show completion: {last_idx}/{total}"
-
-
-class TestTilingMemoryBehavior:
-    """Tests focused on memory behavior of tiled processing."""
-
-    def test_tile_isolation(self):
-        """Verify tiles don't share mutable state."""
-        size = 300
-        dsm = np.ones((size, size), dtype=np.float32) * 10.0
-        dsm[200:300, 200:300] = 25.0  # Building
-
-        original_dsm = dsm.copy()
-
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
-        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
-        weather = Weather(
-            datetime=datetime(2024, 7, 15, 12, 0),
-            ta=25.0,
-            rh=50.0,
-            global_rad=800.0,
-        )
-
-        _ = _calculate_tiled(surface, location, weather, tile_size=256, max_shadow_distance_m=50.0)
-
-        # Original DSM should be unchanged
-        assert np.allclose(surface.dsm, original_dsm), "DSM was modified during tiled processing"
-
-
 class TestTilingHelpers:
     """Tests for tiling helper functions."""
-
-    def test_should_use_tiling_below_threshold(self):
-        """Rasters below resource limit should not trigger tiling."""
-        assert not _should_use_tiling(100, 100)
-        assert not _should_use_tiling(400, 400)
-
-    def test_should_use_tiling_above_threshold(self):
-        """Rasters exceeding resource-derived max should trigger tiling."""
-        max_side = compute_max_tile_side(context="solweig")
-        assert _should_use_tiling(max_side + 1, max_side + 1)
-        assert _should_use_tiling(max_side + 1, 100)
-        assert _should_use_tiling(100, max_side + 1)
-        # Below resource limit -- no tiling needed
-        assert not _should_use_tiling(max_side, max_side)
-
-    def test__calculate_tiled_requires_svf(self):
-        """Tiled runtime must not implicitly compute missing SVF."""
-        dsm = np.ones((320, 320), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0)
-        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
-        weather = Weather(
-            datetime=datetime(2024, 7, 15, 12, 0),
-            ta=25.0,
-            rh=50.0,
-            global_rad=800.0,
-        )
-
-        with pytest.raises(MissingPrecomputedData):
-            _calculate_tiled(
-                surface,
-                location,
-                weather,
-                tile_size=128,
-                use_anisotropic_sky=False,
-            )
 
     def test_auto_tile_size_returns_resource_max(self):
         """Auto tile size returns resource-derived maximum."""
@@ -389,118 +136,15 @@ class TestTilingHelpers:
         )
 
 
-class TestSliceMergeState:
-    """Tests for _slice_tile_state and _merge_tile_state."""
-
-    @pytest.fixture
-    def global_state(self):
-        """Create a global state with distinctive values."""
-        shape = (100, 100)
-        state = ThermalState(
-            tgmap1=np.random.rand(*shape).astype(np.float32),
-            tgmap1_e=np.random.rand(*shape).astype(np.float32),
-            tgmap1_s=np.random.rand(*shape).astype(np.float32),
-            tgmap1_w=np.random.rand(*shape).astype(np.float32),
-            tgmap1_n=np.random.rand(*shape).astype(np.float32),
-            tgout1=np.random.rand(*shape).astype(np.float32),
-            firstdaytime=1.0,
-            timeadd=0.5,
-            timestep_dec=0.042,
-        )
-        return state
-
-    @pytest.fixture
-    def tile(self):
-        """Create a tile spec for the center of a 100x100 grid."""
-        # Core: rows 20-60, cols 30-70
-        # Full (with 10px overlap): rows 10-70, cols 20-80
-        return TileSpec(
-            row_start=20,
-            row_end=60,
-            col_start=30,
-            col_end=70,
-            row_start_full=10,
-            row_end_full=70,
-            col_start_full=20,
-            col_end_full=80,
-            overlap_top=10,
-            overlap_bottom=10,
-            overlap_left=10,
-            overlap_right=10,
-        )
-
-    def test_slice_tile_state_shape(self, global_state, tile):
-        """Sliced state should have full tile shape."""
-        sliced = _slice_tile_state(global_state, tile)
-        expected_shape = (60, 60)  # rows 10-70, cols 20-80
-        assert sliced.tgmap1.shape == expected_shape
-        assert sliced.tgmap1_e.shape == expected_shape
-        assert sliced.tgout1.shape == expected_shape
-
-    def test_slice_tile_state_values(self, global_state, tile):
-        """Sliced state should contain correct values from global state."""
-        sliced = _slice_tile_state(global_state, tile)
-        read_slice = tile.read_slice
-        np.testing.assert_array_equal(sliced.tgmap1, global_state.tgmap1[read_slice])
-
-    def test_slice_tile_state_scalars(self, global_state, tile):
-        """Sliced state should copy scalar values."""
-        sliced = _slice_tile_state(global_state, tile)
-        assert sliced.firstdaytime == 1.0
-        assert sliced.timeadd == 0.5
-        assert sliced.timestep_dec == 0.042
-
-    def test_slice_tile_state_independent(self, global_state, tile):
-        """Sliced state should be a copy, not a view."""
-        sliced = _slice_tile_state(global_state, tile)
-        original_val = sliced.tgmap1[0, 0]
-        sliced.tgmap1[0, 0] = -999.0
-        assert global_state.tgmap1[tile.row_start_full, tile.col_start_full] == original_val
-
-    def test_merge_tile_state_writes_core(self, global_state, tile):
-        """Merge should write tile core region to correct global position."""
-        sliced = _slice_tile_state(global_state, tile)
-
-        # Modify tile state values
-        sliced.tgmap1[:] = 42.0
-        sliced.firstdaytime = 0.0
-        sliced.timeadd = 1.5
-
-        _merge_tile_state(sliced, tile, global_state)
-
-        # Core region should be updated
-        write_slice = tile.write_slice
-        np.testing.assert_array_equal(global_state.tgmap1[write_slice], 42.0)
-
-        # Scalar values should be updated
-        assert global_state.firstdaytime == 0.0
-        assert global_state.timeadd == 1.5
-
-    def test_merge_tile_state_preserves_outside(self, global_state, tile):
-        """Merge should not modify areas outside the tile's write region."""
-        original_tgmap1 = global_state.tgmap1.copy()
-        sliced = _slice_tile_state(global_state, tile)
-        sliced.tgmap1[:] = 42.0
-
-        _merge_tile_state(sliced, tile, global_state)
-
-        # Areas outside write_slice should be unchanged
-        # Check top-left corner (row 0, col 0) -- outside tile
-        assert global_state.tgmap1[0, 0] == original_tgmap1[0, 0]
-        # Check bottom-right corner -- outside tile
-        assert global_state.tgmap1[99, 99] == original_tgmap1[99, 99]
-
-
 class TestTimeseriesTiledIntegration:
     """Integration tests for tiled timeseries processing."""
 
     @pytest.fixture(scope="class")
-    def small_surface(self):
-        """Small 50x50 surface for fast tests (below tiling threshold)."""
-        np.random.seed(42)
-        size = 50
-        dsm = np.ones((size, size), dtype=np.float32) * 5.0
-        dsm[20:30, 20:30] = 10.0  # Small building
+    def multi_tile_surface(self):
+        """520x520 surface with a low building so multi-tile runs also exercise overlap stitching."""
+        size = 520
+        dsm = np.ones((size, size), dtype=np.float32) * 10.0
+        dsm[220:300, 220:300] = 15.0  # 5m relative height -> non-zero overlap buffer
         return SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
 
     @pytest.fixture(scope="class")
@@ -515,15 +159,12 @@ class TestTimeseriesTiledIntegration:
             Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0),
         ]
 
-    def test_timeseries_tiled_matches_nontiled(self, small_surface, location, weather_pair, tmp_path):
+    def test_timeseries_tiled_matches_nontiled(self, multi_tile_surface, location, weather_pair, tmp_path):
         """Tiled timeseries should match non-tiled within numerical precision.
 
         Both paths use the same mock SVF from the surface (tiled path slices
         the global SVF per tile instead of recomputing).
         """
-        from solweig.tiling import _calculate_timeseries_tiled
-        from solweig.timeseries import _calculate_timeseries
-
         ref_dir = tmp_path / "ref"
         ref_dir.mkdir()
         tiled_dir = tmp_path / "tiled"
@@ -531,20 +172,21 @@ class TestTimeseriesTiledIntegration:
 
         # Non-tiled (normal path -- uses mock SVF from surface)
         _calculate_timeseries(
-            surface=small_surface,
+            surface=multi_tile_surface,
             weather_series=weather_pair,
             location=location,
             output_dir=ref_dir,
             outputs=["tmrt"],
         )
 
-        # Tiled (forced via direct call -- slices mock SVF from surface)
-        _calculate_timeseries_tiled(
-            surface=small_surface,
+        # Tiled (forced via tile_size -- slices mock SVF from the global surface)
+        _calculate_timeseries(
+            surface=multi_tile_surface,
             weather_series=weather_pair,
             location=location,
             output_dir=tiled_dir,
             outputs=["tmrt"],
+            tile_size=256,
         )
 
         for i in range(len(weather_pair)):
@@ -557,21 +199,22 @@ class TestTimeseriesTiledIntegration:
                 assert diff.mean() < 0.01, f"Timestep {i}: mean Tmrt diff {diff.mean():.2f}deg C too large"
                 assert diff.max() < 0.1, f"Timestep {i}: max Tmrt diff {diff.max():.2f}deg C too large"
 
-    def test_timeseries_tiled_writes_output_with_async_disabled(self, small_surface, location, weather_pair, tmp_path):
+    def test_timeseries_tiled_writes_output_with_async_disabled(
+        self, multi_tile_surface, location, weather_pair, tmp_path
+    ):
         """Tiled timeseries must write per-timestep GeoTIFFs even with SOLWEIG_ASYNC_OUTPUT=0."""
         import os
-
-        from solweig.tiling import _calculate_timeseries_tiled
 
         old_val = os.environ.get("SOLWEIG_ASYNC_OUTPUT")
         os.environ["SOLWEIG_ASYNC_OUTPUT"] = "0"
         try:
-            _calculate_timeseries_tiled(
-                surface=small_surface,
+            _calculate_timeseries(
+                surface=multi_tile_surface,
                 weather_series=weather_pair,
                 location=location,
                 output_dir=tmp_path,
                 outputs=["tmrt"],
+                tile_size=256,
             )
         finally:
             if old_val is None:
@@ -585,17 +228,49 @@ class TestTimeseriesTiledIntegration:
             assert tmrt is not None, f"No tmrt GeoTIFF for timestep {i} with SOLWEIG_ASYNC_OUTPUT=0"
             assert np.isfinite(tmrt).sum() > 0
 
-    def test_timeseries_tiled_state_accumulates(self, small_surface, location, weather_pair, tmp_path):
+    def test_timeseries_tiled_state_accumulates(self, multi_tile_surface, location, weather_pair, tmp_path):
         """Thermal state should evolve across timesteps in tiled mode."""
-        from solweig.tiling import _calculate_timeseries_tiled
+        from solweig import tiling as tiling_module
 
-        summary = _calculate_timeseries_tiled(
-            surface=small_surface,
-            weather_series=weather_pair,
-            location=location,
-            output_dir=tmp_path,
-            outputs=["tmrt"],
-        )
+        original_calculate_single = __import__("solweig.api", fromlist=["_calculate_single"])._calculate_single
+        state_calls: list[tuple[int, float, float]] = []
+
+        def _spy_calculate_single(**kwargs):
+            state = kwargs["state"]
+            state_calls.append((id(state), float(state.firstdaytime), float(state.timeadd)))
+            return original_calculate_single(**kwargs)
+
+        rows, cols = multi_tile_surface.shape
+        pixel_size = multi_tile_surface.pixel_size
+        max_height = multi_tile_surface.max_height
+        buffer_m = calculate_buffer_distance(max_height)
+        buffer_pixels = int(np.ceil(buffer_m / pixel_size))
+        adjusted_tile_size, _warning = tiling_module.validate_tile_size(256, buffer_pixels, pixel_size)
+        expected_tiles = len(tiling_module.generate_tiles(rows, cols, adjusted_tile_size, buffer_pixels))
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr("solweig.api._calculate_single", _spy_calculate_single)
+        try:
+            summary = _calculate_timeseries(
+                surface=multi_tile_surface,
+                weather_series=weather_pair,
+                location=location,
+                output_dir=tmp_path,
+                outputs=["tmrt"],
+                tile_size=256,
+            )
+        finally:
+            monkeypatch.undo()
+
+        assert buffer_pixels > 0
+        assert len(state_calls) == expected_tiles * len(weather_pair)
+        for tile_idx in range(expected_tiles):
+            first_call = state_calls[tile_idx * len(weather_pair)]
+            second_call = state_calls[tile_idx * len(weather_pair) + 1]
+            assert first_call[1:] == (1.0, 0.0)
+            assert second_call[0] == first_call[0]
+            assert second_call[1] == 0.0
+            assert second_call[2] > 0.0
 
         # Both timesteps should produce valid results
         assert len(summary) == 2
@@ -604,34 +279,34 @@ class TestTimeseriesTiledIntegration:
             valid = np.isfinite(tmrt)
             assert valid.sum() > 0, "Expected some valid Tmrt values"
 
-    def test_timeseries_tiled_progress_callback(self, small_surface, location, weather_pair, tmp_path):
+    def test_timeseries_tiled_progress_callback(self, multi_tile_surface, location, weather_pair, tmp_path):
         """Progress callback should be called for tiled timeseries."""
-        from solweig.tiling import _calculate_timeseries_tiled
-
         calls = []
 
         def track(current, total):
             calls.append((current, total))
 
-        _calculate_timeseries_tiled(
-            surface=small_surface,
+        _calculate_timeseries(
+            surface=multi_tile_surface,
             weather_series=weather_pair,
             location=location,
             output_dir=tmp_path,
             progress_callback=track,
+            tile_size=256,
         )
 
-        assert len(calls) > 0, "No progress callbacks received"
+        # Callbacks report (current, total) where total = n_tiles * n_timesteps
+        assert len(calls) >= 2  # at least one per timestep
+        assert calls[-1][0] == calls[-1][1]  # final callback: current == total
 
-    def test_timeseries_tiled_summary_only(self, small_surface, location, weather_pair, tmp_path):
+    def test_timeseries_tiled_summary_only(self, multi_tile_surface, location, weather_pair, tmp_path):
         """Default mode (no outputs) should still produce summary grids."""
-        from solweig.tiling import _calculate_timeseries_tiled
-
-        summary = _calculate_timeseries_tiled(
-            surface=small_surface,
+        summary = _calculate_timeseries(
+            surface=multi_tile_surface,
             weather_series=weather_pair,
             location=location,
             output_dir=tmp_path,
+            tile_size=256,
         )
 
         assert len(summary) == 2
@@ -641,11 +316,10 @@ class TestTimeseriesTiledIntegration:
         assert summary.tmrt_min is not None
 
     def test_timeseries_tiled_summary_only_requests_tmrt_and_shadow(
-        self, small_surface, location, weather_pair, tmp_path
+        self, multi_tile_surface, location, weather_pair, tmp_path
     ):
         """Summary-only mode should request tmrt and shadow from tiled per-tile calculations."""
         from solweig import SolweigResult
-        from solweig.tiling import _calculate_timeseries_tiled
 
         captured: list[set[str] | None] = []
 
@@ -667,23 +341,23 @@ class TestTimeseriesTiledIntegration:
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr("solweig.api._calculate_single", _fake_calculate)
         try:
-            _calculate_timeseries_tiled(
-                surface=small_surface,
+            _calculate_timeseries(
+                surface=multi_tile_surface,
                 weather_series=weather_pair,
                 location=location,
                 output_dir=tmp_path,
+                tile_size=256,
             )
         finally:
             monkeypatch.undo()
 
         assert captured and all(req == {"tmrt", "shadow"} for req in captured)
 
-    def test_timeseries_tiled_precreates_tile_surfaces_once(self, small_surface, location, weather_pair, tmp_path):
+    def test_timeseries_tiled_precreates_tile_surfaces_once(self, multi_tile_surface, location, weather_pair, tmp_path):
         """Tile surfaces should be extracted once per tile, not once per timestep."""
         from unittest.mock import patch
 
         from solweig import tiling as tiling_module
-        from solweig.tiling import _calculate_timeseries_tiled
 
         extract_calls = 0
         original_extract = tiling_module._extract_tile_surface
@@ -693,21 +367,22 @@ class TestTimeseriesTiledIntegration:
             extract_calls += 1
             return original_extract(*args, **kwargs)
 
-        rows, cols = small_surface.shape
-        pixel_size = small_surface.pixel_size
-        max_height = small_surface.max_height
+        rows, cols = multi_tile_surface.shape
+        pixel_size = multi_tile_surface.pixel_size
+        max_height = multi_tile_surface.max_height
         buffer_m = calculate_buffer_distance(max_height)
         buffer_pixels = int(np.ceil(buffer_m / pixel_size))
-        tile_size = tiling_module._calculate_auto_tile_size(rows, cols)
+        tile_size = 256
         adjusted_tile_size, _warning = tiling_module.validate_tile_size(tile_size, buffer_pixels, pixel_size)
         expected_tiles = len(tiling_module.generate_tiles(rows, cols, adjusted_tile_size, buffer_pixels))
 
         with patch("solweig.tiling._extract_tile_surface", side_effect=spy_extract):
-            _calculate_timeseries_tiled(
-                surface=small_surface,
+            _calculate_timeseries(
+                surface=multi_tile_surface,
                 weather_series=weather_pair,
                 location=location,
                 output_dir=tmp_path,
+                tile_size=256,
             )
 
         assert extract_calls == expected_tiles, (
@@ -715,240 +390,15 @@ class TestTimeseriesTiledIntegration:
             "(possible per-timestep recomputation regression)"
         )
 
-    def test_timeseries_tiled_worker_parity(self, small_surface, location, weather_pair, tmp_path):
-        """Worker count should not materially change tiled timeseries outputs."""
-        from solweig.tiling import _calculate_timeseries_tiled
-
-        one_dir = tmp_path / "one"
-        one_dir.mkdir()
-        multi_dir = tmp_path / "multi"
-        multi_dir.mkdir()
-
-        _calculate_timeseries_tiled(
-            surface=small_surface,
-            weather_series=weather_pair,
-            location=location,
-            tile_workers=1,
-            tile_queue_depth=0,
-            prefetch_tiles=False,
-            output_dir=one_dir,
-            outputs=["tmrt"],
-        )
-        _calculate_timeseries_tiled(
-            surface=small_surface,
-            weather_series=weather_pair,
-            location=location,
-            tile_workers=2,
-            tile_queue_depth=2,
-            prefetch_tiles=True,
-            output_dir=multi_dir,
-            outputs=["tmrt"],
-        )
-
-        for i in range(len(weather_pair)):
-            ref_tmrt = read_timestep_geotiff(one_dir, "tmrt", i)
-            got_tmrt = read_timestep_geotiff(multi_dir, "tmrt", i)
-            both_valid = np.isfinite(ref_tmrt) & np.isfinite(got_tmrt)
-            if both_valid.sum() > 0:
-                diff = np.abs(ref_tmrt[both_valid] - got_tmrt[both_valid])
-                assert diff.mean() < 0.01
-                assert diff.max() < 0.1
-
-    def test_invalid_tile_workers_raises(self, small_surface, location, weather_pair, tmp_path):
-        """Invalid tile_workers should raise clear ValueError."""
-        from solweig.tiling import _calculate_timeseries_tiled
-
+    def test_invalid_tile_workers_raises(self):
+        """Invalid tile_workers in ModelConfig raises ValueError."""
         with pytest.raises(ValueError, match="tile_workers must be >= 1"):
-            _calculate_timeseries_tiled(
-                surface=small_surface,
-                weather_series=weather_pair,
-                location=location,
-                output_dir=tmp_path,
-                tile_workers=0,
-            )
+            ModelConfig(tile_workers=0)
 
-    def test_invalid_tile_queue_depth_raises(self, small_surface, location, weather_pair, tmp_path):
-        """Invalid tile_queue_depth should raise clear ValueError."""
-        from solweig.tiling import _calculate_timeseries_tiled
-
+    def test_invalid_tile_queue_depth_raises(self):
+        """Invalid tile_queue_depth in ModelConfig raises ValueError."""
         with pytest.raises(ValueError, match="tile_queue_depth must be >= 0"):
-            _calculate_timeseries_tiled(
-                surface=small_surface,
-                weather_series=weather_pair,
-                location=location,
-                output_dir=tmp_path,
-                tile_queue_depth=-1,
-            )
-
-
-class TestTiledAnisotropicParity:
-    """Verify anisotropic sky produces matching results in tiled vs non-tiled mode.
-
-    Shadow matrices are spatially sliced per tile, so anisotropic diffuse
-    radiation must agree between tiled and non-tiled paths.
-
-    Uses a flat surface (no buildings -> max_height=0 -> zero buffer) so
-    tile boundaries introduce no shadow truncation artifacts, giving a
-    clean comparison of shadow matrix slicing.
-    """
-
-    @pytest.fixture(scope="class")
-    def aniso_surface(self):
-        """530x530 flat surface with synthetic shadow matrices (all visible).
-
-        530x530 at tile_size=256 -> ceil(530/256)=3 -> 9 tiles, ensuring
-        multi-tile processing is exercised. Flat terrain (max_height=0)
-        means zero overlap buffer so results should match exactly.
-        """
-        from solweig.models.precomputed import ShadowArrays
-
-        size = 530
-        n_patches = 153
-        n_pack = (n_patches + 7) // 8
-
-        dsm = np.ones((size, size), dtype=np.float32) * 2.0
-
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
-
-        # All-visible shadow matrices (0xFF = every patch visible)
-        shmat = np.full((size, size, n_pack), 0xFF, dtype=np.uint8)
-        vegshmat = np.full((size, size, n_pack), 0xFF, dtype=np.uint8)
-        vbshmat = np.full((size, size, n_pack), 0xFF, dtype=np.uint8)
-
-        surface.shadow_matrices = ShadowArrays(
-            _shmat_u8=shmat,
-            _vegshmat_u8=vegshmat,
-            _vbshmat_u8=vbshmat,
-            _n_patches=n_patches,
-        )
-        return surface
-
-    @pytest.fixture(scope="class")
-    def aniso_location(self):
-        return Location(latitude=57.7, longitude=12.0, utc_offset=2)
-
-    @pytest.fixture(scope="class")
-    def aniso_weather(self):
-        return Weather(
-            datetime=datetime(2024, 7, 15, 12, 0),
-            ta=25.0,
-            rh=50.0,
-            global_rad=800.0,
-        )
-
-    def test_anisotropic_tiled_vs_nontiled(self, aniso_surface, aniso_location, aniso_weather, tmp_path):
-        """Tiled anisotropic sky matches non-tiled within numerical precision."""
-        ref_dir = tmp_path / "ref"
-        ref_dir.mkdir()
-
-        # Non-tiled reference
-        calculate(
-            aniso_surface,
-            [aniso_weather],
-            aniso_location,
-            use_anisotropic_sky=True,
-            output_dir=ref_dir,
-            outputs=["tmrt", "shadow"],
-        )
-        tmrt_ref = read_timestep_geotiff(ref_dir, "tmrt", 0)
-
-        # Tiled: tile_size=256 on 530x530 -> 9 tiles (3x3)
-        result_tiled = _calculate_tiled(
-            aniso_surface,
-            aniso_location,
-            aniso_weather,
-            tile_size=256,
-            use_anisotropic_sky=True,
-        )
-
-        both_valid = np.isfinite(tmrt_ref) & np.isfinite(result_tiled.tmrt)
-        assert both_valid.sum() > 0, "Expected valid Tmrt pixels"
-
-        diff = np.abs(result_tiled.tmrt[both_valid] - tmrt_ref[both_valid])
-        mean_diff = diff.mean()
-        max_diff = diff.max()
-
-        assert mean_diff < 0.01, f"Mean Tmrt diff {mean_diff:.4f}deg C too large (tiled vs non-tiled anisotropic)"
-        assert max_diff < 0.1, f"Max Tmrt diff {max_diff:.4f}deg C too large (possible shadow matrix slicing issue)"
-
-
-class TestHeightAwareBuffer:
-    """Verify tiling functions compute buffer from actual building heights."""
-
-    def test_short_buildings_get_small_buffer(self):
-        """With 5m relative height the buffer should be ~95m, not the 500m default."""
-        from unittest.mock import patch
-
-        size = 400
-        ground = 10.0
-        building_height = 5.0  # above ground
-        max_dsm = ground + building_height  # 15m absolute, 5m relative
-        dsm = np.full((size, size), ground, dtype=np.float32)
-        dsm[100:120, 100:120] = max_dsm
-
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
-        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
-        weather = Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0)
-
-        # Buffer uses relative height (5m), not absolute elevation (15m)
-        # buffer = 5 / tan(3deg) ~ 95.4m -- much less than default 500m cap
-        expected_buffer = calculate_buffer_distance(building_height)
-        assert 90 < expected_buffer < 100, f"Expected ~95m buffer, got {expected_buffer}"
-
-        # Patch generate_tiles to capture the buffer_pixels that _calculate_tiled passes
-        captured = {}
-        original_generate_tiles = __import__("solweig.tiling", fromlist=["generate_tiles"]).generate_tiles
-
-        def spy_generate_tiles(rows, cols, tile_size, buffer_pixels):
-            captured["buffer_pixels"] = buffer_pixels
-            return original_generate_tiles(rows, cols, tile_size, buffer_pixels)
-
-        with patch("solweig.tiling.generate_tiles", side_effect=spy_generate_tiles):
-            _ = _calculate_tiled(surface, location, weather, tile_size=350)
-
-        # If generate_tiles was called, buffer should match relative-height-derived value
-        if "buffer_pixels" in captured:
-            expected_px = int(np.ceil(expected_buffer / surface.pixel_size))
-            assert captured["buffer_pixels"] == expected_px, (
-                f"Expected {expected_px}px buffer from {building_height}m relative height, "
-                f"got {captured['buffer_pixels']}px"
-            )
-
-    def test_tall_buildings_capped_at_max(self):
-        """With 30m relative height the buffer should cap at max_shadow_distance_m."""
-        from unittest.mock import patch
-
-        size = 400
-        ground = 10.0
-        building_height = 30.0
-        max_dsm = ground + building_height  # 40m absolute, 30m relative
-        dsm = np.full((size, size), ground, dtype=np.float32)
-        dsm[100:120, 100:120] = max_dsm
-
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
-        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
-        weather = Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0)
-
-        cap = 200.0
-        # 30m relative height: 30/tan(3deg) ~ 573m -> capped at 200m
-        expected_buffer = calculate_buffer_distance(building_height, max_shadow_distance_m=cap)
-        assert expected_buffer == cap, f"Expected buffer capped at {cap}, got {expected_buffer}"
-
-        captured = {}
-        original_generate_tiles = __import__("solweig.tiling", fromlist=["generate_tiles"]).generate_tiles
-
-        def spy_generate_tiles(rows, cols, tile_size, buffer_pixels):
-            captured["buffer_pixels"] = buffer_pixels
-            return original_generate_tiles(rows, cols, tile_size, buffer_pixels)
-
-        with patch("solweig.tiling.generate_tiles", side_effect=spy_generate_tiles):
-            _ = _calculate_tiled(surface, location, weather, tile_size=350, max_shadow_distance_m=cap)
-
-        if "buffer_pixels" in captured:
-            expected_px = int(np.ceil(cap / surface.pixel_size))
-            assert captured["buffer_pixels"] == expected_px, (
-                f"Expected {expected_px}px buffer (capped at {cap}m), got {captured['buffer_pixels']}px"
-            )
+            ModelConfig(tile_queue_depth=-1)
 
 
 class TestTiledAccumulatorParity:
@@ -1257,8 +707,6 @@ class TestTiledMemoryRegression:
         """
         import tracemalloc
 
-        from solweig.tiling import _calculate_timeseries_tiled
-
         location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
         weather_pair = [
             Weather(datetime=datetime(2024, 7, 15, 11, 0), ta=26.0, rh=50.0, global_rad=750.0, ws=2.0),
@@ -1292,13 +740,11 @@ class TestTiledMemoryRegression:
             snapshot_before = tracemalloc.take_snapshot()
 
             with unittest.mock.patch("solweig.api._calculate_single", _fake_calculate):
-                _calculate_timeseries_tiled(
+                _calculate_timeseries(
                     surface=surface,
                     weather_series=weather_pair,
                     location=location,
                     output_dir=tmp_path / f"mem_{size}",
-                    tile_workers=1,
-                    prefetch_tiles=False,
                 )
 
             snapshot_after = tracemalloc.take_snapshot()
@@ -1333,8 +779,6 @@ class TestTiledMemoryRegression:
         """Verify memmap is used when pixel count exceeds the threshold."""
         from unittest.mock import patch
 
-        from solweig.tiling import _calculate_timeseries_tiled
-
         # Use a small raster but lower the threshold so memmap activates
         size = 100
         dsm = np.ones((size, size), dtype=np.float32) * 5.0
@@ -1363,7 +807,7 @@ class TestTiledMemoryRegression:
             patch("solweig.tiling._MEMMAP_PIXEL_THRESHOLD", 1),
             patch("solweig.api._calculate_single", _fake_calculate),
         ):
-            summary = _calculate_timeseries_tiled(
+            summary = _calculate_timeseries(
                 surface=surface,
                 weather_series=weather,
                 location=location,

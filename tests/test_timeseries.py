@@ -328,65 +328,97 @@ class TestCalculateTimeseries:
 
         assert captured and all(req == {"tmrt", "shadow"} for req in captured)
 
-    def test_tiling_runtime_controls_forwarded_from_config(self, flat_surface, location, tmp_path, monkeypatch):
-        """ModelConfig tile runtime settings are forwarded to tiled runner."""
-        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
-        config = ModelConfig(tile_workers=3, tile_queue_depth=5, prefetch_tiles=False)
-
-        captured: dict[str, object] = {}
-
-        def _fake_tiled(**kwargs):
-            captured.update(kwargs)
-            return TimeseriesSummary.empty()
-
-        monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
-        monkeypatch.setattr("solweig.tiling._calculate_timeseries_tiled", _fake_tiled)
-
-        summary = calculate(flat_surface, weather_series, location=location, output_dir=tmp_path, config=config)
-        assert isinstance(summary, TimeseriesSummary)
-        assert captured["tile_workers"] == 3
-        assert captured["tile_queue_depth"] == 5
-        assert captured["prefetch_tiles"] is False
-
-    def test_config_tiling_runtime_controls_forwarded(self, flat_surface, location, tmp_path, monkeypatch):
-        """ModelConfig tiling runtime settings are forwarded to tiled runner."""
-        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
-        config = ModelConfig(tile_workers=6, tile_queue_depth=9, prefetch_tiles=True)
-
-        captured: dict[str, object] = {}
-
-        def _fake_tiled(**kwargs):
-            captured.update(kwargs)
-            return TimeseriesSummary.empty()
-
-        monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
-        monkeypatch.setattr("solweig.tiling._calculate_timeseries_tiled", _fake_tiled)
-
-        summary = calculate(
-            flat_surface,
-            weather_series,
-            location=location,
-            output_dir=tmp_path,
-            config=config,
-        )
-        assert isinstance(summary, TimeseriesSummary)
-        assert captured["tile_workers"] == 6
-        assert captured["tile_queue_depth"] == 9
-        assert captured["prefetch_tiles"] is True
-
-    def test_invalid_tile_workers_raises_from_config(self, flat_surface, location, tmp_path, monkeypatch):
+    def test_invalid_tile_workers_raises_from_config(self):
         """Invalid tile_workers in ModelConfig raises ValueError."""
-        monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
-
         with pytest.raises(ValueError, match="tile_workers must be >= 1"):
             ModelConfig(tile_workers=0)
 
-    def test_invalid_tile_queue_depth_raises_from_config(self, flat_surface, location, tmp_path, monkeypatch):
+    def test_invalid_tile_queue_depth_raises_from_config(self):
         """Invalid tile_queue_depth in ModelConfig raises ValueError."""
-        monkeypatch.setattr("solweig.tiling._should_use_tiling", lambda _r, _c: True)
-
         with pytest.raises(ValueError, match="tile_queue_depth must be >= 0"):
             ModelConfig(tile_queue_depth=-1)
+
+    def test_legacy_tile_runtime_controls_warn(self, flat_surface, location, tmp_path, caplog):
+        """Legacy tile runtime controls warn when used in timeseries mode."""
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 12, 0), n_hours=1)
+        config = ModelConfig(tile_workers=4, tile_queue_depth=2, prefetch_tiles=False)
+
+        with caplog.at_level("WARNING"):
+            calculate(flat_surface, weather_series, location, output_dir=tmp_path, config=config)
+
+        assert "Ignoring legacy timeseries tile runtime controls" in caplog.text
+
+    def test_progress_callback_reports_completed_timesteps_for_multi_tile(self, location, tmp_path):
+        """Multi-tile progress callbacks should report completed raster timesteps."""
+        from conftest import make_mock_svf
+
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
+        surface = SurfaceData(
+            dsm=np.pad(
+                np.full((80, 80), 15.0, dtype=np.float32),
+                ((220, 220), (220, 220)),
+                mode="constant",
+                constant_values=10.0,
+            ),
+            pixel_size=1.0,
+            svf=make_mock_svf((520, 520)),
+        )
+        calls: list[tuple[int, int]] = []
+
+        calculate(
+            surface,
+            weather_series,
+            location,
+            use_anisotropic_sky=False,
+            tile_size=256,
+            output_dir=tmp_path,
+            progress_callback=lambda current, total: calls.append((current, total)),
+        )
+
+        # 9 tiles × 3 timesteps = 27 callbacks; final callback: current == total
+        assert len(calls) == 27
+        assert calls[-1][0] == calls[-1][1]
+
+    def test_failed_multi_tile_run_cleans_up_partial_outputs(self, location, tmp_path, monkeypatch):
+        """Aborted multi-tile runs should not leave finished-looking timestep GeoTIFFs behind."""
+        from conftest import make_mock_svf
+
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=2)
+        surface = SurfaceData(
+            dsm=np.pad(
+                np.full((80, 80), 15.0, dtype=np.float32),
+                ((220, 220), (220, 220)),
+                mode="constant",
+                constant_values=10.0,
+            ),
+            pixel_size=1.0,
+            svf=make_mock_svf((520, 520)),
+        )
+
+        call_count = 0
+        original_calculate_single = __import__("solweig.api", fromlist=["_calculate_single"])._calculate_single
+
+        def _fail_on_second_call(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise RuntimeError("boom")
+            return original_calculate_single(**kwargs)
+
+        monkeypatch.setattr("solweig.api._calculate_single", _fail_on_second_call)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            calculate(
+                surface,
+                weather_series,
+                location,
+                use_anisotropic_sky=False,
+                tile_size=256,
+                output_dir=tmp_path,
+                outputs=["tmrt"],
+            )
+
+        assert not list(tmp_path.rglob("*.tif"))
 
 
 class TestModelConfigTilingRuntimeSerialization:
@@ -444,6 +476,45 @@ class TestTimeseriesSummary:
         manual_mean = np.nanmean(stacked, axis=0)
 
         np.testing.assert_allclose(summary.tmrt_mean, manual_mean, atol=0.1)
+
+    def test_multi_tile_matches_single_tile(self, location, tmp_path):
+        """Forced multi-tile stitching matches a single-tile reference."""
+        from conftest import make_mock_svf
+
+        weather_series = _make_weather_series(datetime(2024, 7, 15, 10, 0), n_hours=3)
+        size = 520
+        surface = SurfaceData(
+            dsm=np.pad(
+                np.full((80, 80), 15.0, dtype=np.float32),
+                ((220, 220), (220, 220)),
+                mode="constant",
+                constant_values=10.0,
+            ),
+            pixel_size=1.0,
+            svf=make_mock_svf((size, size)),
+        )
+
+        ref_dir = tmp_path / "ref"
+        tiled_dir = tmp_path / "tiled"
+        ref = calculate(
+            surface,
+            weather_series,
+            location,
+            use_anisotropic_sky=False,
+            output_dir=ref_dir,
+        )
+        tiled = calculate(
+            surface,
+            weather_series,
+            location,
+            use_anisotropic_sky=False,
+            output_dir=tiled_dir,
+            tile_size=256,
+        )
+
+        np.testing.assert_allclose(tiled.tmrt_mean, ref.tmrt_mean, atol=0.01)
+        np.testing.assert_allclose(tiled.tmrt_max, ref.tmrt_max, atol=0.01)
+        np.testing.assert_allclose(tiled.utci_mean, ref.utci_mean, atol=0.01)
 
     def test_summary_utci_grids_populated(self, flat_surface, location, tmp_path):
         """UTCI summary grids are computed and finite."""

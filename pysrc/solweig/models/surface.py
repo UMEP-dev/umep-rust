@@ -553,6 +553,7 @@ class SurfaceData:
         tdsm_relative: bool = True,
         min_object_height: float = 1.0,
         force_recompute: bool = False,
+        tile_size: int | None = None,
         feedback: Any = None,
     ) -> SurfaceData:
         """
@@ -594,6 +595,9 @@ class SurfaceData:
                 kerbs, street furniture, and LiDAR noise. Default 1.0. Set to
                 0 to disable. Requires DEM.
             force_recompute: Recompute walls/SVF even if cached (file mode only).
+            tile_size: Core tile side length in pixels for SVF tiling.
+                If None (default), auto-calculated from available resources.
+                Minimum 256.
             feedback: QGIS QgsProcessingFeedback for progress/cancellation.
 
         Returns:
@@ -793,6 +797,7 @@ class SurfaceData:
                 aligned_rasters,
                 working_path,
                 trunk_ratio,
+                tile_size=tile_size,
                 feedback=feedback,
                 progress_range=svf_range,
             )
@@ -1543,6 +1548,7 @@ class SurfaceData:
         working_path: Path,
         trunk_ratio: float,
         on_tile_complete: Callable | None = None,
+        tile_size: int | None = None,
         feedback: Any = None,
         progress_range: tuple[float, float] | None = None,
     ) -> None:
@@ -1601,7 +1607,7 @@ class SurfaceData:
 
         _max_pixels = compute_max_tile_pixels(context="svf")
         n_pixels = rows * cols
-        needs_tiling = n_pixels > _max_pixels
+        needs_tiling = tile_size is not None or n_pixels > _max_pixels
         compress_exports = _should_compress_svf_exports(n_pixels)
         export_shadow_npz = _should_export_shadow_npz(n_pixels)
         if not compress_exports:
@@ -1629,6 +1635,7 @@ class SurfaceData:
                 max_height,
                 svf_cache_dir,
                 on_tile_complete=on_tile_complete,
+                tile_size=tile_size,
                 feedback=feedback,
                 progress_range=progress_range,
             )
@@ -1770,6 +1777,7 @@ class SurfaceData:
         max_height: float,
         working_path: Path,
         on_tile_complete: Callable | None = None,
+        tile_size: int | None = None,
         feedback: Any = None,
         progress_range: tuple[float, float] | None = None,
     ) -> tuple[SvfArrays, tuple[np.ndarray, np.ndarray, np.ndarray]]:
@@ -1811,10 +1819,13 @@ class SurfaceData:
         # The full tile (core + 2*buffer) must fit, so subtract buffer from max side.
         from ..tiling import MIN_TILE_SIZE, compute_max_tile_side
 
-        max_full_side = compute_max_tile_side(context="svf")
-        tile_size = max(MIN_TILE_SIZE, max_full_side - 2 * buffer_pixels)
+        if tile_size is not None:
+            core_tile_size = tile_size
+        else:
+            max_full_side = compute_max_tile_side(context="svf")
+            core_tile_size = max(MIN_TILE_SIZE, max_full_side - 2 * buffer_pixels)
 
-        adjusted_tile_size, warning = validate_tile_size(tile_size, buffer_pixels, pixel_size, context="svf")
+        adjusted_tile_size, warning = validate_tile_size(core_tile_size, buffer_pixels, pixel_size, context="svf")
         if warning:
             logger.warning(warning)
 
@@ -1896,13 +1907,9 @@ class SurfaceData:
             vegshmat_mm[:] = 0
             vbshmat_mm[:] = 0
 
-        # Progress: n_tiles × n_patches gives fine-grained per-patch visibility.
-        pbar = ProgressReporter(
-            total=n_tiles * n_patches,
-            desc="Computing SVF (tiled)",
-            feedback=feedback,
-            progress_range=progress_range,
-        )
+        # Progress: one bar per tile (matching timeseries progress style).
+        # For QGIS feedback, a single reporter spans the full progress_range.
+        _use_per_tile_bars = feedback is None and n_tiles > 1
 
         # Pipeline: overlap GPU computation of tile N+1 with CPU
         # result-copying of tile N.  SkyviewRunner.calculate_svf releases the
@@ -1986,10 +1993,27 @@ class SurfaceData:
         # Kick off first tile
         thread, box, runner, core_only = _submit_tile(tiles[0])
 
+        pbar = None
         try:
             for tile_idx in range(n_tiles):
-                pbar.set_description(f"SVF tile {tile_idx + 1}/{n_tiles}")
-                pbar.set_text(f"Computing SVF — Tile {tile_idx + 1}/{n_tiles}")
+                # Per-tile progress bar (or single QGIS bar)
+                if _use_per_tile_bars:
+                    if pbar is not None:
+                        pbar.close()
+                    tile_desc = f"SVF tile {tile_idx + 1}/{n_tiles}"
+                    pbar = ProgressReporter(total=n_patches, desc=tile_desc)
+                elif pbar is None:
+                    pbar = ProgressReporter(
+                        total=n_tiles * n_patches,
+                        desc="Computing SVF (tiled)",
+                        feedback=feedback,
+                        progress_range=progress_range,
+                    )
+                    pbar.set_description(f"SVF tile {tile_idx + 1}/{n_tiles}")
+                    pbar.set_text(f"Computing SVF — Tile {tile_idx + 1}/{n_tiles}")
+                else:
+                    pbar.set_description(f"SVF tile {tile_idx + 1}/{n_tiles}")
+                    pbar.set_text(f"Computing SVF — Tile {tile_idx + 1}/{n_tiles}")
 
                 # Poll per-patch progress while tile runs
                 last_patch = 0
@@ -2044,7 +2068,8 @@ class SurfaceData:
                     shutil.rmtree(d, ignore_errors=True)
             raise
         finally:
-            pbar.close()
+            if pbar is not None:
+                pbar.close()
         # Flush memmaps to disk
         shmat_mm.flush()
         vegshmat_mm.flush()

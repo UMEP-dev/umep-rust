@@ -24,7 +24,6 @@ from solweig.api import (
 )
 from solweig.errors import MissingPrecomputedData
 from solweig.models.surface import _max_shadow_height
-from solweig.tiling import _calculate_tiled
 
 
 class TestSurfaceData:
@@ -847,100 +846,6 @@ class TestTiledProcessing:
 
         assert len(tiles) == 1
         assert tiles[0].core_shape == (30, 30)
-
-    def test_tiled_vs_nontiled_parity(self, tmp_path):
-        """Tiled calculation produces same results as non-tiled."""
-        # Create a test DSM with a building
-        dsm = np.zeros((60, 60), dtype=np.float32)
-        dsm[20:40, 20:40] = 15.0  # 15m building
-
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
-        location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
-        weather = Weather(
-            datetime=datetime(2024, 7, 15, 12, 0),
-            ta=25.0,
-            rh=50.0,
-            global_rad=800.0,
-        )
-
-        # Run both methods (UTCI/PET not auto-computed in new API)
-        calculate(
-            surface,
-            [weather],
-            location,
-            output_dir=tmp_path,
-            outputs=["tmrt", "shadow"],
-        )
-        result_tiled = _calculate_tiled(surface, location, weather, tile_size=256)
-
-        # Read non-tiled results from disk
-        tmrt_nontiled = read_timestep_geotiff(tmp_path, "tmrt", 0)
-        shadow_nontiled = read_timestep_geotiff(tmp_path, "shadow", 0)
-
-        # Compare Tmrt
-        valid = np.isfinite(tmrt_nontiled) & np.isfinite(result_tiled.tmrt)
-        assert valid.sum() > 0, "No valid pixels to compare"
-
-        diff = np.abs(result_tiled.tmrt[valid] - tmrt_nontiled[valid])
-        mean_diff = diff.mean()
-        max_diff = diff.max()
-
-        assert mean_diff < 0.01, f"Mean Tmrt diff {mean_diff:.4f}°C exceeds tolerance"
-        assert max_diff < 0.1, f"Max Tmrt diff {max_diff:.4f}°C exceeds tolerance"
-
-        # Compare shadow (should be identical)
-        assert result_tiled.shadow is not None
-        shadow_match = np.allclose(result_tiled.shadow, shadow_nontiled, equal_nan=True)
-        assert shadow_match, "Shadow grids differ between tiled and non-tiled"
-
-    def test_calculate_tiled_with_building(self):
-        """Tiled calculation handles buildings correctly."""
-        # DSM with a tall building that casts shadows
-        dsm = np.zeros((80, 80), dtype=np.float32)
-        dsm[30:50, 30:50] = 20.0  # 20m building
-
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
-        location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
-        weather = Weather(
-            datetime=datetime(2024, 7, 15, 10, 0),  # Morning
-            ta=22.0,
-            rh=55.0,
-            global_rad=600.0,
-        )
-
-        result = _calculate_tiled(surface, location, weather, tile_size=256)
-
-        # Check output structure
-        assert result.tmrt.shape == (80, 80)
-        assert result.shadow is not None
-        assert result.shadow.shape == (80, 80)
-        # UTCI not auto-computed - use post-processing if needed
-        assert result.utci is None
-
-        # Check shadows exist - allow wider range since shadow fraction depends on
-        # sun position (morning sun creates longer shadows)
-        shadow_fraction = result.shadow.sum() / result.shadow.size
-        assert 0.05 < shadow_fraction < 0.95, f"Unexpected shadow fraction: {shadow_fraction}"
-
-    def test_calculate_tiled_fallback_to_nontiled(self):
-        """Small rasters fall back to non-tiled calculation."""
-        # Small DSM that fits in a single tile
-        dsm = np.ones((40, 40), dtype=np.float32) * 5.0
-        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf(dsm.shape))
-        location = Location(latitude=57.7, longitude=12.0, utc_offset=1)
-        weather = Weather(
-            datetime=datetime(2024, 7, 15, 12, 0),
-            ta=25.0,
-            rh=50.0,
-            global_rad=800.0,
-        )
-
-        # This should work without errors (falls back to non-tiled)
-        result = _calculate_tiled(surface, location, weather, tile_size=256)
-
-        assert result.tmrt.shape == (40, 40)
-        assert result.shadow is not None
-        assert result.shadow.shape == (40, 40)
 
 
 class TestPreprocessing:

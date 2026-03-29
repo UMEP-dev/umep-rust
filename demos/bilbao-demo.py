@@ -68,6 +68,7 @@ surface = solweig.SurfaceData.prepare(
     pixel_size=2.5,
     dsm_relative=True,  # BDSM is height above ground, not absolute elevation
     cdsm_relative=True,  # CDSM is height above ground (default)
+    tile_size=500,
 )
 
 # %%
@@ -93,6 +94,7 @@ summary = solweig.calculate(
     output_dir=str(output_dir),
     outputs=["tmrt", "shadow"],
     max_shadow_distance_m=1000,
+    tile_size=500,
 )
 print(summary.report())
 

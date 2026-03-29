@@ -79,6 +79,7 @@ surface = solweig.SurfaceData.prepare(
     cdsm=str(output_folder_path / "CDSM.tif"),
     bbox=EXTENTS_BBOX,  # Optional: specify extent
     pixel_size=1.0,  # Optional: specify resolution (default: from DSM)
+    tile_size=200,  # Optional: tile size for SVF computation (default: auto)
 )
 
 # Step 2: Load weather data and location from EPW file
@@ -86,7 +87,7 @@ epw_path = str(input_path / "athens_2023.epw")
 weather_list = solweig.Weather.from_epw(
     epw_path,
     start="2023-07-01",
-    end="2023-08-01",
+    end="2023-07-03",
 )
 location = solweig.Location.from_epw(epw_path)  # lat, lon, UTC offset, elevation
 
@@ -104,6 +105,7 @@ summary = solweig.calculate(
     conifer=False,  # Use seasonal leaf on/off (set True for evergreen trees)
     output_dir=str(output_dir),
     outputs=["tmrt", "shadow"],
+    tile_size=200,  # Optional: tile size for timeseries (default: auto)
 )
 print(summary.report())
 

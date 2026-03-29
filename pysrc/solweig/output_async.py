@@ -168,6 +168,8 @@ class TiledGeoTiffWriter:
         self.transform = transform if transform is not None else [0.0, 1.0, 0.0, 0.0, 0.0, -1.0]
         self.crs_wkt = crs_wkt
         self._open_files: dict[str, Path] = {}
+        self._all_files: dict[tuple[str, str], Path] = {}
+        self._final_files: dict[tuple[str, str], Path] = {}
 
     def open_timestep(self, timestamp: dt, output_names: list[str]) -> None:
         """Create empty GeoTIFFs for the current timestep."""
@@ -206,6 +208,61 @@ class TiledGeoTiffWriter:
         """Mark the current timestep's files as complete."""
         self._open_files = {}
 
-    def close(self) -> None:
-        """Clean up (no-op; files are already closed after each write)."""
+    def precreate_timesteps(self, timestamps: list[dt], output_names: list[str]) -> None:
+        """Create empty temporary GeoTIFFs for all timesteps upfront."""
+        from . import io
+
+        self._all_files: dict[tuple[str, str], Path] = {}
+        self._final_files = {}
+        for ts in timestamps:
+            ts_str = ts.strftime("%Y%m%d_%H%M")
+            for name in output_names:
+                comp_dir = self.output_dir / name
+                comp_dir.mkdir(parents=True, exist_ok=True)
+                finalpath = comp_dir / f"{name}_{ts_str}.tif"
+                filepath = comp_dir / f"{name}_{ts_str}.partial.tif"
+                io.create_empty_raster(
+                    path_str=filepath,
+                    rows=self.rows,
+                    cols=self.cols,
+                    transform=self.transform,
+                    crs_wkt=self.crs_wkt,
+                    dtype=np.float32,
+                    nodata=np.nan,
+                )
+                self._all_files[(ts_str, name)] = filepath
+                self._final_files[(ts_str, name)] = finalpath
+
+    def write_tile_at(
+        self, timestamp: dt, write_slice: tuple[slice, slice], arrays: dict[str, NDArray[np.floating]]
+    ) -> None:
+        """Write tile window to pre-created files for a specific timestep."""
+        from . import io
+
+        ts_str = timestamp.strftime("%Y%m%d_%H%M")
+        for name, data in arrays.items():
+            key = (ts_str, name)
+            if key in self._all_files:
+                io.write_raster_window(path_str=self._all_files[key], data=data, window=write_slice)
+
+    def finalize_precreated(self) -> None:
+        """Promote successfully written temporary rasters to final filenames."""
+        for key, filepath in list(self._all_files.items()):
+            finalpath = self._final_files.get(key)
+            if finalpath is not None and filepath.exists():
+                os.replace(filepath, finalpath)
+
+    def cleanup_precreated(self) -> None:
+        """Remove temporary rasters left behind by an aborted run."""
+        for filepath in self._all_files.values():
+            filepath.unlink(missing_ok=True)
+
+    def close(self, *, success: bool | None = None) -> None:
+        """Finalize or clean up pre-created files, then clear writer state."""
+        if success is True:
+            self.finalize_precreated()
+        elif success is False:
+            self.cleanup_precreated()
         self._open_files = {}
+        self._all_files = {}
+        self._final_files = {}

@@ -950,12 +950,6 @@ impl ShadowGpuContext {
             ],
         });
 
-        eprintln!(
-            "[GPU] Allocated buffer cache for {}x{} grid ({:.1} MB)",
-            rows,
-            cols,
-            (buffer_size * 17 + buffer_size * 10) as f64 / 1_048_576.0
-        );
 
         CachedBuffers {
             rows,
@@ -1897,15 +1891,6 @@ impl ShadowGpuContext {
                 },
             ],
         });
-
-        eprintln!(
-            "[GPU] SVF accumulation initialized: {}x{} grid, {} SVF arrays ({:.1} MB), bitpack ({:.1} MB)",
-            rows,
-            cols,
-            num_arrays,
-            svf_data_size as f64 / 1_048_576.0,
-            packed_output_size as f64 / 1_048_576.0
-        );
 
         buffers.svf_params_buffer = Some(svf_params_buffer);
         buffers.svf_data_buffer = Some(svf_data_buffer);
