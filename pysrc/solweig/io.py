@@ -670,8 +670,17 @@ def create_empty_raster(
             crs=crs,
             transform=trf,
             nodata=nodata,
-        ):
-            pass  # Just create empty raster
+        ) as dst:
+            chunk_h = min(256, rows)
+            chunk_w = min(256, cols)
+            fill_block = np.full((chunk_h, chunk_w), nodata, dtype=dtype)
+            for b in range(1, bands + 1):
+                for row_off in range(0, rows, chunk_h):
+                    h = min(chunk_h, rows - row_off)
+                    for col_off in range(0, cols, chunk_w):
+                        w = min(chunk_w, cols - col_off)
+                        win = Window(col_off, row_off, w, h)  # type: ignore[too-many-positional-arguments]
+                        dst.write(fill_block[:h, :w], b, window=win)
     else:
         driver = gdal.GetDriverByName("GTiff")
         # Map numpy dtype to GDAL type

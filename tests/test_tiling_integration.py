@@ -4,6 +4,8 @@ These tests use larger synthetic rasters to actually exercise multi-tile
 processing rather than falling back to single-tile mode.
 """
 
+import logging
+import tempfile
 from datetime import datetime
 
 import numpy as np
@@ -687,6 +689,28 @@ class TestThermalStateMemmapParity:
         assert state.tgmap1[5, 5] == 42.0
 
 
+_STUB_LOCATION = Location(latitude=57.7, longitude=12.0, utc_offset=2)
+_STUB_WEATHER_PAIR = [
+    Weather(datetime=datetime(2024, 7, 15, 11, 0), ta=26.0, rh=50.0, global_rad=750.0, ws=2.0),
+    Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0),
+]
+
+
+def _stub_calculate(**kwargs):
+    shape = kwargs["surface"].dsm.shape
+    return SolweigResult(
+        tmrt=np.full(shape, 40.0, dtype=np.float32),
+        shadow=np.full(shape, 0.5, dtype=np.float32),
+        kdown=None,
+        kup=None,
+        ldown=None,
+        lup=None,
+        utci=None,
+        pet=None,
+        state=None,
+    )
+
+
 class TestTiledMemoryRegression:
     """Verify the tiled timeseries path does not allocate full-raster output arrays.
 
@@ -707,43 +731,21 @@ class TestTiledMemoryRegression:
         """
         import tracemalloc
 
-        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
-        weather_pair = [
-            Weather(datetime=datetime(2024, 7, 15, 11, 0), ta=26.0, rh=50.0, global_rad=750.0, ws=2.0),
-            Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0),
-        ]
-
         def _run_tiled(size):
             dsm = np.ones((size, size), dtype=np.float32) * 5.0
             dsm[size // 4 : size // 4 + 10, size // 4 : size // 4 + 10] = 10.0
             surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
-
-            # Use a mock _calculate_single that returns tile-shaped arrays
-            # to isolate the orchestration overhead from Rust compute.
-            def _fake_calculate(**kwargs):
-                shape = kwargs["surface"].dsm.shape
-                return SolweigResult(
-                    tmrt=np.full(shape, 40.0, dtype=np.float32),
-                    shadow=np.full(shape, 0.5, dtype=np.float32),
-                    kdown=None,
-                    kup=None,
-                    ldown=None,
-                    lup=None,
-                    utci=None,
-                    pet=None,
-                    state=None,
-                )
 
             import unittest.mock
 
             tracemalloc.start()
             snapshot_before = tracemalloc.take_snapshot()
 
-            with unittest.mock.patch("solweig.api._calculate_single", _fake_calculate):
+            with unittest.mock.patch("solweig.api._calculate_single", _stub_calculate):
                 _calculate_timeseries(
                     surface=surface,
-                    weather_series=weather_pair,
-                    location=location,
+                    weather_series=_STUB_WEATHER_PAIR,
+                    location=_STUB_LOCATION,
                     output_dir=tmp_path / f"mem_{size}",
                 )
 
@@ -783,34 +785,16 @@ class TestTiledMemoryRegression:
         size = 100
         dsm = np.ones((size, size), dtype=np.float32) * 5.0
         surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
-        location = Location(latitude=57.7, longitude=12.0, utc_offset=2)
-        weather = [
-            Weather(datetime=datetime(2024, 7, 15, 12, 0), ta=28.0, rh=45.0, global_rad=850.0, ws=2.0),
-        ]
-
-        def _fake_calculate(**kwargs):
-            shape = kwargs["surface"].dsm.shape
-            return SolweigResult(
-                tmrt=np.full(shape, 40.0, dtype=np.float32),
-                shadow=np.full(shape, 0.5, dtype=np.float32),
-                kdown=None,
-                kup=None,
-                ldown=None,
-                lup=None,
-                utci=None,
-                pet=None,
-                state=None,
-            )
 
         # Set threshold to 1 pixel so memmap always activates
         with (
             patch("solweig.tiling._MEMMAP_PIXEL_THRESHOLD", 1),
-            patch("solweig.api._calculate_single", _fake_calculate),
+            patch("solweig.api._calculate_single", _stub_calculate),
         ):
             summary = _calculate_timeseries(
                 surface=surface,
-                weather_series=weather,
-                location=location,
+                weather_series=[_STUB_WEATHER_PAIR[0]],
+                location=_STUB_LOCATION,
                 output_dir=tmp_path,
             )
 
@@ -819,3 +803,77 @@ class TestTiledMemoryRegression:
         assert summary.tmrt_mean is not None
         valid = np.isfinite(summary.tmrt_mean)
         assert valid.sum() > 0
+
+    @pytest.mark.parametrize(
+        "shape, max_fill_shape",
+        [
+            ((520, 520), (520, 520)),
+            ((300, 1025), (256, 256)),
+        ],
+        ids=["square-rejects-full-frame", "wide-rejects-oversized-block"],
+    )
+    def test_tiled_outputs_precreation_bounded_fill_buffer(self, tmp_path, shape, max_fill_shape):
+        """Rasterio output precreation must keep fill buffers bounded (not full-raster)."""
+        from unittest.mock import patch
+
+        from solweig._compat import GDAL_ENV
+
+        if GDAL_ENV:
+            pytest.skip("Rasterio-specific regression guard")
+
+        rows, cols = shape
+        dsm = np.ones((rows, cols), dtype=np.float32) * 5.0
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((rows, cols)))
+
+        real_full = np.full
+
+        def _guarded_full(alloc_shape, fill_value, *args, **kwargs):
+            s = (alloc_shape,) if isinstance(alloc_shape, int) else tuple(alloc_shape)
+            if len(s) == 2 and (s[0] > max_fill_shape[0] or s[1] > max_fill_shape[1]):
+                raise AssertionError(f"create_empty_raster allocated an oversized fill buffer: {s}")
+            return real_full(alloc_shape, fill_value, *args, **kwargs)
+
+        with (
+            patch("solweig.tiling._MEMMAP_PIXEL_THRESHOLD", 1),
+            patch("solweig.api._calculate_single", _stub_calculate),
+            patch("solweig.io.np.full", side_effect=_guarded_full),
+        ):
+            _calculate_timeseries(
+                surface=surface,
+                weather_series=_STUB_WEATHER_PAIR,
+                location=_STUB_LOCATION,
+                output_dir=tmp_path / "tiled_outputs",
+                outputs=["tmrt"],
+                tile_size=256,
+            )
+
+    def test_memmap_cleanup_warning_does_not_abort_timeseries(self, tmp_path, caplog):
+        """Cleanup failures should be logged and not abort successful runs."""
+        from unittest.mock import patch
+
+        size = 100
+        dsm = np.ones((size, size), dtype=np.float32) * 5.0
+        surface = SurfaceData(dsm=dsm, pixel_size=1.0, svf=make_mock_svf((size, size)))
+
+        caplog.set_level(logging.WARNING, logger="solweig.timeseries")
+
+        with (
+            patch("solweig.tiling._MEMMAP_PIXEL_THRESHOLD", 1),
+            patch("solweig.api._calculate_single", _stub_calculate),
+            patch.object(
+                tempfile.TemporaryDirectory,
+                "cleanup",
+                autospec=True,
+                side_effect=OSError("simulated cleanup failure"),
+            ),
+        ):
+            summary = _calculate_timeseries(
+                surface=surface,
+                weather_series=[_STUB_WEATHER_PAIR[0]],
+                location=_STUB_LOCATION,
+                output_dir=tmp_path / "cleanup_warning",
+            )
+
+        assert summary is not None
+        assert summary.tmrt_mean is not None
+        assert "Could not remove memmap temp dir" in caplog.text

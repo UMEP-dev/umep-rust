@@ -10,6 +10,7 @@ Users should call :func:`solweig._calculate_single` (the public entry point).
 
 from __future__ import annotations
 
+import gc
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -674,4 +675,12 @@ def _calculate_timeseries(
         if _tiled_writer is not None:
             _tiled_writer.close(success=False)
         if _memmap_tmpdir is not None:
-            _memmap_tmpdir.cleanup()
+            # Release memmap file handles before deleting backing files.
+            # On Windows, open handles prevent file deletion (PermissionError).
+            full_grids.clear()
+            full_utci_hours.clear()
+            gc.collect()
+            try:
+                _memmap_tmpdir.cleanup()
+            except OSError:
+                logger.warning(f"Could not remove memmap temp dir {_memmap_tmpdir.name} (will be cleaned by OS)")

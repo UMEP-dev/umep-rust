@@ -3,19 +3,19 @@ repos:
     hooks:
       - id: ruff-check
         name: ruff check
-        entry: uv run ruff check --fix
+        entry: uv run --frozen ruff check --fix
         language: system
         types_or: [python, jupyter]
 
       - id: ruff-format
         name: ruff format
-        entry: uv run ruff format
+        entry: uv run --frozen ruff format
         language: system
         types_or: [python, jupyter]
 
       - id: ty
         name: ty type check
-        entry: uv run ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/
+        entry: uv run --frozen ty check pysrc/ tests/ demos/ scripts/ qgis_plugin/
         language: system
         types: [python]
         pass_filenames: false
