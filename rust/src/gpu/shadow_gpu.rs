@@ -38,10 +38,8 @@ fn query_platform_vram(info: &wgpu::AdapterInfo) -> Option<u64> {
 }
 
 /// Linux/AMD: read `/sys/class/drm/card*/device/mem_info_vram_total` (amdgpu driver).
-/// Returns `None` on NVIDIA and Intel (no sysfs VRAM file); those fall back
-/// to `max_buffer_size` heuristics in `resolve_gpu_memory_budget`.
 #[cfg(target_os = "linux")]
-fn query_platform_vram(info: &wgpu::AdapterInfo) -> Option<u64> {
+fn query_amdgpu_vram(info: &wgpu::AdapterInfo) -> Option<u64> {
     use std::fs;
     use std::path::Path;
 
@@ -94,6 +92,152 @@ fn query_platform_vram(info: &wgpu::AdapterInfo) -> Option<u64> {
         }
     }
     None
+}
+
+/// Linux/NVIDIA: query dedicated VRAM via NVML (`libnvidia-ml.so.1`).
+///
+/// Uses `dlopen` to avoid a hard link-time dependency — returns `None`
+/// if the NVIDIA driver is not installed or the library cannot be loaded.
+#[cfg(target_os = "linux")]
+fn query_nvml_vram(info: &wgpu::AdapterInfo) -> Option<u64> {
+    // Only attempt for NVIDIA GPUs (vendor 0x10de)
+    if info.vendor as u32 != 0x10de {
+        return None;
+    }
+
+    use std::ffi::{c_char, c_uint, c_ulonglong, c_void};
+
+    // NVML return type
+    type NvmlReturn = c_uint;
+    const NVML_SUCCESS: NvmlReturn = 0;
+
+    // Opaque device handle
+    type NvmlDevice = *mut c_void;
+
+    // nvmlMemory_t — only the first field (total) is needed
+    #[repr(C)]
+    struct NvmlMemory {
+        total: c_ulonglong,
+        free: c_ulonglong,
+        used: c_ulonglong,
+    }
+
+    // nvmlPciInfo_t (simplified — we only read busIdLegacy + pciDeviceId)
+    #[repr(C)]
+    struct NvmlPciInfo {
+        bus_id_legacy: [c_char; 16],  // NVML_DEVICE_PCI_BUS_ID_BUFFER_V2_SIZE
+        domain: c_uint,
+        bus: c_uint,
+        device: c_uint,
+        pci_device_id: c_uint,        // Combined device ID: (device_id << 16) | sub_vendor
+        pci_sub_system_id: c_uint,
+        bus_id: [c_char; 32],         // NVML_DEVICE_PCI_BUS_ID_BUFFER_SIZE
+    }
+
+    type InitFn = unsafe extern "C" fn() -> NvmlReturn;
+    type ShutdownFn = unsafe extern "C" fn() -> NvmlReturn;
+    type GetCountFn = unsafe extern "C" fn(*mut c_uint) -> NvmlReturn;
+    type GetHandleFn = unsafe extern "C" fn(c_uint, *mut NvmlDevice) -> NvmlReturn;
+    type GetMemoryFn = unsafe extern "C" fn(NvmlDevice, *mut NvmlMemory) -> NvmlReturn;
+    type GetPciFn = unsafe extern "C" fn(NvmlDevice, *mut NvmlPciInfo) -> NvmlReturn;
+
+    unsafe {
+        let lib = libc::dlopen(
+            b"libnvidia-ml.so.1\0".as_ptr() as *const c_char,
+            libc::RTLD_LAZY,
+        );
+        if lib.is_null() {
+            return None;
+        }
+
+        // RAII guard to ensure dlclose + nvmlShutdown
+        struct NvmlGuard {
+            lib: *mut c_void,
+            shutdown: Option<ShutdownFn>,
+        }
+        impl Drop for NvmlGuard {
+            fn drop(&mut self) {
+                unsafe {
+                    if let Some(f) = self.shutdown {
+                        f();
+                    }
+                    libc::dlclose(self.lib);
+                }
+            }
+        }
+
+        macro_rules! sym {
+            ($lib:expr, $name:literal, $ty:ty) => {{
+                let ptr = libc::dlsym($lib, concat!($name, "\0").as_ptr() as *const c_char);
+                if ptr.is_null() {
+                    libc::dlclose($lib);
+                    return None;
+                }
+                std::mem::transmute::<*mut c_void, $ty>(ptr)
+            }};
+        }
+
+        let init: InitFn = sym!(lib, "nvmlInit_v2", InitFn);
+        let shutdown: ShutdownFn = sym!(lib, "nvmlShutdown", ShutdownFn);
+        let get_count: GetCountFn = sym!(lib, "nvmlDeviceGetCount_v2", GetCountFn);
+        let get_handle: GetHandleFn = sym!(lib, "nvmlDeviceGetHandleByIndex_v2", GetHandleFn);
+        let get_memory: GetMemoryFn = sym!(lib, "nvmlDeviceGetMemoryInfo", GetMemoryFn);
+        let get_pci: GetPciFn = sym!(lib, "nvmlDeviceGetPciInfo_v3", GetPciFn);
+
+        if init() != NVML_SUCCESS {
+            libc::dlclose(lib);
+            return None;
+        }
+
+        let mut guard = NvmlGuard {
+            lib,
+            shutdown: Some(shutdown),
+        };
+
+        let mut count: c_uint = 0;
+        if get_count(&mut count) != NVML_SUCCESS || count == 0 {
+            return None;
+        }
+
+        // Match adapter by PCI device ID from wgpu info
+        let target_device_id = info.device as u32;
+
+        for i in 0..count {
+            let mut handle: NvmlDevice = std::ptr::null_mut();
+            if get_handle(i, &mut handle) != NVML_SUCCESS {
+                continue;
+            }
+
+            let mut pci = std::mem::zeroed::<NvmlPciInfo>();
+            if get_pci(handle, &mut pci) != NVML_SUCCESS {
+                continue;
+            }
+
+            // pci_device_id upper 16 bits = PCI device ID
+            let nvml_dev_id = (pci.pci_device_id >> 16) & 0xFFFF;
+            if nvml_dev_id != target_device_id {
+                continue;
+            }
+
+            let mut mem = std::mem::zeroed::<NvmlMemory>();
+            if get_memory(handle, &mut mem) != NVML_SUCCESS {
+                continue;
+            }
+
+            if mem.total > 0 {
+                // Prevent guard from leaking — drop happens automatically
+                return Some(mem.total as u64);
+            }
+        }
+
+        None
+    }
+}
+
+/// Linux: try AMD sysfs first, then NVIDIA NVML.
+#[cfg(target_os = "linux")]
+fn query_platform_vram(info: &wgpu::AdapterInfo) -> Option<u64> {
+    query_amdgpu_vram(info).or_else(|| query_nvml_vram(info))
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
